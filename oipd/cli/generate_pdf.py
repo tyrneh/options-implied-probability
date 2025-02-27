@@ -1,12 +1,12 @@
 from oipd.core import calculate_pdf, calculate_cdf, fit_kde
-from oipd.io import CSVReader
+from oipd.io import CSVReader, DataFrameReader
 import pandas as pd
 from traitlets import Bool
-from typing import Optional
+from typing import Optional, Union
 
 
 def run(
-    input_csv_path: str,
+    input_data: Union[str, pd.DataFrame],
     current_price: float,
     days_forward: int,
     risk_free_rate: float,
@@ -18,32 +18,43 @@ def run(
     """
     Runs the OIPD price distribution estimation using option market data.
 
-    This function reads option data from a CSV file, calculates an implied probability
-    density function (PDF) based on market prices, and optionally smooths the PDF
-    using Kernel Density Estimation (KDE). It then computes the cumulative distribution
-    function (CDF) and saves or returns the results.
+    This function reads option data either from a CSV file (if a file path is provided)
+    or directly from a DataFrame. It calculates an implied probability density function (PDF)
+    based on market prices, and optionally smooths the PDF using Kernel Density Estimation (KDE).
+    It then computes the cumulative distribution function (CDF) and saves or returns the results.
 
     Args:
-        input_csv_path (str): Path to the input CSV file containing option market data.
+        input_data (Union[str, pd.DataFrame]): Either a file path to a CSV file containing
+            option market data or a DataFrame with the required columns.
         current_price (float): The current price of the underlying security.
         days_forward (int): The number of days in the future for which the probability
             density is estimated.
-        risk_free_rate (float): the annual risk free rate in nominal terms
-        fit_kernel_pdf (Optional[bool], default=True): Whether to smooth the implied
+        risk_free_rate (float): The annual risk-free rate in nominal terms.
+        fit_kernel_pdf (Optional[bool], default=False): Whether to smooth the implied
             PDF using Kernel Density Estimation (KDE).
-        save_to_csv (bool, default=False): If `True`, saves the output to a CSV file.
+        save_to_csv (bool, default=False): If True, saves the output to a CSV file
         output_csv_path (Optional[str], default=None): Path to save the output CSV file.
-            Required if `save_to_csv=True`.
-        solver_method (str): which solver to use for IV. Either "newton" or "brent"
+            Required if save_to_csv=True.
+        solver_method (str): Which solver to use for IV. Either "newton" or "brent".
 
     Returns:
-        - If `save_to_csv` is `True`, saves the results to a CSV file and returns `None`.
-        - If `save_to_csv` is `False`, returns a `pd.DataFrame` containing three columns:
-          `Price`, `PDF`, and `CDF`.
+        - Returns a DataFrame containing three columns: Price, PDF, and CDF.
+        - If save_to_csv is True, saves the results to a CSV file and returns the DataFrame.
     """
 
-    reader = CSVReader()
-    options_data = reader.read(input_csv_path)
+    # Select reader based on the type of input_data
+    if isinstance(input_data, pd.DataFrame):
+        reader = DataFrameReader()
+    elif isinstance(input_data, str):
+        reader = CSVReader()
+    else:
+        raise ValueError(
+            "input_data must be either a file path (str) or a pandas DataFrame."
+        )
+
+    # Read options data using the selected reader.
+    options_data = reader.read(input_data)
+
     pdf_point_arrays = calculate_pdf(
         options_data, current_price, days_forward, risk_free_rate, solver_method
     )
