@@ -38,17 +38,46 @@ The file [`example.ipynb`](example.ipynb) is supplied as a demo.
 
 <b>The user will need to specify 4 mandatory arguments:</b>
 
-1. `input_csv_path`: a string containing the file path of the options data in a csv, with the columns 'strike', 'last_price', 'bid, 'ask'
-2. `current_price`: a number of the underlying asset's current price
-3. `days_foward`: a number of the days between the current date and the strike date
-4. `risk_free_rate`: a number indicating the annual risk-free rate in nominal terms
+### **Mandatory Arguments:**
+1. `input_data`:  
+   - Can be **a file path (CSV)** containing options data.  
+   - Can also be **a pandas DataFrame** or **a function that fetches data dynamically (e.g., from an API or database)**.  
+   - The input data must contain at least the following columns: `'strike', 'last_price', 'bid', 'ask'`.
 
-<b>There are 4 additional optional arguments:</b>
+2. `current_price`: A number representing the underlying asset's current price.
 
-5. `fit_kernel_pdf`: (optional) a True or False boolean, indicating whether to fit a kernel-density estimator on the resulting raw probability distribution. Fitting a KDE may improve edge-behavior of the PDF. Default is False
-6. `save_to_csv`: (optional) a True or False boolean, where if True, the output will be saved to csv. Default is False
-7. `output_csv_path`: (optional) a string containing the file path where the user wishes to save the results
-8. `solver_method`: (optional) a string of either 'newton' or 'brent', indicating which solver to use. Default is 'brent'
+3. `days_forward`: A number representing the days between the current date and the strike date.
+
+4. `risk_free_rate`: A number indicating the annual risk-free rate in nominal terms.
+
+### **Optional Arguments:**
+5. `fit_kernel_pdf`: *(optional)*  
+   - A boolean (`True` or `False`). Default: `False`.
+   - If `True`, fits a kernel-density estimator (KDE) on the raw probability distribution. KDE may improve edge-behavior of the PDF.  
+
+6. `save_to_csv`: *(optional)*  
+   - A boolean (`True` or `False`). Default: `False`.
+   - If `True`, saves the output to a CSV file.  
+
+7. `output_csv_path`: *(optional)*  
+   - A string specifying the file path where the user wishes to save the results.  
+   - Required if `save_to_csv=True`.
+
+8. `solver_method`: *(optional)*  
+   - A string indicating which solver to use. 
+   - Options: `'newton'` or `'brent'`. Default: `'brent'`.
+
+9. `column_mapping`: *(optional)*  
+   - A dictionary mapping **user-provided column names** to the expected format, like so: `{"user_column_name": "expected_column_name"}`
+   - Example:  
+     ```python
+     column_mapping = {
+         "strike_price": "strike",
+         "last_price": "last_price",
+         "bid_price": "bid",
+         "ask_price": "ask"
+     }
+     ```
 
 <b>3 examples of options data is provided in the `data/` folder, downloaded from Yahoo Finance.</b>
 

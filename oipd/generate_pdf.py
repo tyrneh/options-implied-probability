@@ -2,7 +2,7 @@ from oipd.core import calculate_pdf, calculate_cdf, fit_kde
 from oipd.io import CSVReader, DataFrameReader
 import pandas as pd
 from traitlets import Bool
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 
 
 def run(
@@ -14,6 +14,7 @@ def run(
     save_to_csv: Optional[Bool] = False,
     output_csv_path: Optional[str] = None,
     solver_method: Optional[str] = "brent",
+    column_mapping: Optional[Dict[str, str]] = None,
 ) -> pd.DataFrame:
     """
     Runs the OIPD price distribution estimation using option market data.
@@ -24,18 +25,31 @@ def run(
     It then computes the cumulative distribution function (CDF) and saves or returns the results.
 
     Args:
-        input_data (Union[str, pd.DataFrame]): Either a file path to a CSV file containing
-            option market data or a DataFrame with the required columns.
+
+        input_data (Union[str, pd.DataFrame]):
+            - Either a file path to a CSV file containing option market data or a DataFrame with the required columns.
+            - The columns required are: "strike", "last_price", "bid", "ask".
+            - Use the column_mapping argument to map the column names from your data source to the names expected here.
+
         current_price (float): The current price of the underlying security.
+
         days_forward (int): The number of days in the future for which the probability
             density is estimated.
+
         risk_free_rate (float): The annual risk-free rate in nominal terms.
+
         fit_kernel_pdf (Optional[bool], default=False): Whether to smooth the implied
             PDF using Kernel Density Estimation (KDE).
-        save_to_csv (bool, default=False): If True, saves the output to a CSV file
+
+        save_to_csv (bool, default=False): If True, saves the output to a CSV file.
+
         output_csv_path (Optional[str], default=None): Path to save the output CSV file.
             Required if save_to_csv=True.
+
         solver_method (str): Which solver to use for IV. Either "newton" or "brent".
+
+        column_mapping (Optional[Dict[str, str]]): A dictionary mapping user-provided column names
+            to the expected column names: {"user_column_name": "expected_column_name"}.
 
     Returns:
         - Returns a DataFrame containing three columns: Price, PDF, and CDF.
@@ -54,6 +68,16 @@ def run(
 
     # Read options data using the selected reader.
     options_data = reader.read(input_data)
+
+    # Apply column mapping if provided
+    if column_mapping:
+        options_data = options_data.rename(columns=column_mapping)
+
+    # Validate that required columns exist after renaming
+    required_columns = {"strike", "last_price", "bid", "ask"}
+    missing_columns = required_columns - set(options_data.columns)
+    if missing_columns:
+        raise ValueError(f"Data is missing required columns: {missing_columns}")
 
     pdf_point_arrays = calculate_pdf(
         options_data, current_price, days_forward, risk_free_rate, solver_method
