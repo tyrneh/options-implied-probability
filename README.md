@@ -40,32 +40,31 @@ The file [`example.ipynb`](example.ipynb) is supplied as a demo.
 
 ### **Mandatory Arguments:**
 1. `input_data`:  
-   - Can be **a file path (CSV)** containing options data.  
-   - Can also be **a pandas DataFrame** or **a function that fetches data dynamically (e.g., from an API or database)**.  
-   - The input data must contain at least the following columns: `'strike', 'last_price', 'bid', 'ask'`.
+   - Can either be a `str`: a file path to a CSV, or a `pd.DataFrame`: a pandas DataFrame containing the options data
+   - The input data must contain at least the following columns: `'strike', 'last_price', 'bid', 'ask'`
 
-2. `current_price`: A number representing the underlying asset's current price.
+2. `current_price`: A number representing the underlying asset's current price
 
-3. `days_forward`: A number representing the days between the current date and the strike date.
+3. `days_forward`: A number representing the days between the current date and the strike date
 
-4. `risk_free_rate`: A number indicating the annual risk-free rate in nominal terms.
+4. `risk_free_rate`: A number indicating the annual risk-free rate in nominal terms
 
 ### **Optional Arguments:**
 5. `fit_kernel_pdf`: *(optional)*  
-   - A boolean (`True` or `False`). Default: `False`.
-   - If `True`, fits a kernel-density estimator (KDE) on the raw probability distribution. KDE may improve edge-behavior of the PDF.  
+   - A boolean (`True` or `False`). Default: `False`
+   - If `True`, fits a kernel-density estimator (KDE) on the raw probability distribution. KDE may improve edge-behavior of the PDF
 
 6. `save_to_csv`: *(optional)*  
-   - A boolean (`True` or `False`). Default: `False`.
-   - If `True`, saves the output to a CSV file.  
+   - A boolean (`True` or `False`). Default: `False`
+   - If `True`, saves the output to a CSV file
 
 7. `output_csv_path`: *(optional)*  
-   - A string specifying the file path where the user wishes to save the results.  
-   - Required if `save_to_csv=True`.
+   - A string specifying the file path where the user wishes to save the results
+   - Required if `save_to_csv=True`
 
 8. `solver_method`: *(optional)*  
-   - A string indicating which solver to use. 
-   - Options: `'newton'` or `'brent'`. Default: `'brent'`.
+   - A string indicating which solver to use
+   - Options: `'newton'` or `'brent'`. Default: `'brent'`
 
 9. `column_mapping`: *(optional)*  
    - A dictionary mapping **user-provided column names** to the expected format, like so: `{"user_column_name": "expected_column_name"}`
@@ -156,6 +155,12 @@ Feedback is most welcome! I'd love to hear about how you make use of this inform
 
 Contributions are also welcome. Please fork the repository, make your changes, and submit a pull request.
 
+## Roadmap
+
+This is a basic implementation so far, and more rigour is necessary for professional use. I will work on these features when I have free time, and contributions to the following would be welcome:
+- Add ability to handle dividends in the B-S model
+- Currently, all options are treated as European for simplicity. For American options, need to add capacity to de-Americanize to use in B-S, or to use an American-compatible options pricing model
+- Add choice to use alternative options pricing models, suggestions for Heston, Jump-Diffusion, & Binomial Tree
 
 ## License
 
