@@ -163,14 +163,23 @@ Contributions are also welcome. Please fork the repository, make your changes, a
 
 ## Roadmap
 
-This is a basic implementation so far, and more rigour is necessary for professional use. I will work on these features when I have free time, and contributions to the following would be welcome:
-- Add ability to handle dividends in the B-S model
-- Currently, all options are treated as European for simplicity. For American options, need to add capacity to de-Americanize in order to use in the current B-S pricing model
-   - or, can add an American options pricing model. But in that case, the second-derivative method of arriving at PDF is no longer valid, so an alternative method would have to be discovered
-- Add choice to use alternative options pricing models, some users suggested Heston, Jump-Diffusion, & Binomial Tree
+The methodology in this package is a basic implementation, and more rigour is necessary for professional use. I will work on these features when I have free time, and contributions to the following would be welcome:
+
+1. Dividend handling in the current Black-Scholes Model
+
+2. Improved support for American options
+- Currently, all options are assumed to be European for simplicity. To better support American options:
+   - Implement a method to "de-Americanize" American options in order to be compatible with the existing Black-Scholes implementation, or
+   - Add an American options pricing model. However with an American model, the current method (using the second derivative to derive the probability density function) is no longer valid, so a new approach would need to be discovered
+
+3. Integration of alternative pricing models
+- Offer the choice among different models, including the following suggestions from users:
+   - Heston
+   - Jump-Diffusion
+   - Binomial Tree
 
 ## License
 
-This project is a preview, it is not currently licensed. Not financial advice.
+DISCLAIMER: This software is provided for informational and educational purposes only and does not constitute financial advice. Use it at your own risk. The author is not responsible for any financial losses or damages resulting from its use. Always consult with a qualified financial professional before making any financial decisions.
 
 THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
