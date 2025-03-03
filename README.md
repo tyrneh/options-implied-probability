@@ -165,8 +165,9 @@ Contributions are also welcome. Please fork the repository, make your changes, a
 
 This is a basic implementation so far, and more rigour is necessary for professional use. I will work on these features when I have free time, and contributions to the following would be welcome:
 - Add ability to handle dividends in the B-S model
-- Currently, all options are treated as European for simplicity. For American options, need to add capacity to de-Americanize to use in B-S, or to use an American-compatible options pricing model
-- Add choice to use alternative options pricing models, suggestions for Heston, Jump-Diffusion, & Binomial Tree
+- Currently, all options are treated as European for simplicity. For American options, need to add capacity to de-Americanize in order to use in the current B-S pricing model
+   - or, can add an American options pricing model. But in that case, the second-derivative method of arriving at PDF is no longer valid, so an alternative method would have to be discovered
+- Add choice to use alternative options pricing models, some users suggested Heston, Jump-Diffusion, & Binomial Tree
 
 ## License
 
