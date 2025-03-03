@@ -83,7 +83,7 @@ The file [`example.ipynb`](example.ipynb) is supplied as a demo.
 Note that oipd only uses call options data for now. 
 
 ```python
-from oipd import cli
+import oipd.generate_pdf as op
 
 # Example - SPY
 input_csv_path = "path_to_your_options_data_csv"
