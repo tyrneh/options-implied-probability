@@ -67,17 +67,7 @@ def run(
         )
 
     # Read options data using the selected reader.
-    options_data = reader.read(input_data)
-
-    # Apply column mapping if provided
-    if column_mapping:
-        options_data = options_data.rename(columns=column_mapping)
-
-    # Validate that required columns exist after renaming
-    required_columns = {"strike", "last_price", "bid", "ask"}
-    missing_columns = required_columns - set(options_data.columns)
-    if missing_columns:
-        raise ValueError(f"Data is missing required columns: {missing_columns}")
+    options_data = reader.read(input_data, column_mapping)
 
     pdf_point_arrays = calculate_pdf(
         options_data, current_price, days_forward, risk_free_rate, solver_method

@@ -62,9 +62,11 @@ def calculate_pdf(
         of the calculated PDF
     """
 
-    options_data, min_strike, max_strike = _extrapolate_call_prices(
-        options_data, current_price
-    )
+    # options_data, min_strike, max_strike = _extrapolate_call_prices(
+    #     options_data, current_price
+    # )
+    min_strike = int(options_data.strike.min())
+    max_strike = int(options_data.strike.max())
     options_data = _calculate_last_price(options_data)
     options_data = _calculate_IV(
         options_data, current_price, days_forward, risk_free_rate, solver_method

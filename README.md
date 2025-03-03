@@ -67,7 +67,7 @@ The file [`example.ipynb`](example.ipynb) is supplied as a demo.
    - Options: `'newton'` or `'brent'`. Default: `'brent'`
 
 9. `column_mapping`: *(optional)*  
-   - A dictionary mapping **user-provided column names** to the expected format, like so: `{"user_column_name": "expected_column_name"}`
+   - A dictionary mapping user-provided column names to the expected format, like so: `{"user_column_name": "expected_column_name"}`
    - Example:  
      ```python
      column_mapping = {
