@@ -108,19 +108,16 @@ spy_pdf = cli.generate_pdf.run(
 
 <b>Another interesting example is US Steel:</b>
 <p align="center">
-  <img src=".meta/images/ussteel.png" width="45%">
-  <img src=".meta/images/ussteel_table.png" width="45%">
+  <img src=".meta/images/ussteel.png" width="60%">
 </p>
 The distribution is bimodal, and given Nippon Steel’s proposed $55 per share acquisition, it can be thought of as two overlapping scenarios:
 
 1. Acquisition is approved:
-   - In this scenario, the share price would likely move toward or above the $55 per share offer
-   - This creates a “second peak” in the distribution, representing the outcome where approval pushes the stock up
-   - As shown by the CDF, there's about ~33% probability that this deal is approved (77% cumulative probability that price is below $55)
+   - In this scenario, the share price would likely move toward or above the $55 per share offer. This creates a “second peak” in the distribution, representing the outcome where approval pushes the stock up
+   - As shown by the CDF, there's about ~33% probability that this deal is approved (77% cumulative probability that price is below $55 - see the cumulative probability table in the example file)
 
 2. Acquisition falls apart:
-   - Without the approval, the share price may drop back toward a level driven by “business as usual” fundamentals—here, that appears lower than the current $39.39
-   - This is the “first peak” in the distribution, capturing the fallback scenario if the deal doesn’t happen
+   - Without the approval, the share price may drop back toward a level driven by “business as usual” fundamentals—here, that appears lower than the current $39.39. This is the “first peak” in the distribution, capturing the fallback scenario if the deal doesn’t happen
 
 <i>Note that the domain (x-axis) is limited in this graph, due to (1) not many strike prices exist for US Steel, and (2) some extreme ITM/OTM options did not have solvable IVs.</i>
 
