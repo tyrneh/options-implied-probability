@@ -87,9 +87,9 @@ from oipd import cli
 
 # Example - SPY
 input_csv_path = "path_to_your_options_data_csv"
-current_price = 604.44
-current_date = "2025-01-28"
-strike_date = "2025-02-28"
+current_price = 593.83
+current_date = "2025-03-03"
+strike_date = "2025-05-16"
 # Convert the strings to datetime objects
 current_date_dt = datetime.strptime(current_date, "%Y-%m-%d")
 strike_date_dt = datetime.strptime(strike_date, "%Y-%m-%d")
@@ -114,7 +114,7 @@ The distribution is bimodal, and given Nippon Steel’s proposed $55 per share a
 
 1. Acquisition is approved:
    - In this scenario, the share price would likely move above the $55 per share offer. This creates a “second peak” in the distribution
-   - By inspecting the cumulative prbability table, we see there's a 33% probability that the deal is approved and price rises above $55
+   - By inspecting the cumulative prbability table (see [example.ipynb]((example.ipynb))), we see there's a 33% probability that the deal is approved and price rises above $55
 
 2. Acquisition falls apart:
    - Without the approval, the share price may drop back toward a level driven by “business as usual” fundamentals—here, that appears lower than the current $39.39. This is the “first peak” in the distribution
