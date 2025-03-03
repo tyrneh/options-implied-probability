@@ -96,12 +96,13 @@ strike_date_dt = datetime.strptime(strike_date, "%Y-%m-%d")
 # Calculate the difference in days
 days_difference = (strike_date_dt - current_date_dt).days
 
-spy_pdf = cli.generate_pdf.run(
-    input_csv_path=input_csv_path,
+spy_pdf = op.run(
+    input_data=input_csv_path,
     current_price=float(current_price),
     days_forward=int(days_difference),
     risk_free_rate=0.03,
     fit_kernel_pdf=True,
+    column_mapping=column_mapping
 )
 ```
 
