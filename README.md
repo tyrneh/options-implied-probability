@@ -168,15 +168,15 @@ The methodology in this package is a basic implementation, and more rigour is ne
 1. Dividend handling in the current Black-Scholes Model
 
 2. Improved support for American options
-- Currently, all options are assumed to be European for simplicity. To better support American options:
-   - Implement a method to "de-Americanize" American options in order to be compatible with the existing Black-Scholes implementation, or
-   - Add an American options pricing model. However with an American model, the current method (using the second derivative to derive the probability density function) is no longer valid, so a new approach would need to be discovered
+   - Currently, all options are assumed to be European for simplicity. To better support American options:
+      - Implement a method to "de-Americanize" American options in order to be compatible with the existing Black-Scholes implementation, or
+      - Add an American options pricing model. However with an American model, the current method (using the second derivative to derive the probability density function) is no longer valid, so a new approach would need to be discovered
 
 3. Integration of alternative pricing models
-- Offer the choice among different models, including the following suggestions from users:
-   - Heston
-   - Jump-Diffusion
-   - Binomial Tree
+   - Offer the choice among different models, including the following suggestions from users:
+      - Heston
+      - Jump-Diffusion
+      - Binomial Tree
 
 ## License
 
