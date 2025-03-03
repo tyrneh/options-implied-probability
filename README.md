@@ -102,7 +102,6 @@ spy_pdf = op.run(
     days_forward=int(days_difference),
     risk_free_rate=0.03,
     fit_kernel_pdf=True,
-    column_mapping=column_mapping
 )
 ```
 
