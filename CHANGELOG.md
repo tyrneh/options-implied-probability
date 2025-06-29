@@ -9,6 +9,8 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 - Initial skeleton for the CHANGELOG.
+- Upgraded old dependencies; now supports Python 3.13.
+- Removed Streamlit dashboard code and images (#42).
 
 ## [0.0.5] – 2023-11-02
 ### Added
