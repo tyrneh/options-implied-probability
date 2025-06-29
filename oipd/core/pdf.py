@@ -9,6 +9,24 @@ from scipy.optimize import brentq
 from scipy.stats import norm, gaussian_kde
 
 
+class OIPDError(Exception):
+    """Base exception for OIPD package"""
+
+    pass
+
+
+class InvalidInputError(OIPDError):
+    """Exception raised for invalid input parameters"""
+
+    pass
+
+
+class CalculationError(OIPDError):
+    """Exception raised when calculations fail"""
+
+    pass
+
+
 def fit_kde(pdf_point_arrays: tuple) -> tuple:
     """
     Fits a Kernel Density Estimation (KDE) to the given implied probability density function (PDF).
@@ -22,19 +40,36 @@ def fit_kde(pdf_point_arrays: tuple) -> tuple:
         tuple: (prices, fitted_pdf), where:
             - prices: The original price array
             - fitted_pdf: The KDE-fitted probability density values
+
+    Raises:
+        InvalidInputError: If input arrays are empty or have mismatched lengths
     """
+    # Validate input
+    if not isinstance(pdf_point_arrays, tuple) or len(pdf_point_arrays) != 2:
+        raise InvalidInputError("pdf_point_arrays must be a tuple of two arrays")
 
     # Unpack tuple
     prices, pdf_values = pdf_point_arrays
 
+    if len(prices) == 0 or len(pdf_values) == 0:
+        raise InvalidInputError("Input arrays cannot be empty")
+
+    if len(prices) != len(pdf_values):
+        raise InvalidInputError(
+            f"Price and PDF arrays must have same length. Got {len(prices)} and {len(pdf_values)}"
+        )
+
     # Normalize PDF to ensure it integrates to 1
     pdf_values /= np.trapz(pdf_values, prices)  # Use trapezoidal rule for normalization
 
-    # Fit KDE using price points weighted by the normalized PDF
-    kde = gaussian_kde(prices, weights=pdf_values)
+    try:
+        # Fit KDE using price points weighted by the normalized PDF
+        kde = gaussian_kde(prices, weights=pdf_values)
 
-    # Generate KDE-fitted PDF values
-    fitted_pdf = kde.pdf(prices)
+        # Generate KDE-fitted PDF values
+        fitted_pdf = kde.pdf(prices)
+    except Exception as e:
+        raise CalculationError(f"Failed to fit KDE: {str(e)}")
 
     return (prices, fitted_pdf)
 
@@ -60,17 +95,52 @@ def calculate_pdf(
     Returns:
         a tuple containing the price and density values (in numpy arrays)
         of the calculated PDF
+
+    Raises:
+        InvalidInputError: If input parameters are invalid
+        CalculationError: If PDF calculation fails
     """
+    # Validate inputs
+    if not isinstance(options_data, DataFrame):
+        raise InvalidInputError("options_data must be a pandas DataFrame")
+
+    if options_data.empty:
+        raise InvalidInputError("options_data cannot be empty")
+
+    if current_price <= 0:
+        raise InvalidInputError(f"current_price must be positive, got {current_price}")
+
+    if days_forward <= 0:
+        raise InvalidInputError(f"days_forward must be positive, got {days_forward}")
+
+    if not -1 <= risk_free_rate <= 1:
+        raise InvalidInputError(
+            f"risk_free_rate seems unrealistic: {risk_free_rate}. Expected value between -1 and 1"
+        )
+
+    if solver_method not in ["newton", "brent"]:
+        raise InvalidInputError(
+            f"solver_method must be 'newton' or 'brent', got '{solver_method}'"
+        )
 
     # options_data, min_strike, max_strike = _extrapolate_call_prices(
     #     options_data, current_price
     # )
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
+
     options_data = _calculate_last_price(options_data)
+
+    if options_data.empty:
+        raise CalculationError("No valid options data after price calculation")
+
     options_data = _calculate_IV(
         options_data, current_price, days_forward, risk_free_rate, solver_method
     )
+
+    if options_data.empty:
+        raise CalculationError("Failed to calculate implied volatility for any options")
+
     denoised_iv = _fit_bspline_IV(options_data)
     pdf = _create_pdf_point_arrays(
         denoised_iv, current_price, days_forward, risk_free_rate
@@ -95,8 +165,21 @@ def calculate_cdf(
 
     Returns:
         A tuple containing the price domain and the point values of the CDF
+
+    Raises:
+        InvalidInputError: If input is invalid
     """
+    if not isinstance(pdf_point_arrays, tuple) or len(pdf_point_arrays) != 2:
+        raise InvalidInputError("pdf_point_arrays must be a tuple of two arrays")
+
     x_array, pdf_array = pdf_point_arrays
+
+    if len(x_array) == 0:
+        raise InvalidInputError("Input arrays cannot be empty")
+
+    if len(x_array) != len(pdf_array):
+        raise InvalidInputError("Price and PDF arrays must have same length")
+
     cdf = []
     n = len(x_array)
 
@@ -112,7 +195,7 @@ def calculate_cdf(
             )
         cdf.append(integral)
 
-    return (x_array, cdf)
+    return (x_array, np.array(cdf))
 
 
 def calculate_quartiles(
@@ -205,7 +288,7 @@ def _calculate_IV(
         solver_method (Literal["newton", "brent"], optional):
             The method used to solve for IV.
             - "newton" (default) uses Newton-Raphson iteration.
-            - "brent" uses Brent’s method (more stable).
+            - "brent" uses Brent's method (more stable).
 
     Returns:
         DataFrame: The options_data DataFrame with an additional column for implied volatility (IV).
@@ -250,6 +333,12 @@ def _fit_bspline_IV(options_data: DataFrame) -> DataFrame:
     x = options_data["strike"]
     y = options_data["iv"]
 
+    # Check if we have enough data points for B-spline fitting
+    if len(x) < 4:
+        raise CalculationError(
+            f"Insufficient data for B-spline fitting: need at least 4 points, got {len(x)}"
+        )
+
     # fit the bspline using scipy.interpolate.splrep, with k=3
     """
     Bspline Parameters:
@@ -257,7 +346,12 @@ def _fit_bspline_IV(options_data: DataFrame) -> DataFrame:
         c = the B-spline coefficients
         k = the degree of the spline
     """
-    tck = interpolate.splrep(x, y, s=10, k=3)
+    try:
+        tck = interpolate.splrep(x, y, s=10, k=3)
+    except Exception as e:
+        raise CalculationError(
+            f"Failed to fit B-spline to implied volatility data: {str(e)}"
+        )
 
     dx = 0.1  # setting dx = 0.1 for numerical differentiation
     domain = int((max(x) - min(x)) / dx)
@@ -320,10 +414,10 @@ def _crop_pdf(
 
 def _bs_iv_brent_method(price, S, K, t, r):
     """
-    Computes the implied volatility (IV) of a European call option using Brent’s method.
+    Computes the implied volatility (IV) of a European call option using Brent's method.
 
     This function finds the implied volatility by solving for sigma (volatility) in the
-    Black-Scholes pricing formula. It uses Brent’s root-finding algorithm to find the
+    Black-Scholes pricing formula. It uses Brent's root-finding algorithm to find the
     volatility that equates the Black-Scholes model price to the observed market price.
 
     Args:
@@ -338,7 +432,7 @@ def _bs_iv_brent_method(price, S, K, t, r):
         np.nan: If the function fails to converge to a solution.
 
     Raises:
-        ValueError: If Brent’s method fails to find a root in the given range.
+        ValueError: If Brent's method fails to find a root in the given range.
 
     Notes:
         - The function searches for IV within the range [1e-6, 5.0] (0.0001% to 500% volatility).

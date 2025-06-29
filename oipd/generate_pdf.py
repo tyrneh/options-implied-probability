@@ -1,4 +1,5 @@
 from oipd.core import calculate_pdf, calculate_cdf, fit_kde
+from oipd.core.pdf import InvalidInputError, CalculationError
 from oipd.io import CSVReader, DataFrameReader
 import pandas as pd
 from traitlets import Bool
@@ -54,7 +55,27 @@ def run(
     Returns:
         - Returns a DataFrame containing three columns: Price, PDF, and CDF.
         - If save_to_csv is True, saves the results to a CSV file and returns the DataFrame.
+
+    Raises:
+        InvalidInputError: If input parameters are invalid
+        CalculationError: If calculation fails
+        ValueError: If save_to_csv is True but output_csv_path is not provided
+        FileNotFoundError: If input CSV file doesn't exist
     """
+
+    # Validate basic inputs
+    if not isinstance(fit_kernel_pdf, bool):
+        raise InvalidInputError(
+            f"fit_kernel_pdf must be a boolean, got {type(fit_kernel_pdf)}"
+        )
+
+    if not isinstance(save_to_csv, bool):
+        raise InvalidInputError(
+            f"save_to_csv must be a boolean, got {type(save_to_csv)}"
+        )
+
+    if save_to_csv and output_csv_path is None:
+        raise ValueError("output_csv_path must be provided when save_to_csv=True")
 
     # Select reader based on the type of input_data
     if isinstance(input_data, pd.DataFrame):
@@ -62,24 +83,41 @@ def run(
     elif isinstance(input_data, str):
         reader = CSVReader()
     else:
-        raise ValueError(
+        raise InvalidInputError(
             "input_data must be either a file path (str) or a pandas DataFrame."
         )
 
-    # Read options data using the selected reader.
-    options_data = reader.read(input_data, column_mapping)
+    try:
+        # Read options data using the selected reader.
+        options_data = reader.read(input_data, column_mapping)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Input file not found: {input_data}")
+    except Exception as e:
+        raise InvalidInputError(f"Failed to read input data: {str(e)}")
 
-    pdf_point_arrays = calculate_pdf(
-        options_data, current_price, days_forward, risk_free_rate, solver_method
-    )
+    try:
+        pdf_point_arrays = calculate_pdf(
+            options_data, current_price, days_forward, risk_free_rate, solver_method
+        )
+    except (InvalidInputError, CalculationError):
+        # Re-raise these with more context
+        raise
+    except Exception as e:
+        raise CalculationError(f"Failed to calculate PDF: {str(e)}")
 
     # Fit KDE to normalize PDF if desired
     if fit_kernel_pdf:
-        pdf_point_arrays = fit_kde(
-            pdf_point_arrays
-        )  # Ensure this returns a tuple of arrays
+        try:
+            pdf_point_arrays = fit_kde(
+                pdf_point_arrays
+            )  # Ensure this returns a tuple of arrays
+        except Exception as e:
+            raise CalculationError(f"Failed to fit KDE: {str(e)}")
 
-    cdf_point_arrays = calculate_cdf(pdf_point_arrays)
+    try:
+        cdf_point_arrays = calculate_cdf(pdf_point_arrays)
+    except Exception as e:
+        raise CalculationError(f"Failed to calculate CDF: {str(e)}")
 
     priceP, densityP = pdf_point_arrays
     priceC, densityC = cdf_point_arrays
@@ -89,9 +127,10 @@ def run(
 
     # Save or return DataFrame
     if save_to_csv:
-        if output_csv_path is None:
-            raise ValueError("output_csv_path must be provided when save_to_csv=True")
-        df.to_csv(output_csv_path, index=False)
+        try:
+            df.to_csv(output_csv_path, index=False)
+        except Exception as e:
+            raise IOError(f"Failed to save CSV file: {str(e)}")
         return df
     else:
         return df

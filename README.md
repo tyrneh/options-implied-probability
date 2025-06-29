@@ -1,4 +1,4 @@
-![OIPD logo](oipd/dashboard/resources/oipd-logo.png)
+![OIPD logo](.meta/images/OIPD%20Logo.png)
 
 ![Python version](https://img.shields.io/badge/python-3.10-blue.svg)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-black.svg)](https://github.com/ambv/black)
@@ -25,11 +25,23 @@ If you believe in the efficient market hypothesis, then the probability distribu
 
 ## Installation
 
-```zsh
+```bash
+# Basic installation (core functionality only)
 pip install oipd
+
+# With dashboard support
+pip install oipd[dashboard]
+
+# For development
+pip install oipd[dev]
+
+# Install everything
+pip install oipd[all]
 ```
 
 Please note that this project requires Python 3.10 or later.
+
+For more details on dependency management, see [DEPENDENCY_MANAGEMENT.md](DEPENDENCY_MANAGEMENT.md).
 
 
 ## Quick Start Guide
@@ -110,14 +122,14 @@ spy_pdf = op.run(
 <p align="center">
   <img src=".meta/images/ussteel.png" width="60%">
 </p>
-The distribution is bimodal, and given Nippon Steel’s proposed $55 per share acquisition, it can be thought of as two overlapping scenarios:
+The distribution is bimodal, and given Nippon Steel's proposed $55 per share acquisition, it can be thought of as two overlapping scenarios:
 
 1. Acquisition is approved:
-   - In this scenario, the share price would likely move above the $55 per share offer. This creates a “second peak” in the distribution
+   - In this scenario, the share price would likely move above the $55 per share offer. This creates a "second peak" in the distribution
    - By inspecting the cumulative prbability table (see [example.ipynb](example.ipynb)), we see there's a 33% probability that the deal is approved and price rises above $55
 
 2. Acquisition falls apart:
-   - Without the approval, the share price may drop back toward a level driven by “business as usual” fundamentals—here, that appears lower than the current $39.39. This is the “first peak” in the distribution
+   - Without the approval, the share price may drop back toward a level driven by "business as usual" fundamentals—here, that appears lower than the current $39.39. This is the "first peak" in the distribution
 
 <i>Note that the domain (x-axis) is limited in this graph, due to (1) not many strike prices exist for US Steel, and (2) some extreme ITM/OTM options did not have solvable IVs.</i>
 
@@ -182,4 +194,4 @@ The methodology in this package is a basic implementation, and more rigour is ne
 
 DISCLAIMER: This software is provided for informational and educational purposes only and does not constitute financial advice. Use it at your own risk. The author is not responsible for any financial losses or damages resulting from its use. Always consult with a qualified financial professional before making any financial decisions.
 
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
