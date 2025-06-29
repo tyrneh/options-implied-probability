@@ -26,11 +26,8 @@ If you believe in the efficient market hypothesis, then the probability distribu
 ## Installation
 
 ```bash
-# Basic installation (core functionality only)
+# Core installation
 pip install oipd
-
-# With dashboard support
-pip install oipd[dashboard]
 
 # For development
 pip install oipd[dev]

@@ -2,7 +2,7 @@ from typing import Dict, Tuple, Literal
 
 import numpy as np
 from pandas import concat, DataFrame
-from scipy.integrate import simps
+from scipy.integrate import simpson
 from scipy import interpolate
 from scipy.interpolate import interp1d
 from scipy.optimize import brentq
@@ -183,7 +183,7 @@ def calculate_cdf(
     cdf = []
     n = len(x_array)
 
-    total_area = simps(y=pdf_array[0:n], x=x_array)
+    total_area = simpson(y=pdf_array[0:n], x=x_array)
     remaining_area = 1 - total_area
 
     for i in range(n):
@@ -191,7 +191,7 @@ def calculate_cdf(
             integral = 0.0 + remaining_area / 2
         else:
             integral = (
-                simps(y=pdf_array[i - 1 : i + 1], x=x_array[i - 1 : i + 1]) + cdf[-1]
+                simpson(y=pdf_array[i - 1 : i + 1], x=x_array[i - 1 : i + 1]) + cdf[-1]
             )
         cdf.append(integral)
 

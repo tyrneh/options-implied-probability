@@ -1,9 +1,15 @@
-from oipd.core import calculate_pdf, calculate_cdf, fit_kde
+import warnings
+from typing import cast
+
+# --- Legacy imports kept for backward compatibility (exceptions) -----------
 from oipd.core.pdf import InvalidInputError, CalculationError
-from oipd.io import CSVReader, DataFrameReader
+
+# New high-level API
+from oipd.estimator import RND, MarketParams, ModelParams
+
+from oipd.io import CSVReader, DataFrameReader  # re-used for validation only
 import pandas as pd
-from traitlets import Bool
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, Literal
 
 
 def run(
@@ -95,42 +101,52 @@ def run(
     except Exception as e:
         raise InvalidInputError(f"Failed to read input data: {str(e)}")
 
-    try:
-        pdf_point_arrays = calculate_pdf(
-            options_data, current_price, days_forward, risk_free_rate, solver_method
+    # ------------------------------------------------------------------
+    # NEW IMPLEMENTATION – delegate to RND
+    # ------------------------------------------------------------------
+
+    warnings.warn(
+        "`oipd.generate_pdf.run()` is deprecated and will be removed in a future "
+        "release. Please switch to the new `RND` API (oipd.RND).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    market = MarketParams(
+        current_price=current_price,
+        days_forward=days_forward,
+        risk_free_rate=risk_free_rate,
+    )
+
+    model = ModelParams(
+        solver=solver_method,
+        fit_kde=fit_kernel_pdf,
+    )
+
+    # Delegate – choose the right constructor based on the data type
+    if isinstance(input_data, pd.DataFrame):
+        est = RND.from_dataframe(
+            input_data,
+            market,
+            model=model,
+            column_mapping=column_mapping,
         )
-    except (InvalidInputError, CalculationError):
-        # Re-raise these with more context
-        raise
-    except Exception as e:
-        raise CalculationError(f"Failed to calculate PDF: {str(e)}")
+    else:
+        est = RND.from_csv(
+            input_data,
+            market,
+            model=model,
+            column_mapping=column_mapping,
+        )
 
-    # Fit KDE to normalize PDF if desired
-    if fit_kernel_pdf:
-        try:
-            pdf_point_arrays = fit_kde(
-                pdf_point_arrays
-            )  # Ensure this returns a tuple of arrays
-        except Exception as e:
-            raise CalculationError(f"Failed to fit KDE: {str(e)}")
+    df = est.to_frame()
 
-    try:
-        cdf_point_arrays = calculate_cdf(pdf_point_arrays)
-    except Exception as e:
-        raise CalculationError(f"Failed to calculate CDF: {str(e)}")
-
-    priceP, densityP = pdf_point_arrays
-    priceC, densityC = cdf_point_arrays
-
-    # Convert results to DataFrame
-    df = pd.DataFrame({"Price": priceP, "PDF": densityP, "CDF": densityC})
-
-    # Save or return DataFrame
     if save_to_csv:
+        if output_csv_path is None:
+            raise ValueError("`output_csv_path` must be provided when save_to_csv=True")
         try:
             df.to_csv(output_csv_path, index=False)
         except Exception as e:
             raise IOError(f"Failed to save CSV file: {str(e)}")
-        return df
-    else:
-        return df
+
+    return df

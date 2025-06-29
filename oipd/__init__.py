@@ -13,7 +13,9 @@ from oipd.core import (
 
 from oipd.io import CSVReader, DataFrameReader, CSVReadError
 
-__version__ = "0.0.5"
+from oipd.estimator import RND, MarketParams, ModelParams, RNDResult
+
+__version__ = "0.1.0"
 
 __all__ = [
     # Core functions
@@ -29,4 +31,9 @@ __all__ = [
     # Readers
     "CSVReader",
     "DataFrameReader",
+    # High-level API
+    "RND",
+    "MarketParams",
+    "ModelParams",
+    "RNDResult",
 ]
