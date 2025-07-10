@@ -92,10 +92,3 @@ pip freeze > requirements-lock.txt
 # Update to latest compatible versions
 pip install --upgrade oipd
 ```
-
-## Future Considerations
-
-1. **Consider using Poetry or pipenv**: For better dependency resolution
-2. **Add upper bounds carefully**: Only when known incompatibilities exist
-3. **Regular updates**: Review and update version constraints quarterly
-4. **Security scanning**: Use tools like `pip-audit` or `safety` to check for vulnerabilities 

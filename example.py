@@ -59,7 +59,33 @@ fig = est.plot(
 )
 plt.show()
 
-
 # ---- test prob at or above a price X ---- #
 prob = est.prob_at_or_above(28)
 print(prob)
+
+# --- testing yfinance --- #
+expiry_dates = RND.list_expiry_dates("AAPL")
+print(expiry_dates[:])  # ['2025-07-11', '2025-07-18', '2025-07-25']
+
+# 2. Use ticker data with market parameters (current price fetched automatically)
+market = MarketParams(
+    current_price=None,  # Will be fetched automatically from yfinance
+    current_date=date(2025, 7, 10),
+    expiry_date=date(2026, 5, 15),
+    risk_free_rate=0.04,
+)
+
+model = ModelParams(fit_kde=True)
+
+# 3. Fetch and estimate directly from ticker (expiry comes from market params)
+est = RND.from_ticker("AAPL", market, model=model)
+
+# Plot with automatically fetched current price - no need to pass market_params!
+fig = est.plot()
+plt.show()
+
+# You can also access the market parameters that were used (including fetched current price)
+if est.market_params and est.market_params.current_price:
+    print(f"Current price used: ${est.market_params.current_price:.2f}")
+else:
+    print("Current price not available")

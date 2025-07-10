@@ -48,8 +48,13 @@ dev = [
     "flake8>=6.1.0,<7.0.0",
 ]
 
-# All extras (currently only dev)
-all = ["oipd[dev]"]
+# Data fetching dependencies
+data = [
+    "yfinance>=1.0.0",
+]
+
+# All extras
+all = ["oipd[dev,data]"]
 
 [project.urls]
 "Homepage" = "https://github.com/tyrneh/options-implied-probability"

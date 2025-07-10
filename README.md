@@ -29,6 +29,9 @@ If you believe in the efficient market hypothesis, then the probability distribu
 # Core installation
 pip install oipd
 
+# With data fetching capabilities (yfinance)
+pip install oipd[data]
+
 # For development
 pip install oipd[dev]
 
@@ -53,7 +56,7 @@ The API uses three main components:
 2. **RND** - Main estimator class
 3. **ModelParams** - Optional algorithm settings
 
-```python
+     ```python
 from oipd import RND, MarketParams, ModelParams
 from datetime import date
 
@@ -88,6 +91,31 @@ print(f"Probability >= $45: {prob:.1%}")
 # 6. Access results
 df = est.to_frame()                  # Get as pandas DataFrame
 est.to_csv("results.csv")           # Save to CSV
+```
+
+### **Ticker-Based Data Fetching**
+
+For live market data, you can fetch options data directly from financial APIs:
+
+```python
+# Install the data fetching dependency
+# pip install oipd[data]
+
+# 1. Discover available expiry dates
+expiry_dates = RND.list_expiry_dates("AAPL")
+print(expiry_dates[:3])  # ['2025-01-17', '2025-01-24', '2025-02-21']
+
+# 2. Use ticker data with market parameters
+market = MarketParams(
+    current_price=150.0,
+    current_date=date(2025, 1, 10),
+    expiry_date=date(2025, 1, 17),
+    risk_free_rate=0.045,
+)
+
+# 3. Fetch and estimate directly from ticker
+est = RND.from_ticker("AAPL", expiry_dates[0], market)
+est.plot()
 ```
 
 ### **Input Data Requirements**

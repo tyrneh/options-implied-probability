@@ -14,7 +14,7 @@ from oipd.core import (
     InvalidInputError,
     CalculationError,
 )
-from oipd.io import CSVReader, DataFrameReader
+from oipd.io import CSVReader, DataFrameReader, YFinanceReader
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ from oipd.io import CSVReader, DataFrameReader
 class MarketParams:
     """Market–specific parameters for the RND estimation."""
 
-    current_price: float
+    current_price: Optional[float]
     risk_free_rate: float
     # Either provide `days_forward` directly *or* specify `current_date` & `expiry_date`.
     days_forward: Optional[int] = None
@@ -151,6 +151,41 @@ class DataFrameSource:
         return self._reader.read(self._df, column_mapping=self._column_mapping)
 
 
+class TickerSource:
+    """Load options data from yfinance for a given ticker and expiry."""
+
+    def __init__(
+        self,
+        ticker: str,
+        expiry: str,
+        column_mapping: Optional[Dict[str, str]] = None,
+        cache_enabled: bool = True,
+        cache_ttl_minutes: int = 15,
+    ):
+        self._ticker = ticker
+        self._expiry = expiry
+        self._column_mapping = column_mapping or {}
+        self._reader = YFinanceReader(
+            cache_enabled=cache_enabled, cache_ttl_minutes=cache_ttl_minutes
+        )
+        self._current_price: Optional[float] = None
+
+    def load(self) -> pd.DataFrame:
+        """Load options data and extract current price"""
+        ticker_expiry = f"{self._ticker}:{self._expiry}"
+        df = self._reader.read(ticker_expiry, column_mapping=self._column_mapping)
+
+        # Extract current price from DataFrame metadata
+        self._current_price = df.attrs.get("current_price")
+
+        return df
+
+    @property
+    def current_price(self) -> Optional[float]:
+        """Get the current price fetched from yfinance"""
+        return self._current_price
+
+
 # ---------------------------------------------------------------------------
 # Core estimation routine (non-public)
 # ---------------------------------------------------------------------------
@@ -160,6 +195,12 @@ def _estimate(
     options_data: pd.DataFrame, market: MarketParams, model: ModelParams
 ) -> RNDResult:
     """Run the core RND estimation given fully validated input data."""
+
+    # Validate that current_price is provided
+    if market.current_price is None:
+        raise ValueError(
+            "current_price must be provided in MarketParams for RND estimation"
+        )
 
     # 1. Calculate PDF
     try:
@@ -204,6 +245,7 @@ class RND:
     def __init__(self, model: Optional[ModelParams] = None):
         self.model = model or ModelParams()
         self._result: Optional[RNDResult] = None
+        self._market_params: Optional[MarketParams] = None
 
     # ------------------------------------------------------------------
     # Fit helpers
@@ -213,6 +255,7 @@ class RND:
         """Estimate the RND from the given *DataSource* and market parameters."""
         options_data = source.load()
         self._result = _estimate(options_data, market, self.model)
+        self._market_params = market  # Store the market parameters
         return self
 
     # Convenience constructors -------------------------------------------------
@@ -243,17 +286,159 @@ class RND:
         source = DataFrameSource(df, column_mapping=column_mapping)
         return instance.fit(source, market)
 
-    # Stub for future ticker-based constructor
+    @classmethod
+    def list_expiry_dates(cls, ticker: str, vendor: str = "yfinance") -> list[str]:
+        """
+        List available expiry dates for a given ticker.
+
+        Parameters
+        ----------
+        ticker : str
+            Stock ticker symbol (e.g., "AAPL", "SPY")
+        vendor : str, default "yfinance"
+            Data vendor to use (currently only "yfinance" is supported)
+
+        Returns
+        -------
+        list[str]
+            List of available expiry dates in YYYY-MM-DD format
+
+        Examples
+        --------
+        >>> expiry_dates = RND.list_expiry_dates("AAPL")
+        >>> print(expiry_dates)
+        ['2025-01-17', '2025-01-24', '2025-02-21', ...]
+        """
+        if vendor != "yfinance":
+            raise NotImplementedError(
+                f"Vendor '{vendor}' is not supported yet. Only 'yfinance' is available."
+            )
+
+        return YFinanceReader.list_expiry_dates(ticker)
+
     @classmethod
     def from_ticker(
         cls,
         ticker: str,
-        expiry: Optional[str] = None,
+        market: Optional[MarketParams] = None,
+        *,
+        model: Optional[ModelParams] = None,
         vendor: str = "yfinance",
+        current_price_override: Optional[float] = None,
+        cache_enabled: bool = True,
+        cache_ttl_minutes: int = 15,
         **kwargs,
     ) -> "RND":
-        """Fetch option chain from a data vendor (not yet implemented)."""
-        raise NotImplementedError("Ticker-based data fetching is not implemented yet.")
+        """
+        Fetch option chain from a data vendor and estimate RND.
+
+        Parameters
+        ----------
+        ticker : str
+            Stock ticker symbol (e.g., "AAPL", "SPY")
+        market : MarketParams
+            Market parameters including expiry date and risk-free rate.
+            If current_price is not provided, it will be fetched automatically from yfinance.
+        model : ModelParams, optional
+            Model configuration parameters
+        vendor : str, default "yfinance"
+            Data vendor to use (currently only "yfinance" is supported)
+        current_price_override : float, optional
+            Override the current price instead of fetching from yfinance
+        cache_enabled : bool, default True
+            Whether to enable caching of yfinance data
+        cache_ttl_minutes : int, default 15
+            Cache time-to-live in minutes
+        **kwargs
+            Additional keyword arguments
+
+        Returns
+        -------
+        RND
+            Fitted RND estimator
+
+        Examples
+        --------
+        >>> # First, discover available expiry dates
+        >>> expiry_dates = RND.list_expiry_dates("AAPL")
+        >>> print(expiry_dates[0])  # e.g., '2025-01-17'
+        >>>
+        >>> # Then use the expiry date to fetch options data (current price fetched automatically)
+        >>> market = MarketParams(expiry_date=date(2025, 1, 17), risk_free_rate=0.045)
+        >>> est = RND.from_ticker("AAPL", market)
+        >>>
+        >>> # Or override the current price if needed
+        >>> market = MarketParams(current_price=150.0, expiry_date=date(2025, 1, 17), risk_free_rate=0.045)
+        >>> est = RND.from_ticker("AAPL", market, current_price_override=155.0)
+        """
+        if vendor != "yfinance":
+            raise NotImplementedError(
+                f"Vendor '{vendor}' is not supported yet. Only 'yfinance' is available."
+            )
+
+        # Extract expiry date from market parameters
+        if market.expiry_date is None:
+            raise ValueError(
+                "expiry_date must be provided in MarketParams for ticker-based data fetching"
+            )
+
+        expiry = market.expiry_date.strftime("%Y-%m-%d")
+
+        # yfinance returns columns with different names, so we need to map them
+        column_mapping = {
+            "strike": "strike",
+            "lastPrice": "last_price",
+            "bid": "bid",
+            "ask": "ask",
+        }
+
+        # Create ticker source and fetch data
+        source = TickerSource(
+            ticker=ticker,
+            expiry=expiry,
+            column_mapping=column_mapping,
+            cache_enabled=cache_enabled,
+            cache_ttl_minutes=cache_ttl_minutes,
+        )
+
+        # Load data to get current price
+        _ = source.load()
+
+        # Update market parameters with fetched current price if not provided
+        if market.current_price is None and current_price_override is None:
+            fetched_price = source.current_price
+            if fetched_price is None:
+                raise ValueError(
+                    f"Could not fetch current price for {ticker}. "
+                    "Please provide current_price in MarketParams or use current_price_override."
+                )
+            # Create a new MarketParams with the fetched price
+            updated_market = MarketParams(
+                current_price=fetched_price,
+                risk_free_rate=market.risk_free_rate,
+                days_forward=market.days_forward,
+                current_date=market.current_date,
+                expiry_date=market.expiry_date,
+                dividend_yield=market.dividend_yield,
+                dividend_schedule=market.dividend_schedule,
+            )
+        elif current_price_override is not None:
+            # Use the override price
+            updated_market = MarketParams(
+                current_price=current_price_override,
+                risk_free_rate=market.risk_free_rate,
+                days_forward=market.days_forward,
+                current_date=market.current_date,
+                expiry_date=market.expiry_date,
+                dividend_yield=market.dividend_yield,
+                dividend_schedule=market.dividend_schedule,
+            )
+        else:
+            updated_market = market  # No change needed
+
+        # Create instance and fit
+        instance = cls(model)
+        return instance.fit(source, updated_market)
 
     # ------------------------------------------------------------------
     # Accessors
@@ -273,6 +458,15 @@ class RND:
     @property
     def cdf_(self):
         return self.result.cdf
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def market_params(self) -> Optional[MarketParams]:
+        """Get the market parameters used for estimation."""
+        return self._market_params
 
     # ------------------------------------------------------------------
     # Utility helpers
@@ -347,7 +541,7 @@ class RND:
         show_current_price : bool, default True
             Whether to show a vertical line at current price
         market_params : MarketParams, optional
-            If provided and show_current_price is True, uses the current_price from here
+            Market parameters to use for plotting. If None, uses the parameters from estimation.
         style : {'publication', 'default'}, default 'publication'
             Visual style for the plots
         source : str, optional
@@ -363,11 +557,15 @@ class RND:
         Examples
         --------
         >>> est = RND.from_csv('data.csv', market)
-        >>> est.plot()  # Shows overlayed PDF and CDF with dual y-axes
+        >>> est.plot()  # Uses market parameters from estimation automatically
         >>> est.plot(kind='pdf')  # Shows only PDF
         >>> est.plot(source='Source: Bloomberg, Author analysis')
         """
         from oipd.graphics import plot_rnd
+
+        # Use stored market parameters if none provided
+        if market_params is None:
+            market_params = self._market_params
 
         # Extract current price and date from market_params if provided
         current_price = None
