@@ -21,6 +21,7 @@ from oipd.io import CSVReader, DataFrameReader
 # Dataclasses holding user configurable parameters
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class MarketParams:
     """Market–specific parameters for the RND estimation."""
@@ -43,7 +44,9 @@ class MarketParams:
         # If days_forward not given, derive it from dates.
         if self.days_forward is None:
             if self.expiry_date is None:
-                raise ValueError("Either `days_forward` or `expiry_date` must be provided.")
+                raise ValueError(
+                    "Either `days_forward` or `expiry_date` must be provided."
+                )
 
             # default current_date to today if missing
             current = self.current_date or date.today()
@@ -56,13 +59,23 @@ class MarketParams:
 
             delta = (exp - current).days
             if delta <= 0:
-                raise ValueError("`expiry_date` must be in the future relative to `current_date`.")
+                raise ValueError(
+                    "`expiry_date` must be in the future relative to `current_date`."
+                )
             object.__setattr__(self, "days_forward", delta)
         else:
             # days_forward provided directly. Optionally check consistency if dates also supplied.
             if self.expiry_date is not None and self.current_date is not None:
-                current = self.current_date if not isinstance(self.current_date, datetime) else self.current_date.date()
-                exp = self.expiry_date if not isinstance(self.expiry_date, datetime) else self.expiry_date.date()
+                current = (
+                    self.current_date
+                    if not isinstance(self.current_date, datetime)
+                    else self.current_date.date()
+                )
+                exp = (
+                    self.expiry_date
+                    if not isinstance(self.expiry_date, datetime)
+                    else self.expiry_date.date()
+                )
                 delta = (exp - current).days
                 if delta != self.days_forward:
                     raise ValueError(
@@ -104,6 +117,7 @@ class RNDResult:
 # Data-loading abstraction
 # ---------------------------------------------------------------------------
 
+
 class DataSource(Protocol):
     """Minimal interface every data source must implement."""
 
@@ -126,7 +140,9 @@ class CSVSource:
 class DataFrameSource:
     """Wrap an in-memory DataFrame so that it satisfies the *DataSource* Protocol."""
 
-    def __init__(self, df: pd.DataFrame, column_mapping: Optional[Dict[str, str]] = None):
+    def __init__(
+        self, df: pd.DataFrame, column_mapping: Optional[Dict[str, str]] = None
+    ):
         self._df = df
         self._column_mapping = column_mapping or {}
         self._reader = DataFrameReader()
@@ -139,7 +155,10 @@ class DataFrameSource:
 # Core estimation routine (non-public)
 # ---------------------------------------------------------------------------
 
-def _estimate(options_data: pd.DataFrame, market: MarketParams, model: ModelParams) -> RNDResult:
+
+def _estimate(
+    options_data: pd.DataFrame, market: MarketParams, model: ModelParams
+) -> RNDResult:
     """Run the core RND estimation given fully validated input data."""
 
     # 1. Calculate PDF
@@ -147,7 +166,9 @@ def _estimate(options_data: pd.DataFrame, market: MarketParams, model: ModelPara
         pdf_point_arrays = calculate_pdf(
             options_data,
             market.current_price,
-            cast(int, market.days_forward),  # days_forward is guaranteed int after validation
+            cast(
+                int, market.days_forward
+            ),  # days_forward is guaranteed int after validation
             market.risk_free_rate,
             model.solver,
         )
@@ -163,7 +184,9 @@ def _estimate(options_data: pd.DataFrame, market: MarketParams, model: ModelPara
     # 3. Convert PDF → CDF
     price_array, pdf_array = cast(tuple[np.ndarray, np.ndarray], pdf_point_arrays)
     try:
-        _, cdf_array = calculate_cdf(cast(tuple[np.ndarray, np.ndarray], pdf_point_arrays))
+        _, cdf_array = calculate_cdf(
+            cast(tuple[np.ndarray, np.ndarray], pdf_point_arrays)
+        )
     except Exception as exc:
         raise CalculationError(f"Failed to compute CDF: {exc}")
 
@@ -173,6 +196,7 @@ def _estimate(options_data: pd.DataFrame, market: MarketParams, model: ModelPara
 # ---------------------------------------------------------------------------
 # Public façade – what casual users will interact with
 # ---------------------------------------------------------------------------
+
 
 class RND:
     """High-level, user-friendly estimator of the option-implied risk-neutral density (RND)."""
@@ -260,3 +284,76 @@ class RND:
 
     def to_csv(self, path: str, **kwargs) -> None:
         self.result.to_csv(path, **kwargs)
+
+    def plot(
+        self,
+        kind: Literal["pdf", "cdf", "both"] = "both",
+        figsize: tuple[float, float] = (10, 5),
+        title: Optional[str] = None,
+        show_current_price: bool = True,
+        market_params: Optional[MarketParams] = None,
+        style: Literal["publication", "default"] = "publication",
+        source: Optional[str] = None,
+        **kwargs,
+    ):
+        """
+        Plot the PDF and/or CDF with a clean, customizable interface.
+
+        Parameters
+        ----------
+        kind : {'pdf', 'cdf', 'both'}, default 'both'
+            Which distribution(s) to plot. When 'both', overlays PDF and CDF on same plot with dual y-axes
+        figsize : tuple of float, default (10, 5)
+            Figure size in inches (width, height)
+        title : str, optional
+            Main title for the plot. If None, auto-generates based on kind
+        show_current_price : bool, default True
+            Whether to show a vertical line at current price
+        market_params : MarketParams, optional
+            If provided and show_current_price is True, uses the current_price from here
+        style : {'publication', 'default'}, default 'publication'
+            Visual style for the plots
+        source : str, optional
+            Source attribution text (e.g., "Source: Bloomberg, Author analysis")
+        **kwargs
+            Additional keyword arguments passed to matplotlib plot()
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            The matplotlib figure object
+
+        Examples
+        --------
+        >>> est = RND.from_csv('data.csv', market)
+        >>> est.plot()  # Shows overlayed PDF and CDF with dual y-axes
+        >>> est.plot(kind='pdf')  # Shows only PDF
+        >>> est.plot(source='Source: Bloomberg, Author analysis')
+        """
+        from oipd.graphics import plot_rnd
+
+        # Extract current price and date from market_params if provided
+        current_price = None
+        current_date = None
+        if market_params and hasattr(market_params, "current_price"):
+            current_price = market_params.current_price
+        if market_params and hasattr(market_params, "current_date"):
+            # Format the date nicely
+            if market_params.current_date:
+                date_obj = market_params.current_date
+                current_date = date_obj.strftime("%b %d, %Y")  # e.g., "Mar 3, 2025"
+
+        return plot_rnd(
+            prices=self.result.prices,
+            pdf=self.pdf_,
+            cdf=self.cdf_,
+            kind=kind,
+            figsize=figsize,
+            title=title,
+            show_current_price=show_current_price,
+            current_price=current_price,
+            current_date=current_date,
+            style=style,
+            source=source,
+            **kwargs,
+        )

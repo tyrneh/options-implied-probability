@@ -14,18 +14,41 @@ pyplot.rcParams["axes.autolimit_mode"] = "round_numbers"
 
 
 def generate_pdf_figure(
-    density_function: Tuple[ndarray],
+    density_function: Tuple[ndarray, ndarray],
     *,
-    security_ticker: str,
-    expiry_date: datetime,
+    security_ticker: Optional[str] = None,
+    expiry_date: Optional[datetime] = None,
     current_price: Optional[Union[float, bool]] = False,
+    title: Optional[str] = None,
 ) -> Figure:
+    """Generate a PDF figure with flexible parameters.
+
+    Parameters
+    ----------
+    density_function : Tuple[ndarray]
+        Tuple of (prices, pdf_values)
+    security_ticker : str, optional
+        Ticker symbol for the title
+    expiry_date : datetime, optional
+        Expiry date for the title
+    current_price : float or False, optional
+        Current price to show as vertical line
+    title : str, optional
+        Custom title (overrides auto-generated title)
+    """
     fig, ax = pyplot.subplots()
     ax.plot(density_function[0], density_function[1])
-    ax.set_title(
-        f"Probability Density Function of the price of"
-        f"\n{security_ticker} on {expiry_date}"
-    )
+
+    # Generate title
+    if title is not None:
+        ax.set_title(title)
+    elif security_ticker and expiry_date:
+        ax.set_title(
+            f"Probability Density Function of the price of"
+            f"\n{security_ticker} on {expiry_date}"
+        )
+    else:
+        ax.set_title("Probability Density Function")
 
     # add axis titles
     ax.set_xlabel("Price")
@@ -51,26 +74,51 @@ def generate_pdf_figure(
 
 
 def generate_cdf_figure(
-    density_function: Tuple[ndarray],
+    density_function: Tuple[ndarray, ndarray],
     *,
-    security_ticker: str,
-    expiry_date: datetime,
+    security_ticker: Optional[str] = None,
+    expiry_date: Optional[datetime] = None,
     current_price: Optional[Union[float, bool]] = False,
     quartiles: Optional[bool] = False,
+    title: Optional[str] = None,
 ) -> Figure:
     """Create a Matplotlib Figure object of a CDF
 
     Useful for drawing a graph using Streamlit
 
-    Returns:
+    Parameters
+    ----------
+    density_function : Tuple[ndarray]
+        Tuple of (prices, cdf_values)
+    security_ticker : str, optional
+        Ticker symbol for the title
+    expiry_date : datetime, optional
+        Expiry date for the title
+    current_price : float or False, optional
+        Current price to show as vertical line
+    quartiles : bool, optional
+        Whether to show quartile lines
+    title : str, optional
+        Custom title (overrides auto-generated title)
+
+    Returns
+    -------
+    Figure
         A Matplotlib Figure object of the generated graph
     """
     fig, ax = pyplot.subplots()
     ax.plot(density_function[0], density_function[1])
-    ax.set_title(
-        f"Cumulative Density Function of the price of"
-        f"\n{security_ticker} on {expiry_date}"
-    )
+
+    # Generate title
+    if title is not None:
+        ax.set_title(title)
+    elif security_ticker and expiry_date:
+        ax.set_title(
+            f"Cumulative Density Function of the price of"
+            f"\n{security_ticker} on {expiry_date}"
+        )
+    else:
+        ax.set_title("Cumulative Density Function")
 
     # add axis titles
     ax.set_xlabel("Price")
@@ -80,7 +128,7 @@ def generate_cdf_figure(
     ax.tick_params(axis="x", which="minor", bottom=False)
 
     # format y-axis
-    ax.set_ylim([0, 1])
+    ax.set_ylim(0, 1)
     ax.set_yticks(linspace(0, 1, 11))
     ax.yaxis.set_minor_locator(MultipleLocator(0.05))
 
