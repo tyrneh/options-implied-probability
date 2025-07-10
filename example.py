@@ -6,16 +6,16 @@ from datetime import date
 #     strike , last_price , bid , ask
 column_mapping = {
     "Strike": "strike",
-    "Last": "last_price",
+    "Last Price": "last_price",
     "Bid": "bid",
     "Ask": "ask",
 }
 
 # 2️⃣  market parameters
 market = MarketParams(
-    current_price=62.76,
-    current_date=date(2025, 7, 8),
-    expiry_date=date(2025, 11, 17),
+    current_price=39.39,
+    current_date=date(2025, 3, 3),
+    expiry_date=date(2025, 12, 19),
     risk_free_rate=0.04,
 )
 
@@ -24,7 +24,7 @@ model = ModelParams(fit_kde=True)
 
 # 4️⃣  run
 est = RND.from_csv(
-    "data/Calls Crude Oil WTI Dec 2026 Options Prices - 11-17-2026 CurrentPrice 6276.csv",
+    "data/ussteel_date20250303_strike20251219_price3939.csv",
     market,
     model=model,
     column_mapping=column_mapping,  # ← here
@@ -48,7 +48,6 @@ fig = est.plot(
     kind="pdf",
     market_params=market,
     figsize=(8, 6),
-    source="Source: Options market data",
 )
 plt.show()
 
@@ -57,6 +56,10 @@ fig = est.plot(
     kind="cdf",
     market_params=market,
     figsize=(8, 6),
-    source="Source: Options market data",
 )
 plt.show()
+
+
+# ---- test prob at or above a price X ---- #
+prob = est.prob_at_or_above(28)
+print(prob)

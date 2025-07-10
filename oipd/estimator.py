@@ -285,6 +285,43 @@ class RND:
     def to_csv(self, path: str, **kwargs) -> None:
         self.result.to_csv(path, **kwargs)
 
+    def prob_at_or_above(self, price: float) -> float:
+        """
+        Calculate the probability that the future price will be at or above a specified price.
+
+        This is computed as 1 - CDF(price), where CDF is the cumulative distribution function.
+
+        Parameters
+        ----------
+        price : float
+            The price threshold to evaluate
+
+        Returns
+        -------
+        float
+            Probability (between 0 and 1) that the future price will be at or above the specified price
+
+        Examples
+        --------
+        >>> est = RND.from_csv('data.csv', market)
+        >>> prob = est.prob_at_or_above(39.39)  # Returns probability like 0.605 (60.5%)
+        >>> print(f"Probability price >= $39.39: {prob:.1%}")  # Prints: "Probability price >= $39.39: 60.5%"
+        """
+        prices = self.result.prices
+        cdf = self.result.cdf
+
+        # Handle edge cases
+        if price <= prices.min():
+            return 1.0  # If price is below minimum, probability is 100%
+        if price >= prices.max():
+            return 0.0  # If price is above maximum, probability is 0%
+
+            # Interpolate CDF at the specified price
+        cdf_at_price = np.interp(price, prices, cdf)
+
+        # Return 1 - CDF (probability of being at or above)
+        return float(1.0 - cdf_at_price)
+
     def plot(
         self,
         kind: Literal["pdf", "cdf", "both"] = "both",
@@ -335,6 +372,7 @@ class RND:
         # Extract current price and date from market_params if provided
         current_price = None
         current_date = None
+        expiry_date = None
         if market_params and hasattr(market_params, "current_price"):
             current_price = market_params.current_price
         if market_params and hasattr(market_params, "current_date"):
@@ -342,6 +380,11 @@ class RND:
             if market_params.current_date:
                 date_obj = market_params.current_date
                 current_date = date_obj.strftime("%b %d, %Y")  # e.g., "Mar 3, 2025"
+        if market_params and hasattr(market_params, "expiry_date"):
+            # Format the expiry date nicely
+            if market_params.expiry_date:
+                expiry_obj = market_params.expiry_date
+                expiry_date = expiry_obj.strftime("%b %d, %Y")  # e.g., "Dec 19, 2025"
 
         return plot_rnd(
             prices=self.result.prices,
@@ -353,6 +396,7 @@ class RND:
             show_current_price=show_current_price,
             current_price=current_price,
             current_date=current_date,
+            expiry_date=expiry_date,
             style=style,
             source=source,
             **kwargs,

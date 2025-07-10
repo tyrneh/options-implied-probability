@@ -43,76 +43,66 @@ For more details on dependency management, see [DEPENDENCY_MANAGEMENT.md](DEPEND
 
 ## Quick Start Guide
 
-The file [`example.ipynb`](example.ipynb) is supplied as a demo.
+The file [`example.py`](example.py) is supplied as a demo.
 
-<b>The user will need to specify 4 mandatory arguments:</b>
+### **Basic Usage**
 
-### **Mandatory Arguments:**
-1. `input_data`:  
-   - Can either be a `str`: a file path to a CSV, or a `pd.DataFrame`: a pandas DataFrame containing the options data
-   - The input data must contain at least the following columns: `'strike', 'last_price', 'bid', 'ask'`
+The API uses three main components:
 
-2. `current_price`: A number representing the underlying asset's current price
-
-3. `days_forward`: A number representing the days between the current date and the strike date
-
-4. `risk_free_rate`: A number indicating the annual risk-free rate in nominal terms
-
-### **Optional Arguments:**
-5. `fit_kernel_pdf`: *(optional)*  
-   - A boolean (`True` or `False`). Default: `False`
-   - If `True`, fits a kernel-density estimator (KDE) on the raw probability distribution. KDE may improve edge-behavior of the PDF
-
-6. `save_to_csv`: *(optional)*  
-   - A boolean (`True` or `False`). Default: `False`
-   - If `True`, saves the output to a CSV file
-
-7. `output_csv_path`: *(optional)*  
-   - A string specifying the file path where the user wishes to save the results
-   - Required if `save_to_csv=True`
-
-8. `solver_method`: *(optional)*  
-   - A string indicating which solver to use
-   - Options: `'newton'` or `'brent'`. Default: `'brent'`
-
-9. `column_mapping`: *(optional)*  
-   - A dictionary mapping user-provided column names to the expected format, like so: `{"user_column_name": "expected_column_name"}`
-   - Example:  
-     ```python
-     column_mapping = {
-         "strike_price": "strike",
-         "last_price": "last_price",
-         "bid_price": "bid",
-         "ask_price": "ask"
-     }
-     ```
-
-<b>3 examples of options data is provided in the `data/` folder, downloaded from Yahoo Finance.</b>
-
-Note that oipd only uses call options data for now. 
+1. **MarketParams** - Market data (current price, dates, risk-free rate)
+2. **RND** - Main estimator class
+3. **ModelParams** - Optional algorithm settings
 
 ```python
-import oipd.generate_pdf as op
+from oipd import RND, MarketParams, ModelParams
+from datetime import date
 
-# Example - SPY
-input_csv_path = "path_to_your_options_data_csv"
-current_price = 593.83
-current_date = "2025-03-03"
-strike_date = "2025-05-16"
-# Convert the strings to datetime objects
-current_date_dt = datetime.strptime(current_date, "%Y-%m-%d")
-strike_date_dt = datetime.strptime(strike_date, "%Y-%m-%d")
-# Calculate the difference in days
-days_difference = (strike_date_dt - current_date_dt).days
-
-spy_pdf = op.run(
-    input_data=input_csv_path,
-    current_price=float(current_price),
-    days_forward=int(days_difference),
-    risk_free_rate=0.03,
-    fit_kernel_pdf=True,
+# 1. Define market parameters
+market = MarketParams(
+    current_price=39.39,
+    current_date=date(2025, 3, 3),
+    expiry_date=date(2025, 12, 19),
+    risk_free_rate=0.04,
 )
+
+# 2. Optional: Configure model settings
+model = ModelParams(fit_kde=True)  # Enable KDE smoothing
+
+# 3. Load data and estimate RND
+est = RND.from_csv(
+    "path/to/options_data.csv",
+    market,
+    model=model,
+    column_mapping={"Strike": "strike", "Last Price": "last_price", "Bid": "bid", "Ask": "ask"}
+)
+
+# 4. Create publication-ready plots
+est.plot()                           # Overlay PDF and CDF
+est.plot(kind="pdf")                 # PDF only
+est.plot(kind="cdf")                 # CDF only
+
+# 5. Calculate probabilities
+prob = est.prob_at_or_above(45.0)    # P(price >= $45)
+print(f"Probability >= $45: {prob:.1%}")
+
+# 6. Access results
+df = est.to_frame()                  # Get as pandas DataFrame
+est.to_csv("results.csv")           # Save to CSV
 ```
+
+### **Input Data Requirements**
+
+Your CSV must contain at least these columns:
+- `strike` - Strike prices
+- `last_price` - Last traded price of options
+- `bid` - Bid prices
+- `ask` - Ask prices
+
+Use `column_mapping` to match your column names to the expected format.
+
+<b>3 examples of options data are provided in the `data/` folder, downloaded from Yahoo Finance.</b>
+
+Note that oipd only uses call options data for now.
 
 
 <b>Another interesting example is US Steel:</b>

@@ -19,6 +19,7 @@ def plot_rnd(
     show_current_price: bool = True,
     current_price: Optional[float] = None,
     current_date: Optional[str] = None,
+    expiry_date: Optional[str] = None,
     style: Literal["publication", "default"] = "publication",
     source: Optional[str] = None,
     **kwargs,
@@ -46,6 +47,8 @@ def plot_rnd(
         Current price value for reference line
     current_date : str, optional
         Current date for price annotation (e.g., "Mar 3, 2025")
+    expiry_date : str, optional
+        Expiry date for the distribution (e.g., "Mar 3, 2025")
     style : {'publication', 'default'}, default 'publication'
         Visual style for the plots
     source : str, optional
@@ -60,8 +63,9 @@ def plot_rnd(
 
     Examples
     --------
-    >>> plot_rnd(prices, pdf, cdf)  # Shows overlayed PDF and CDF with dual y-axes
-    >>> plot_rnd(prices, pdf, cdf, kind='pdf')  # Shows only PDF
+    >>> plot_rnd(prices, pdf, cdf)  # Shows overlayed PDF and CDF line plots with dual y-axes
+    >>> plot_rnd(prices, pdf, cdf, kind='pdf')  # Shows only PDF line plot
+    >>> plot_rnd(prices, pdf, cdf, expiry_date='Dec 19, 2025')  # Titles use "future price on Dec 19, 2025"
     >>> plot_rnd(prices, pdf, cdf, source='Source: Bloomberg, Author analysis')
     """
     try:
@@ -81,34 +85,37 @@ def plot_rnd(
 
     # Define colors for publication style
     if style == "publication":
-        pdf_color = "#87CEEB"  # Light blue for PDF
-        cdf_color = "#0F4C81"  # Publication blue
-        current_price_color = "#666666"  # Grey for current price
+        pdf_color = "#1976D2"  # blue for PDF
+        cdf_color = "#C62828"  # Red for CDF
+        current_price_color = "black"  # black for current price
     else:
         pdf_color = kwargs.get("color", "tab:blue")
         cdf_color = kwargs.get("color", "tab:orange")
-        current_price_color = "#666666"  # Grey for current price
+        current_price_color = "black"  # black for current price
 
     # Remove color from kwargs if we're setting it
     plot_kwargs = {k: v for k, v in kwargs.items() if k != "color"}
 
     if kind in ["pdf", "both"]:
-        # Plot PDF as area plot on left y-axis with pastel styling
+        # Plot PDF as line plot on left y-axis
         if kind == "both":
-            ax1.fill_between(
+            ax1.plot(
                 prices,
                 pdf,
-                alpha=0.5,  # Moderate alpha for balanced visibility
                 color=pdf_color,
-                edgecolor="none",  # Remove outline
+                linewidth=1.5,
                 label="PDF",  # Simplified label
                 **plot_kwargs,
             )
         else:
             # Individual PDF plot: no label for legend
-            ax1.fill_between(
-                prices, pdf, alpha=0.5, color=pdf_color, edgecolor="none", **plot_kwargs
-            )  # Moderate alpha, no outline
+            ax1.plot(
+                prices,
+                pdf,
+                color=pdf_color,
+                linewidth=1.5,
+                **plot_kwargs,
+            )
         ax1.set_xlabel("Price at expiry", fontsize=11)
         ax1.set_ylabel("Density", fontsize=11, color="#333333")  # Black y-axis title
         ax1.tick_params(axis="y", labelcolor=pdf_color)
@@ -181,11 +188,21 @@ def plot_rnd(
     # Set title
     if title is None:
         if kind == "pdf":
-            plot_title = "PDF"
+            if expiry_date:
+                plot_title = f"Implied PDF of future price on {expiry_date}"
+            else:
+                plot_title = "PDF"
         elif kind == "cdf":
-            plot_title = "CDF"
+            if expiry_date:
+                plot_title = f"Implied CDF of future price on {expiry_date}"
+            else:
+                plot_title = "CDF"
         else:
-            plot_title = "Risk-Neutral Distribution"
+            # For overlay plots, use expiry date if available
+            if expiry_date:
+                plot_title = f"Implied PDF and CDF of future price on {expiry_date}"
+            else:
+                plot_title = "Risk-Neutral Distribution"
     else:
         plot_title = title
 

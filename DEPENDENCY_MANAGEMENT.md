@@ -15,10 +15,6 @@ The core dependencies are the minimal set of packages required for the basic fun
 - **traitlets**: Type checking for configuration
 
 ### Optional Dependencies
-
-#### Dashboard (`[dashboard]`)
-- **streamlit**: Web-based dashboard interface
-
 #### Development (`[dev]`)
 - **pytest**: Testing framework
 - **pytest-cov**: Coverage reporting
@@ -34,13 +30,6 @@ The core dependencies are the minimal set of packages required for the basic fun
 pip install oipd
 # or from source:
 pip install -r requirements.txt
-```
-
-### With Dashboard Support
-```bash
-pip install oipd[dashboard]
-# or from source:
-pip install -r requirements.txt -r requirements-dashboard.txt
 ```
 
 ### Development Installation
