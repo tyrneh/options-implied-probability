@@ -95,28 +95,43 @@ est.to_csv("results.csv")           # Save to CSV
 
 ### **Ticker-Based Data Fetching**
 
-For live market data, you can fetch options data directly from financial APIs:
+`oipd` can fetch live option chains from data vendors (currently **yfinance**).
 
 ```python
 # Install the data fetching dependency
 # pip install oipd[data]
 
-# 1. Discover available expiry dates
-expiry_dates = RND.list_expiry_dates("AAPL")
-print(expiry_dates[:3])  # ['2025-01-17', '2025-01-24', '2025-02-21']
+from oipd import RND, MarketParams, ModelParams
+from datetime import date
 
-# 2. Use ticker data with market parameters
+# 1️⃣  Discover available expiry dates
+expiry_dates = RND.list_expiry_dates("AAPL")
+print(expiry_dates[:3])   # e.g. ['2025-07-11', '2025-07-18', '2025-07-25']
+
+# 2️⃣  Create MarketParams – omit current_price to auto-fetch it
 market = MarketParams(
-    current_price=150.0,
-    current_date=date(2025, 1, 10),
-    expiry_date=date(2025, 1, 17),
-    risk_free_rate=0.045,
+    current_price=None,          # will be auto-fetched and this object updated
+    current_date=date(2025, 7, 10),
+    expiry_date=date(2025, 7, 25),  # choose an expiry from step 1
+    risk_free_rate=0.04,
 )
 
-# 3. Fetch and estimate directly from ticker
-est = RND.from_ticker("AAPL", expiry_dates[0], market)
-est.plot()
+# 3️⃣  (Optional) tweak model settings
+model = ModelParams(fit_kde=True)
+
+# 4️⃣  Estimate directly from the ticker - this updates market.current_price
+est = RND.from_ticker("AAPL", market, model=model)
+
+# 5️⃣  Now market.current_price has been set, use it anywhere
+print(f"Fetched current price: ${market.current_price:.2f}")
+
+# 6️⃣  Plot works with the same market object  
+est.plot(market_params=market)
 ```
+
+Behind the scenes, the first call to a given `(ticker, expiry)` pair is cached on disk
+(default TTL 15 minutes) to avoid hitting vendor rate-limits. Cache files live in
+`.yfinance_cache/` – delete that folder if you want a fresh pull.
 
 ### **Input Data Requirements**
 

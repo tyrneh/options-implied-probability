@@ -10,7 +10,7 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - overhauled user API interface. Now, users interface using the RND() class
     - integrated plotting functionality
     - integrated convenient function to return the probability future price will be at or above some value
-
+- integrated yfinance support for automated options data pulling
 
 ## [0.0.6]
 ### Added

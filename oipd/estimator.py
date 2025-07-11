@@ -320,7 +320,7 @@ class RND:
     def from_ticker(
         cls,
         ticker: str,
-        market: Optional[MarketParams] = None,
+        market: MarketParams,
         *,
         model: Optional[ModelParams] = None,
         vendor: str = "yfinance",
@@ -377,6 +377,9 @@ class RND:
             )
 
         # Extract expiry date from market parameters
+        if market is None:
+            raise ValueError("market parameters must be provided")
+
         if market.expiry_date is None:
             raise ValueError(
                 "expiry_date must be provided in MarketParams for ticker-based data fetching"
@@ -404,7 +407,10 @@ class RND:
         # Load data to get current price
         _ = source.load()
 
-        # Update market parameters with fetched current price if not provided
+        # ------------------------------------------------------------------
+        # Update *the same* MarketParams instance so the caller sees changes
+        # ------------------------------------------------------------------
+
         if market.current_price is None and current_price_override is None:
             fetched_price = source.current_price
             if fetched_price is None:
@@ -412,33 +418,13 @@ class RND:
                     f"Could not fetch current price for {ticker}. "
                     "Please provide current_price in MarketParams or use current_price_override."
                 )
-            # Create a new MarketParams with the fetched price
-            updated_market = MarketParams(
-                current_price=fetched_price,
-                risk_free_rate=market.risk_free_rate,
-                days_forward=market.days_forward,
-                current_date=market.current_date,
-                expiry_date=market.expiry_date,
-                dividend_yield=market.dividend_yield,
-                dividend_schedule=market.dividend_schedule,
-            )
+            market.current_price = fetched_price  # mutate in-place
         elif current_price_override is not None:
-            # Use the override price
-            updated_market = MarketParams(
-                current_price=current_price_override,
-                risk_free_rate=market.risk_free_rate,
-                days_forward=market.days_forward,
-                current_date=market.current_date,
-                expiry_date=market.expiry_date,
-                dividend_yield=market.dividend_yield,
-                dividend_schedule=market.dividend_schedule,
-            )
-        else:
-            updated_market = market  # No change needed
+            market.current_price = current_price_override  # mutate in-place
 
-        # Create instance and fit
+        # Create instance and fit using the **mutated** market params (original object)
         instance = cls(model)
-        return instance.fit(source, updated_market)
+        return instance.fit(source, market)
 
     # ------------------------------------------------------------------
     # Accessors
