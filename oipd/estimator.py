@@ -14,7 +14,9 @@ from oipd.core import (
     InvalidInputError,
     CalculationError,
 )
-from oipd.io import CSVReader, DataFrameReader, YFinanceReader
+from oipd.io import CSVReader, DataFrameReader
+from oipd.vendor import get_reader
+from oipd.pricing.utils import prepare_dividends
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +92,7 @@ class ModelParams:
     solver: Literal["brent", "newton"] = "brent"
     fit_kde: bool = False
     american_to_european: bool = False  # placeholder for future functionality
+    pricing_engine: Literal["bs"] = "bs"
 
 
 @dataclass(frozen=True)
@@ -152,12 +155,13 @@ class DataFrameSource:
 
 
 class TickerSource:
-    """Load options data from yfinance for a given ticker and expiry."""
+    """Load options data from a vendor for a given ticker and expiry."""
 
     def __init__(
         self,
         ticker: str,
         expiry: str,
+        vendor: str = "yfinance",
         column_mapping: Optional[Dict[str, str]] = None,
         cache_enabled: bool = True,
         cache_ttl_minutes: int = 15,
@@ -165,9 +169,16 @@ class TickerSource:
         self._ticker = ticker
         self._expiry = expiry
         self._column_mapping = column_mapping or {}
-        self._reader = YFinanceReader(
-            cache_enabled=cache_enabled, cache_ttl_minutes=cache_ttl_minutes
-        )
+
+        reader_cls = get_reader(vendor)
+        # Most readers accept cache flags; if not, Python will ignore unexpected kwargs.
+        try:
+            self._reader = reader_cls(
+                cache_enabled=cache_enabled, cache_ttl_minutes=cache_ttl_minutes
+            )
+        except TypeError:
+            self._reader = reader_cls()
+
         self._current_price: Optional[float] = None
 
     def load(self) -> pd.DataFrame:
@@ -202,16 +213,26 @@ def _estimate(
             "current_price must be provided in MarketParams for RND estimation"
         )
 
+    # Determine effective spot and q considering dividend inputs
+    val_date = market.current_date or date.today()
+    spot_eff, q_eff = prepare_dividends(
+        spot=market.current_price,
+        dividend_schedule=market.dividend_schedule,
+        dividend_yield=market.dividend_yield,
+        r=market.risk_free_rate,
+        valuation_date=val_date,
+    )
+
     # 1. Calculate PDF
     try:
         pdf_point_arrays = calculate_pdf(
             options_data,
-            market.current_price,
-            cast(
-                int, market.days_forward
-            ),  # days_forward is guaranteed int after validation
+            spot_eff,
+            cast(int, market.days_forward),
             market.risk_free_rate,
             model.solver,
+            dividend_yield=q_eff,
+            pricing_engine=model.pricing_engine,
         )
     except (InvalidInputError, CalculationError):
         raise  # preserve stack & message
@@ -309,12 +330,11 @@ class RND:
         >>> print(expiry_dates)
         ['2025-01-17', '2025-01-24', '2025-02-21', ...]
         """
-        if vendor != "yfinance":
-            raise NotImplementedError(
-                f"Vendor '{vendor}' is not supported yet. Only 'yfinance' is available."
-            )
+        if vendor not in ("yfinance"):
+            raise NotImplementedError(f"Vendor '{vendor}' is not supported yet.")
 
-        return YFinanceReader.list_expiry_dates(ticker)
+        reader_cls = get_reader(vendor)
+        return reader_cls.list_expiry_dates(ticker)
 
     @classmethod
     def from_ticker(
@@ -371,12 +391,9 @@ class RND:
         >>> market = MarketParams(current_price=150.0, expiry_date=date(2025, 1, 17), risk_free_rate=0.045)
         >>> est = RND.from_ticker("AAPL", market, current_price_override=155.0)
         """
-        if vendor != "yfinance":
-            raise NotImplementedError(
-                f"Vendor '{vendor}' is not supported yet. Only 'yfinance' is available."
-            )
+        # Validate vendor
+        reader_cls = get_reader(vendor)
 
-        # Extract expiry date from market parameters
         if market is None:
             raise ValueError("market parameters must be provided")
 
@@ -399,6 +416,7 @@ class RND:
         source = TickerSource(
             ticker=ticker,
             expiry=expiry,
+            vendor=vendor,
             column_mapping=column_mapping,
             cache_enabled=cache_enabled,
             cache_ttl_minutes=cache_ttl_minutes,

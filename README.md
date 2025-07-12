@@ -69,7 +69,10 @@ market = MarketParams(
 )
 
 # 2. Optional: Configure model settings
-model = ModelParams(fit_kde=True)  # Enable KDE smoothing
+model = ModelParams(
+    solver="brent",              # Root-finding algorithm: "brent" or "newton"
+    fit_kde=True,               # Enable KDE smoothing of PDF
+)
 
 # 3. Load data and estimate RND
 est = RND.from_csv(
@@ -97,15 +100,18 @@ est.to_csv("results.csv")           # Save to CSV
 
 `oipd` can fetch live option chains from data vendors (currently **yfinance**).
 
-```python
-# Install the data fetching dependency
-# pip install oipd[data]
+```bash
+pip install oipd[yfinance]          # only yfinance
+# or everything we ship
+pip install oipd[all]
+```
 
+```python
 from oipd import RND, MarketParams, ModelParams
 from datetime import date
 
-# 1️⃣  Discover available expiry dates
-expiry_dates = RND.list_expiry_dates("AAPL")
+# 1️⃣  Discover available expiry dates (can specify vendor, defaults to 'yfinance')
+expiry_dates = RND.list_expiry_dates("AAPL", vendor='yfinance')
 print(expiry_dates[:3])   # e.g. ['2025-07-11', '2025-07-18', '2025-07-25']
 
 # 2️⃣  Create MarketParams – omit current_price to auto-fetch it
@@ -117,21 +123,25 @@ market = MarketParams(
 )
 
 # 3️⃣  (Optional) tweak model settings
-model = ModelParams(fit_kde=True)
+model = ModelParams(
+    solver="brent",              # Root-finding algorithm: "brent" or "newton"
+    fit_kde=True,               # Enable KDE smoothing of PDF
+    american_to_european=False  # Convert American options to European (placeholder)
+)
 
-# 4️⃣  Estimate directly from the ticker - this updates market.current_price
+# 4️⃣  Estimate directly from the ticker - this updates market.current_price. Default vendor is 'yfinance'
 est = RND.from_ticker("AAPL", market, model=model)
 
-# 5️⃣  Now market.current_price has been set, use it anywhere
+# 5️⃣  Current spot price is now populated
 print(f"Fetched current price: ${market.current_price:.2f}")
 
-# 6️⃣  Plot works with the same market object  
+# 6️⃣  Plot using the same market object
 est.plot(market_params=market)
 ```
 
-Behind the scenes, the first call to a given `(ticker, expiry)` pair is cached on disk
-(default TTL 15 minutes) to avoid hitting vendor rate-limits. Cache files live in
-`.yfinance_cache/` – delete that folder if you want a fresh pull.
+Behind the scenes the option-chain is cached for 15 minutes in
+`.yfinance_cache/` to spare network calls.  Delete that folder to force a fresh
+pull.
 
 ### **Input Data Requirements**
 

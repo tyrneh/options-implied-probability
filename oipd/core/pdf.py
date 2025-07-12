@@ -8,6 +8,8 @@ from scipy.interpolate import interp1d
 from scipy.optimize import brentq
 from scipy.stats import norm, gaussian_kde
 
+from oipd.pricing import get_pricer
+
 
 class OIPDError(Exception):
     """Base exception for OIPD package"""
@@ -80,6 +82,8 @@ def calculate_pdf(
     days_forward: int,
     risk_free_rate: float,
     solver_method: str,
+    pricing_engine: str = "bs",
+    dividend_yield: float | None = None,
 ) -> Tuple[np.ndarray]:
     """The main execution path for the pdf module. Takes a `DataFrame` of
     options data as input and makes a series of function calls to
@@ -135,7 +139,12 @@ def calculate_pdf(
         raise CalculationError("No valid options data after price calculation")
 
     options_data = _calculate_IV(
-        options_data, current_price, days_forward, risk_free_rate, solver_method
+        options_data,
+        current_price,
+        days_forward,
+        risk_free_rate,
+        solver_method,
+        dividend_yield=dividend_yield,
     )
 
     if options_data.empty:
@@ -143,7 +152,12 @@ def calculate_pdf(
 
     denoised_iv = _fit_bspline_IV(options_data)
     pdf = _create_pdf_point_arrays(
-        denoised_iv, current_price, days_forward, risk_free_rate
+        denoised_iv,
+        current_price,
+        days_forward,
+        risk_free_rate,
+        dividend_yield,
+        pricing_engine,
     )
     return _crop_pdf(pdf, min_strike, max_strike)
 
@@ -274,45 +288,38 @@ def _calculate_IV(
     days_forward: int,
     risk_free_rate: float,
     solver_method: Literal["newton", "brent"],
+    dividend_yield: float | None = None,
 ) -> DataFrame:
     """
-    Calculate the implied volatility (IV) of the options in options_data.
-
-    Args:
-        options_data (pd.DataFrame): A DataFrame containing option price data with
-            columns ['strike', 'last_price'].
-        current_price (float): The current price of the security.
-        days_forward (int): The number of days in the future to estimate the
-            price probability density at.
-        risk_free_rate (float, optional): Annual risk-free rate in nominal terms. Defaults to 0.
-        solver_method (Literal["newton", "brent"], optional):
-            The method used to solve for IV.
-            - "newton" (default) uses Newton-Raphson iteration.
-            - "brent" uses Brent's method (more stable).
-
-    Returns:
-        DataFrame: The options_data DataFrame with an additional column for implied volatility (IV).
+    Vectorised implied volatility solver.
     """
     years_forward = days_forward / 365
 
     # Choose the IV solver method
     if solver_method == "newton":
-        iv_solver = _bs_iv_newton_method
+        iv_solver_scalar = _bs_iv_newton_method
     elif solver_method == "brent":
-        iv_solver = _bs_iv_brent_method
+        iv_solver_scalar = _bs_iv_brent_method
     else:
         raise ValueError("Invalid solver_method. Choose either 'newton' or 'brent'.")
 
-    options_data["iv"] = options_data.apply(
-        lambda row: iv_solver(
-            row.last_price, current_price, row.strike, years_forward, r=risk_free_rate
+    # Vectorised wrapper – falls back to scalar solver per strike
+    prices_arr = options_data["last_price"].values
+    strikes_arr = options_data["strike"].values
+
+    q = dividend_yield or 0.0
+    iv_values = np.fromiter(
+        (
+            iv_solver_scalar(p, current_price, k, years_forward, r=risk_free_rate, q=q)
+            for p, k in zip(prices_arr, strikes_arr)
         ),
-        axis=1,
+        dtype=float,
     )
 
-    # Remove rows where IV could not be calculated
-    options_data = options_data.dropna()
-
+    options_data = options_data.copy()
+    options_data["iv"] = iv_values
+    # Drop rows where IV could not be calculated (NaN)
+    options_data = options_data.dropna(subset=["iv"])
     return options_data
 
 
@@ -364,7 +371,12 @@ def _fit_bspline_IV(options_data: DataFrame) -> DataFrame:
 
 
 def _create_pdf_point_arrays(
-    denoised_iv: tuple, current_price: float, days_forward: int, risk_free_rate: float
+    denoised_iv: tuple,
+    current_price: float,
+    days_forward: int,
+    risk_free_rate: float,
+    dividend_yield: float | None = None,
+    pricing_engine: str = "bs",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Create two arrays containing x- and y-axis values representing a calculated
     price PDF
@@ -385,9 +397,13 @@ def _create_pdf_point_arrays(
     y_IV = denoised_iv[1]
 
     # convert IV-space to price-space
-    # re-values call options using the BS formula, taking in as inputs S, domain, IV, and time to expiry
     years_forward = days_forward / 365
-    interpolated = _call_value(current_price, x_IV, y_IV, years_forward, risk_free_rate)
+
+    # Use the selected pricing engine (defaults to BS)
+    price_fn = get_pricer(pricing_engine)
+    q = dividend_yield or 0.0
+    interpolated = price_fn(current_price, x_IV, y_IV, years_forward, risk_free_rate, q)
+
     first_derivative_discrete = np.gradient(interpolated, x_IV)
     second_derivative_discrete = np.gradient(first_derivative_discrete, x_IV)
 
@@ -412,7 +428,7 @@ def _crop_pdf(
     return pdf[0][l : r + 1], pdf[1][l : r + 1]
 
 
-def _bs_iv_brent_method(price, S, K, t, r):
+def _bs_iv_brent_method(price, S, K, t, r, q=0.0):
     """
     Computes the implied volatility (IV) of a European call option using Brent's method.
 
@@ -444,7 +460,9 @@ def _bs_iv_brent_method(price, S, K, t, r):
         return np.nan  # No volatility if time is zero or negative
 
     try:
-        return brentq(lambda iv: _call_value(S, K, iv, t, r) - price, 1e-6, 5.0)
+        from oipd.pricing.european import european_call_price as _bs_price
+
+        return brentq(lambda iv: _bs_price(S, K, iv, t, r, q) - price, 1e-6, 5.0)
     except ValueError:
         return np.nan  # Return NaN if no solution is found
 
@@ -455,8 +473,9 @@ def _bs_iv_newton_method(
     K: float,
     t: float,
     r: float,
+    q: float = 0.0,
     precision: float = 1e-4,
-    initial_guess: float = None,
+    initial_guess: float | None = None,
     max_iter: int = 1000,
     verbose: bool = False,
 ) -> float:
@@ -486,17 +505,21 @@ def _bs_iv_newton_method(
 
     iv = initial_guess
 
+    from oipd.pricing.european import (
+        european_call_price as _bs_price,
+        european_call_vega as _bs_vega,
+    )
+
     for i in range(max_iter):
-        # Compute Black-Scholes model price and Vega
-        P = _call_value(S, K, iv, t, r)
+        # Compute model price and Vega
+        P = _bs_price(S, K, iv, t, r, q)
         diff = price - P
 
         # Check for convergence
         if abs(diff) < precision:
             return iv
 
-        # Compute Vega (gradient)
-        grad = _call_vega(S, K, iv, t, r)
+        grad = _bs_vega(S, K, iv, t, r, q)
 
         # Prevent division by near-zero Vega to avoid large jumps
         if abs(grad) < 1e-6:
@@ -517,19 +540,3 @@ def _bs_iv_newton_method(
         print(f"Did not converge after {max_iter} iterations")
 
     return np.nan  # Return NaN if the method fails to converge
-
-
-def _call_vega(S, K, sigma, t, r):
-    # TODO: refactor this function (style)
-    with np.errstate(divide="ignore"):
-        d1 = np.divide(1, sigma * np.sqrt(t)) * (np.log(S / K) + (r + sigma**2 / 2) * t)
-    return np.multiply(S, norm.pdf(d1)) * np.sqrt(t)
-
-
-def _call_value(S, K, sigma, t, r):
-    # TODO: refactor this function (style)
-    # use np.multiply and divide to handle divide-by-zero
-    with np.errstate(divide="ignore"):
-        d1 = np.divide(1, sigma * np.sqrt(t)) * (np.log(S / K) + (r + sigma**2 / 2) * t)
-        d2 = d1 - sigma * np.sqrt(t)
-    return np.multiply(norm.cdf(d1), S) - np.multiply(norm.cdf(d2), K * np.exp(-r * t))
