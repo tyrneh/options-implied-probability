@@ -180,6 +180,8 @@ class TickerSource:
             self._reader = reader_cls()
 
         self._current_price: Optional[float] = None
+        self._dividend_yield: Optional[float] = None
+        self._dividend_schedule: Optional[pd.DataFrame] = None
 
     def load(self) -> pd.DataFrame:
         """Load options data and extract current price"""
@@ -188,6 +190,8 @@ class TickerSource:
 
         # Extract current price from DataFrame metadata
         self._current_price = df.attrs.get("current_price")
+        self._dividend_yield = df.attrs.get("dividend_yield")
+        self._dividend_schedule = df.attrs.get("dividend_schedule")
 
         return df
 
@@ -195,6 +199,16 @@ class TickerSource:
     def current_price(self) -> Optional[float]:
         """Get the current price fetched from yfinance"""
         return self._current_price
+
+    @property
+    def dividend_yield(self) -> Optional[float]:
+        """Get the dividend yield fetched from vendor"""
+        return self._dividend_yield
+
+    @property
+    def dividend_schedule(self) -> Optional[pd.DataFrame]:
+        """Get the dividend schedule fetched from vendor"""
+        return self._dividend_schedule
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +358,6 @@ class RND:
         *,
         model: Optional[ModelParams] = None,
         vendor: str = "yfinance",
-        current_price_override: Optional[float] = None,
         cache_enabled: bool = True,
         cache_ttl_minutes: int = 15,
         **kwargs,
@@ -363,8 +376,6 @@ class RND:
             Model configuration parameters
         vendor : str, default "yfinance"
             Data vendor to use (currently only "yfinance" is supported)
-        current_price_override : float, optional
-            Override the current price instead of fetching from yfinance
         cache_enabled : bool, default True
             Whether to enable caching of yfinance data
         cache_ttl_minutes : int, default 15
@@ -423,22 +434,32 @@ class RND:
         )
 
         # Load data to get current price
-        _ = source.load()
+        _df = source.load()
 
         # ------------------------------------------------------------------
         # Update *the same* MarketParams instance so the caller sees changes
         # ------------------------------------------------------------------
 
-        if market.current_price is None and current_price_override is None:
+        if market.current_price is None:
             fetched_price = source.current_price
             if fetched_price is None:
                 raise ValueError(
                     f"Could not fetch current price for {ticker}. "
-                    "Please provide current_price in MarketParams or use current_price_override."
+                    "Please provide current_price in MarketParams."
                 )
             market.current_price = fetched_price  # mutate in-place
-        elif current_price_override is not None:
-            market.current_price = current_price_override  # mutate in-place
+
+        # ---------------- Auto-fill dividends -------------------------
+        auto_schedule = source.dividend_schedule
+        auto_q = source.dividend_yield
+
+        # precedence: user schedule > user yield > auto schedule > auto yield
+        if market.dividend_schedule is None and market.dividend_yield is None:
+            # No user-provided dividends at all
+            if auto_schedule is not None:
+                market.dividend_schedule = auto_schedule
+            elif auto_q is not None:
+                market.dividend_yield = auto_q
 
         # Create instance and fit using the **mutated** market params (original object)
         instance = cls(model)

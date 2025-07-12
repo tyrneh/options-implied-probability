@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict
 
 import pandas as pd
+import numpy as np
 
 from oipd.io.reader import AbstractReader
 
@@ -140,6 +141,11 @@ class Reader(AbstractReader):
             raise YFinanceError(f"Failed to fetch chain: {exc}") from exc
 
         calls_df.attrs["current_price"] = price
+        dividend_yield = self._extract_dividend_yield(tk.info)
+        calls_df.attrs["dividend_yield"] = dividend_yield
+        calls_df.attrs["dividend_schedule"] = (
+            None  # yfinance cannot infer forward schedule
+        )
 
         if self._cache:
             self._cache.set(ticker, expiry, calls_df.copy(), price)
@@ -156,6 +162,16 @@ class Reader(AbstractReader):
         if len(df) < 5:
             raise ValueError("Need at least 5 strikes for a meaningful smile")
         return df.sort_values("strike").reset_index(drop=True)
+
+    # ---------- dividend helpers -------------------------------------------
+    def _extract_dividend_yield(self, info) -> Optional[float]:
+        dy = info.get("dividendYield")
+        if dy is None:
+            return None
+        try:
+            return float(dy)
+        except Exception:
+            return None
 
     # ---------- misc helpers -------------------------------------------------
     @classmethod

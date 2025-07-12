@@ -65,12 +65,13 @@ print(prob)
 
 
 # --- testing yfinance --- #
-expiry_dates = RND.list_expiry_dates("AAPL")
+expiry_dates = RND.list_expiry_dates("NVDA")
 print(expiry_dates[:])  # ['2025-07-11', '2025-07-18', '2025-07-25']
 
 # 2. Use ticker data with market parameters (current price fetched automatically)
 market = MarketParams(
     current_price=None,  # Will be auto-fetched and this object will be updated
+    dividend_yield=None,  # Will be auto-fetched and this object will be updated
     current_date=date(2025, 7, 10),
     expiry_date=date(2025, 11, 21),
     risk_free_rate=0.04,
@@ -79,16 +80,21 @@ market = MarketParams(
 model = ModelParams(fit_kde=True)
 
 # 3. Fetch and estimate - this will update market.current_price automatically
-est = RND.from_ticker("AAPL", market, model=model)
+est = RND.from_ticker("NVDA", market, model=model)
 
 # 4. Now market.current_price has been set, so you can use it anywhere
 print(f"Fetched current price: ${market.current_price:.2f}")
+print(market.dividend_yield)
+
 
 # 5. Plot works perfectly with the same market object
-fig = est.plot(market_params=market)
+est.plot(market_params=market)
 plt.show()
 
 est.plot(kind="pdf", market_params=market)
+plt.show()
+
+est.plot()
 plt.show()
 
 # Both approaches work now:

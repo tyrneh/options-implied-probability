@@ -11,7 +11,9 @@ from oipd.core import (
     CalculationError,
 )
 
-from oipd.io import CSVReader, DataFrameReader, CSVReadError, YFinanceError
+from oipd.io import CSVReader, DataFrameReader, CSVReadError
+
+# Optional: explicitly re-export vendor-specific errors later if needed
 
 from oipd.estimator import RND, MarketParams, ModelParams, RNDResult
 
@@ -28,7 +30,6 @@ __all__ = [
     "InvalidInputError",
     "CalculationError",
     "CSVReadError",
-    "YFinanceError",
     # Readers
     "CSVReader",
     "DataFrameReader",
