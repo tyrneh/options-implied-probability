@@ -56,7 +56,7 @@ The API uses three main components:
 2. **RND** - Main estimator class
 3. **ModelParams** - Optional algorithm settings
 
-     ```python
+```python
 from oipd import RND, MarketParams, ModelParams
 from datetime import date
 
