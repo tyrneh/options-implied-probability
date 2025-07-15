@@ -440,26 +440,71 @@ class RND:
         # Update *the same* MarketParams instance so the caller sees changes
         # ------------------------------------------------------------------
 
-        if market.current_price is None:
+        # 1️⃣  Handle current price (support explicit override)
+        current_price_override: Optional[float] = kwargs.pop(
+            "current_price_override", None
+        )
+
+        if current_price_override is not None:
+            # Caller explicitly provided an override – always trust it
+            market.current_price = current_price_override
+        else:
             fetched_price = source.current_price
             if fetched_price is None:
                 raise ValueError(
                     f"Could not fetch current price for {ticker}. "
                     "Please provide current_price in MarketParams."
                 )
+            # Always refresh with the latest fetched price so stale values don't persist
             market.current_price = fetched_price  # mutate in-place
 
-        # ---------------- Auto-fill dividends -------------------------
-        auto_schedule = source.dividend_schedule
-        auto_q = source.dividend_yield
+        # 2️⃣  Refresh dividend information using precedence rules:
+        #     user schedule > user yield > auto schedule > auto yield
 
-        # precedence: user schedule > user yield > auto schedule > auto yield
-        if market.dividend_schedule is None and market.dividend_yield is None:
-            # No user-provided dividends at all
+        # Determine whether the existing dividend fields were previously auto-filled.
+        # We record this via a private attribute `_auto_dividends` on the object.
+        auto_prev: bool = getattr(market, "_auto_dividends", False)
+
+        user_has_schedule = market.dividend_schedule is not None and not auto_prev
+        user_has_yield = (
+            market.dividend_schedule is None
+            and market.dividend_yield is not None
+            and not auto_prev
+        )
+
+        auto_schedule = source.dividend_schedule
+        auto_yield = source.dividend_yield
+
+        if user_has_schedule:
+            # Keep user-provided schedule; do not overwrite.
+            pass  # nothing to change
+        elif user_has_yield:
+            # Keep user-provided dividend yield.
+            pass
+        else:
+            # Either there was no dividend info or it was previously auto-filled.
+            # Refresh with the new vendor data following auto precedence.
             if auto_schedule is not None:
                 market.dividend_schedule = auto_schedule
-            elif auto_q is not None:
-                market.dividend_yield = auto_q
+                market.dividend_yield = None  # clear yield if schedule now present
+            elif auto_yield is not None:
+                market.dividend_schedule = None
+                market.dividend_yield = auto_yield
+            else:
+                # No data available from vendor; clear previous auto fields to
+                # avoid carrying stale information forward.
+                market.dividend_schedule = None
+                market.dividend_yield = None
+
+        # Mark whether the current dividend data originated from the vendor so
+        # that future calls can decide if it is safe to overwrite.
+        setattr(
+            market,
+            "_auto_dividends",
+            market.dividend_schedule is None
+            and market.dividend_yield is None
+            or (auto_schedule is not None or auto_yield is not None),
+        )
 
         # Create instance and fit using the **mutated** market params (original object)
         instance = cls(model)

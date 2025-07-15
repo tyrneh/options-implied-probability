@@ -169,7 +169,9 @@ class Reader(AbstractReader):
         if dy is None:
             return None
         try:
-            return float(dy)
+            # yfinance returns dividend yield as percentage (e.g., 1.21 for 1.21%)
+            # but the library expects decimal format (e.g., 0.0121 for 1.21%)
+            return float(dy) / 100.0
         except Exception:
             return None
 
