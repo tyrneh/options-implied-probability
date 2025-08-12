@@ -1,6 +1,6 @@
 # OIPD — Technical Reference 📚
 
-This document complements the high-level `QUICK_START.md`. Here you’ll find:
+This document complements the high-level `README.md`. Here you’ll find:
 
 1. Complete installation matrix & extras
 2. Detailed API documentation

@@ -34,7 +34,7 @@ est.plot()                              # PDF + CDF in one line
 print(est.prob_at_or_above(200))        # e.g. 0.075 → 7.5 %
 ```
 
-OIPD also supports manual CSV options data uploads. See `TECHNICAL_README.md` for more details.
+OIPD also supports manual CSV options data uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.
 
 # Use cases
 
