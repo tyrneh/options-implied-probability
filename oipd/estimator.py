@@ -35,9 +35,9 @@ class MarketParams:
     # Alternative way to specify the horizon ---------------------------------
     current_date: Optional[date] = None
     expiry_date: Optional[date] = None
-    # --- Optional dividend inputs for future use
-    dividend_yield: Optional[float] = None
-    dividend_schedule: Optional[pd.DataFrame] = None  # columns: ex_date, amount
+    # --- Dividend inputs - set to None to enable auto-fetching
+    dividend_yield: Optional[float]
+    dividend_schedule: Optional[pd.DataFrame]  # columns: ex_date, amount
 
     # ------------------------------------------------------------------
     # Validation & convenience
@@ -460,6 +460,9 @@ class RND:
 
         # 2️⃣  Refresh dividend information using precedence rules:
         #     user schedule > user yield > auto schedule > auto yield
+
+        # TODO: Test dividend auto-fetching behavior with explicit None values
+        # after removing default values from MarketParams dataclass
 
         # Determine whether the existing dividend fields were previously auto-filled.
         # We record this via a private attribute `_auto_dividends` on the object.

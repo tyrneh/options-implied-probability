@@ -10,11 +10,10 @@ This document complements the high-level `QUICK_START.md`. Here you’ll find:
 
 ## 1. Installation flavours
 
-| Use-case                          | Command                                    |
-| --------------------------------- | ------------------------------------------ |
-| Full installation (with yfinance) | `pip install oipd`                         |
-| Core maths only (no data vendors) | `pip install oipd[minimal]`                |
-| Development setup                 | `pip install -e . -r requirements-dev.txt` |
+| Use-case                          | Command                     |
+| --------------------------------- | --------------------------- |
+| Full installation (with yfinance) | `pip install oipd`          |
+| Core maths only (no data vendors) | `pip install oipd[minimal]` |
 
 Core requires at minimum **Python 3.10+**.
 
@@ -25,6 +24,7 @@ Core requires at minimum **Python 3.10+**.
 OIPD provides a single `RND` class that extracts market-implied probability distributions from options data using the Breeden-Litzenberger formula and Black-Scholes pricing.
 
 **Main Entry Point: `RND` Class**
+
 The `RND` class is your high-level facade that users interact with. It has three main ways to load options data:
 
 1. **CSV files**: `RND.from_csv(path, market_params)`
@@ -41,7 +41,17 @@ The `RND` class is your high-level facade that users interact with. It has three
 _From live data (auto-fetches price & dividends):_
 
 ```python
-market = MarketParams(expiry_date=date(2025, 12, 19), risk_free_rate=0.04)
+# First, discover available expiry dates
+expiry_dates = RND.list_expiry_dates("AAPL")
+print(expiry_dates[:3])  # ['2025-01-17', '2025-01-24', '2025-02-21']
+
+# Then use one of the available dates (None values enable auto-fetch)
+market = MarketParams(
+    current_price=None,
+    dividend_yield=None,
+    expiry_date=date(2025, 1, 17),
+    risk_free_rate=0.04
+)
 est = RND.from_ticker("AAPL", market)
 ```
 
@@ -83,15 +93,18 @@ Configuration object that defines the market environment and time horizon for th
 
 ```
 MarketParams(
-    current_price: float | None,
-    risk_free_rate: float,
-    # horizon (one of)
-    days_forward: int | None = None,
-    current_date : date | None = None,
-    expiry_date  : date | None = None,
-    # dividends (one of)
-    dividend_yield    : float | None = None,
-    dividend_schedule : pd.DataFrame | None = None,
+    current_price: float,           # Required (or auto-fetched from ticker)
+    risk_free_rate: float,          # Required
+
+    # Time horizon - provide either:
+    days_forward: int,              # Option 1: days until expiry
+    # OR
+    current_date: date,             # Option 2: valuation date
+    expiry_date: date,              # Option 2: expiration date
+
+    # Dividends - optional:
+    dividend_yield: float,          # Annual dividend yield (e.g., 0.02 for 2%)
+    dividend_schedule: DataFrame,   # Discrete dividend payments
 )
 ```
 
@@ -125,7 +138,7 @@ Returns a fitted instance exposing
 ```
 est.pdf_              # numpy array
 est.cdf_              # numpy array
-est.plot(kind="both")
+est.plot(kind="both")  # or kind="pdf" or kind="cdf"
 est.prob_at_or_above(120)
 est.to_frame()
 ```
