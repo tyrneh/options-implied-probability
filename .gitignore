@@ -119,7 +119,7 @@ venv.bak/
 
 # AI folders
 .kiro/
-.claude
+CLAUDE.md
 .claude/
 
 # Spyder project settings
