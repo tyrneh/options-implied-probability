@@ -3,9 +3,11 @@
 ![Python version](https://img.shields.io/badge/python-3.10-blue.svg)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-black.svg)](https://github.com/ambv/black)
 
-<div style="font-size: 1.5em;">OIPD generates probability distribution of future stock prices from options data. A probability distribution is simply a single curve showing how likely each price level is on a future date.
+# What OIPD Does
 
-These probabilities reflect the consensus, risk-neutral expectations of all market participants. While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.</div>
+OIPD generates probability distribution of future stock prices from options data. A probability distribution is simply a single curve showing how likely each price level is on a future date.
+
+These probabilities reflect the consensus, risk-neutral expectations of all market participants. While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
 
 # Quick start
 
