@@ -138,7 +138,7 @@ Returns a fitted instance exposing
 ```
 est.pdf_                      # Probability density function values
 est.cdf_                      # Cumulative distribution function values
-est.plot(kind="both")         # Publication-ready plots ("pdf", "cdf", or "both")
+est.plot(kind="both")         # Publication-ready plots ("pdf", "cdf", or "both" (default))
 est.prob_at_or_above(120)     # P(future price >= $120)
 est.to_frame()                # Export as pandas DataFrame
 ```

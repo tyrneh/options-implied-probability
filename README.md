@@ -11,16 +11,17 @@ These probabilities reflect the consensus, risk-neutral expectations of all mark
 
 # Quick start
 
+#### Installation
 ```bash
-# 1 ─ install core + yfinance connector
 pip install oipd
 ```
 
+#### Usage
 ```python
 from oipd import RND, MarketParams
 from datetime import date
 
-# 2 ─ point to a ticker + expiry
+# 1 ─ point to a ticker + expiry
 market = MarketParams(
     current_price=None,               # auto-fetched spot price
     expiry_date=date(2025, 12, 19),   # next option expiry you care about
@@ -29,9 +30,9 @@ market = MarketParams(
 
 est = RND.from_ticker("AAPL", market)   # run estimator
 
-# 3 ─ integrated plotting
-est.plot()                              # PDF + CDF in one line
-print(est.prob_at_or_above(200))        # e.g. 0.075 → 7.5 %
+# 2 ─ access results and integrated plotting
+est.prob_at_or_above(120)               # P(price >= $120)
+est.plot()                              # plot PDF + CDF in one line
 ```
 
 OIPD also supports manual CSV options data uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.
