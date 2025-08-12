@@ -145,3 +145,6 @@ dmypy.json
 
 .DS_Store
 
+# old readme
+README.md
+

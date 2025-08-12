@@ -184,12 +184,13 @@ The process of generating the PDFs and CDFs is as follows:
 
 ```
 oipd/
- ├─ core/          # mathematical primitives
+ ├─ core/          # mathematical primitives (PDF/CDF calculation)
  ├─ pricing/       # pricing engines (Black-Scholes, future Heston…)
  ├─ vendor/        # data connectors (yfinance, alpaca, …)
  ├─ io/            # generic readers (CSV, DataFrame)
- ├─ graphics/      # plotting helpers
- └─ estimator.py   # high-level façade (RND)
+ ├─ graphics/      # plotting helpers (matplotlib, publication styles)
+ ├─ estimator.py   # high-level façade (RND class)
+ └─ generate_pdf.py # legacy CLI interface
 ```
 
 ---
