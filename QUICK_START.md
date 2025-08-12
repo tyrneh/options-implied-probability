@@ -3,9 +3,9 @@
 ![Python version](https://img.shields.io/badge/python-3.10-blue.svg)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-black.svg)](https://github.com/ambv/black)
 
-<H3>OIPD generates a probability distribution--a single curve that describes the probabilities of future prices for a security--from options data. 
+<strong>OIPD generates a probability distribution–a single curve that describes the probabilities of future prices for a security–from options data. 
 
-These probabilities reflect the consensus, risk-neutral expectations of all market participants. While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.</h3>
+These probabilities reflect the consensus, risk-neutral expectations of all market participants. While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.</strong>
 
 # Quick start
 
@@ -41,12 +41,12 @@ OIPD also supports manual CSV options data uploads. See `TECHNICAL_README.md` fo
 - A $2 premium on a 6% event means the expected gain is 0.06 × ($75 – $73 break-even) ≈ $0.12, while the expected loss (94 % of the time) is the full $2. The trade’s expected value is negative
 
 **Professional managers: What is my portfolio's tail risk ahead of major events?**
-- Historical view: A 99% one-month VaR of 3% is backward-looking and assumes a parametric distribution-—often unrealistic before catalysts
-- Market-implied view: Ahead of earnings and a central-bank meeting, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% VaR—-twice the historical figure-—signalling the need to hedge, trim, or tighten limits
+- Historical view: A 99% one-month VaR of 3% is backward-looking and assumes a parametric distribution–often unrealistic before catalysts
+- Market-implied view: Ahead of earnings and a central-bank meeting, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% VaR–twice the historical figure–signalling the need to hedge, trim, or tighten limits
 
 **Corporates: What proportion of my commodity exposure should I hedge next quarter?**
 - Typically, my finance team hedges a fixed 70% of my jet fuel exposure, while leaving 30% unhedged to benefit if oil price falls
-- I find OIPD shows a fatter upper tail--a higher probability of breaching the budget price. This points to lifting hedging coverage to 80% to manage price risk
+- I find OIPD shows a fatter upper tail–a higher probability of breaching the budget price. This points to lifting hedging coverage to 80% to manage price risk
 
 # License
 
