@@ -136,11 +136,11 @@ RND.from_ticker("AAPL", market, vendor="yfinance", ...)
 Returns a fitted instance exposing
 
 ```
-est.pdf_              # numpy array
-est.cdf_              # numpy array
-est.plot(kind="both")  # or kind="pdf" or kind="cdf"
-est.prob_at_or_above(120)
-est.to_frame()
+est.pdf_                      # Probability density function values
+est.cdf_                      # Cumulative distribution function values
+est.plot(kind="both")         # Publication-ready plots ("pdf", "cdf", or "both")
+est.prob_at_or_above(120)     # P(future price >= $120)
+est.to_frame()                # Export as pandas DataFrame
 ```
 
 ---
@@ -197,6 +197,7 @@ oipd/
 ## 6. Roadmap
 
 - incorporate dividends - DONE
+- integrate YFinance data fetching - DONE
 - American-option de-Americanisation module
 - integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
 - alternative volatility models (Heston, SABR)
