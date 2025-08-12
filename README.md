@@ -3,7 +3,7 @@
 ![Python version](https://img.shields.io/badge/python-3.10-blue.svg)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-black.svg)](https://github.com/ambv/black)
 
-# What OIPD Does
+# Overview
 
 OIPD generates probability distribution of future stock prices from options data. A probability distribution is simply a single curve showing how likely each price level is on a future date.
 
@@ -52,7 +52,7 @@ OIPD also supports manual CSV options data uploads. See [`TECHNICAL_README.md`](
 **Corporates: What proportion of my commodity exposure should I hedge next quarter?**
 
 - Typically, my finance team hedges a fixed 70% of my jet fuel exposure, while leaving 30% unhedged to benefit if oil price falls
-- I find OIPD shows a fatter upper tail–a higher probability of breaching the budget price. This points to lifting hedging coverage to 80% to manage price risk
+- I find OIPD shows a fatter upper tail–a higher probability of breaching my budget. This points to lifting hedging coverage to 80% to manage price risk
 
 # License
 
