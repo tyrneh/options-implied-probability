@@ -26,17 +26,11 @@ If you believe in the efficient market hypothesis, then the probability distribu
 ## Installation
 
 ```bash
-# Core installation
+# Default installation (includes data vendor integrations)
 pip install oipd
 
-# With data fetching capabilities (yfinance)
-pip install oipd[data]
-
-# For development
-pip install oipd[dev]
-
-# Install everything
-pip install oipd[all]
+# Minimal installation (no external data vendors - for internal/corporate use)
+pip install oipd[minimal]
 ```
 
 Please note that this project requires Python 3.10 or later.
@@ -101,9 +95,11 @@ est.to_csv("results.csv")           # Save to CSV
 `oipd` can fetch live option chains from data vendors (currently **yfinance**).
 
 ```bash
-pip install oipd[yfinance]          # only yfinance
-# or everything we ship
-pip install oipd[all]
+# Default installation includes yfinance
+pip install oipd
+
+# For minimal installation without external vendors
+pip install oipd[minimal]
 ```
 
 ```python

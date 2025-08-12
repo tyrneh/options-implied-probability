@@ -13,9 +13,9 @@ column_mapping = {
 
 # 2️⃣  market parameters
 market = MarketParams(
-    current_price=64.32,
+    current_price=593.83,  # current price of the underlying asset
     current_date=date(2025, 3, 3),
-    expiry_date=date(2025, 12, 19),
+    expiry_date=date(2025, 5, 16),
     risk_free_rate=0.04,
 )
 
@@ -24,7 +24,7 @@ model = ModelParams(fit_kde=True)
 
 # 4️⃣  run
 est = RND.from_csv(
-    "data/Calls CrudeOilWTI Strike11-17-25 CurrentPrice6432 .csv",
+    "data/spy_date20250303_strike20250516_price59383.csv",
     market,
     model=model,
     column_mapping=column_mapping,  # ← here
@@ -65,7 +65,7 @@ print(prob)
 
 
 # --- testing yfinance --- #
-expiry_dates = RND.list_expiry_dates("PLTR")
+expiry_dates = RND.list_expiry_dates("SPY")
 print(expiry_dates[:])  # ['2025-07-11', '2025-07-18', '2025-07-25']
 
 # 2. Use ticker data with market parameters (current price fetched automatically)
@@ -80,7 +80,7 @@ market = MarketParams(
 model = ModelParams(fit_kde=True, solver="brent")
 
 # 3. Fetch and estimate - this will update market.current_price automatically
-est = RND.from_ticker("PLTR", market, model=model)
+est = RND.from_ticker("SPY", market, model=model)
 
 # 4. Now market.current_price has been set, so you can use it anywhere
 print(f"Fetched current price: ${market.current_price:.2f}")

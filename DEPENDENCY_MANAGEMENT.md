@@ -5,8 +5,19 @@ This document explains the dependency management structure for the OIPD (Options
 
 ## Dependency Structure
 
-### Core Dependencies
-The core dependencies are the minimal set of packages required for the basic functionality of OIPD:
+### Default Dependencies
+The default installation includes all core functionality plus data vendor integrations:
+- **numpy**: Numerical computations
+- **pandas**: Data manipulation and DataFrame operations
+- **scipy**: Scientific computing (interpolation, optimization, statistics)
+- **matplotlib**: Basic plotting functionality
+- **matplotlib-label-lines**: Enhanced line labeling for plots
+- **traitlets**: Type checking for configuration
+- **yfinance**: Yahoo Finance data fetching
+
+### Optional Dependencies
+#### Minimal (`[minimal]`)
+For companies that require internal-only code without external data vendors:
 - **numpy**: Numerical computations
 - **pandas**: Data manipulation and DataFrame operations
 - **scipy**: Scientific computing (interpolation, optimization, statistics)
@@ -14,52 +25,42 @@ The core dependencies are the minimal set of packages required for the basic fun
 - **matplotlib-label-lines**: Enhanced line labeling for plots
 - **traitlets**: Type checking for configuration
 
-### Optional Dependencies
-#### Development (`[dev]`)
-- **pytest**: Testing framework
-- **pytest-cov**: Coverage reporting
-- **mypy**: Static type checking
-- **black**: Code formatting
-- **isort**: Import sorting
-- **flake8**: Linting
+
 
 ## Installation Options
 
-### Basic Installation (Core Only)
+### Default Installation (Includes Data Vendors)
 ```bash
 pip install oipd
 # or from source:
 pip install -r requirements.txt
 ```
 
-### Development Installation
+### Minimal Installation (No External Data Vendors)
+For companies that require internal-only code:
 ```bash
-pip install oipd[dev]
-# or from source:
-pip install -r requirements.txt -r requirements-dev.txt
-# or for everything:
-pip install -e ".[all]"
+pip install oipd[minimal]
 ```
+
+
 
 ## Version Management
 
-We use flexible version ranges to ensure compatibility while allowing for updates:
-- **Major version cap**: Prevents breaking changes (e.g., `numpy>=1.23.0,<2.0.0`)
-- **Minor version flexibility**: Allows bug fixes and minor features
-- **Security updates**: Automatically included within version ranges
+We use minimum version requirements to ensure compatibility 
 
 ## Dependency Tree
 
+### Default Installation
 ```
 oipd
-├── numpy >=1.23.0,<2.0.0
-├── pandas >=1.5.0,<3.0.0
+├── numpy >=1.26.0
+├── pandas >=2.1.0
 │   ├── numpy (shared)
 │   ├── python-dateutil
 │   └── pytz
-├── scipy >=1.9.0,<2.0.0
+├── scipy >=1.11.0
 │   └── numpy (shared)
-├── matplotlib >=3.6.0,<4.0.0
+├── matplotlib >=3.8.0
 │   ├── numpy (shared)
 │   ├── contourpy
 │   ├── cycler
@@ -68,9 +69,26 @@ oipd
 │   ├── pillow
 │   ├── pyparsing
 │   └── python-dateutil (shared)
-├── matplotlib-label-lines >=0.5.0,<1.0.0
+├── matplotlib-label-lines >=0.6.0
 │   └── matplotlib (shared)
-└── traitlets >=5.0.0,<6.0.0
+├── traitlets >=5.12.0
+└── yfinance >=1.0.0
+    ├── numpy (shared)
+    ├── pandas (shared)
+    ├── requests
+    ├── multitasking
+    └── appdirs
+```
+
+### Minimal Installation
+```
+oipd[minimal]
+├── numpy >=1.26.0
+├── pandas >=2.1.0
+├── scipy >=1.11.0
+├── matplotlib >=3.8.0
+├── matplotlib-label-lines >=0.6.0
+└── traitlets >=5.12.0
 ```
 
 ## Updating Dependencies

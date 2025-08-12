@@ -27,34 +27,29 @@ classifiers = [
     "Intended Audience :: Science/Research",
 ]
 
-# Core dependencies - only what we directly import
+# Default dependencies - includes data vendor integrations
 dependencies = [
-    "numpy>=1.26.0,<2.0.0",
-    "pandas>=2.1.0,<3.0.0",
-    "scipy>=1.11.0,<2.0.0",
-    "matplotlib>=3.8.0,<4.0.0",
-    "matplotlib-label-lines>=0.6.0,<1.0.0",
-    "traitlets>=5.12.0,<6.0.0",
-]
-
-[project.optional-dependencies]
-# Development dependencies
-dev = [
-    "pytest>=7.4.0,<8.0.0",
-    "pytest-cov>=4.1.0,<5.0.0",
-    "mypy>=1.6.0,<2.0.0",
-    "black>=23.9.0,<24.0.0",
-    "isort>=5.12.0,<6.0.0",
-    "flake8>=6.1.0,<7.0.0",
-]
-
-# Data fetching dependencies
-data = [
+    "numpy>=1.26.0",
+    "pandas>=2.1.0",
+    "scipy>=1.11.0",
+    "matplotlib>=3.8.0",
+    "matplotlib-label-lines>=0.6.0",
+    "traitlets>=5.12.0",
     "yfinance>=1.0.0",
 ]
 
-# All extras
-all = ["oipd[dev,data]"]
+[project.optional-dependencies]
+# Minimal installation - no external data vendors (for internal/corporate use)
+minimal = [
+    "numpy>=1.26.0",
+    "pandas>=2.1.0",
+    "scipy>=1.11.0",
+    "matplotlib>=3.8.0",
+    "matplotlib-label-lines>=0.6.0",
+    "traitlets>=5.12.0",
+]
+
+
 
 [project.urls]
 "Homepage" = "https://github.com/tyrneh/options-implied-probability"
