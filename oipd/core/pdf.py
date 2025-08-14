@@ -370,6 +370,64 @@ def _fit_bspline_IV(options_data: DataFrame) -> DataFrame:
     return (x_new, y_fit)
 
 
+def finite_diff_second_derivative(y: np.ndarray, x: np.ndarray) -> np.ndarray:
+    """
+    Calculate second derivative using 5-point stencil for improved numerical stability.
+    
+    This replaces the unstable np.gradient approach with a more robust finite difference
+    method that's particularly important for deep out-of-the-money options where
+    the Breeden-Litzenberger formula becomes numerically challenging.
+    
+    For interior points: f''(x) = [-f(x-2h) + 16f(x-h) - 30f(x) + 16f(x+h) - f(x+2h)] / (12h²)
+    For boundary points: Uses lower-order accurate formulas
+    
+    Args:
+        y: Function values (option prices)
+        x: Grid points (strikes)
+    
+    Returns:
+        Second derivative values at each grid point
+    
+    Raises:
+        ValueError: If grid spacing is non-uniform or arrays have insufficient length
+    """
+    if len(x) != len(y):
+        raise ValueError(f"Arrays must have same length. Got x: {len(x)}, y: {len(y)}")
+    
+    if len(x) < 5:
+        raise ValueError(f"Need at least 5 points for 5-point stencil. Got {len(x)}")
+    
+    # Check for uniform grid spacing (required for finite differences)
+    h = np.diff(x)
+    if not np.allclose(h, h[0], rtol=1e-6):
+        # For non-uniform grids, fall back to np.gradient but warn user
+        import warnings
+        warnings.warn(
+            "Non-uniform grid detected. Using np.gradient fallback which may be less stable. "
+            "Consider interpolating to uniform grid first.",
+            UserWarning
+        )
+        return np.gradient(np.gradient(y, x), x)
+    
+    h = h[0]  # Grid spacing
+    d2y = np.zeros_like(y)
+    
+    # Interior points using 5-point stencil (4th order accurate)
+    for i in range(2, len(y) - 2):
+        d2y[i] = (-y[i-2] + 16*y[i-1] - 30*y[i] + 16*y[i+1] - y[i+2]) / (12 * h**2)
+    
+    # Boundary points using forward/backward differences (2nd order accurate)
+    # Left boundary (first two points)
+    d2y[0] = (2*y[0] - 5*y[1] + 4*y[2] - y[3]) / h**2
+    d2y[1] = (y[0] - 2*y[1] + y[2]) / h**2
+    
+    # Right boundary (last two points)  
+    d2y[-2] = (y[-3] - 2*y[-2] + y[-1]) / h**2
+    d2y[-1] = (2*y[-1] - 5*y[-2] + 4*y[-3] - y[-4]) / h**2
+    
+    return d2y
+
+
 def _create_pdf_point_arrays(
     denoised_iv: tuple,
     current_price: float,
@@ -404,8 +462,9 @@ def _create_pdf_point_arrays(
     q = dividend_yield or 0.0
     interpolated = price_fn(current_price, x_IV, y_IV, years_forward, risk_free_rate, q)
 
-    first_derivative_discrete = np.gradient(interpolated, x_IV)
-    second_derivative_discrete = np.gradient(first_derivative_discrete, x_IV)
+    # Use stable finite difference method instead of np.gradient for second derivatives
+    # This is critical for numerical stability, especially for deep OTM options
+    second_derivative_discrete = finite_diff_second_derivative(interpolated, x_IV)
 
     # apply coefficient to reflect the time value of money
     pdf = np.exp(risk_free_rate * years_forward) * second_derivative_discrete

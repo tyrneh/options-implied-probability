@@ -36,8 +36,8 @@ class MarketParams:
     current_date: Optional[date] = None
     expiry_date: Optional[date] = None
     # --- Dividend inputs - set to None to enable auto-fetching
-    dividend_yield: Optional[float]
-    dividend_schedule: Optional[pd.DataFrame]  # columns: ex_date, amount
+    dividend_yield: Optional[float] = None
+    dividend_schedule: Optional[pd.DataFrame] = None  # columns: ex_date, amount
 
     # ------------------------------------------------------------------
     # Validation & convenience

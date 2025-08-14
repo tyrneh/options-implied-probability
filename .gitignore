@@ -121,7 +121,8 @@ venv.bak/
 .kiro/
 CLAUDE.md
 .claude/
-REVIEW_RECOMMENDATIONS.md
+.reviews/
+.reviews/*
 
 # Spyder project settings
 .spyderproject
