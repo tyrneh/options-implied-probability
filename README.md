@@ -39,20 +39,20 @@ OIPD also supports manual CSV options data uploads. See [`TECHNICAL_README.md`](
 
 # Use cases
 
-**Retail traders: Should I buy GME call options for $2 at $75 strike?**
+**Retail traders: Quantify expected payoff of GME call options for $2 at $75 strike**
 
-- You discover the market assigns only a 6 % chance that GME finishes the week above $75
-- A $2 premium on a 6% event means the expected gain is 0.06 × ($75 – $73 break-even) ≈ $0.12, while the expected loss (94 % of the time) is the full $2. The trade’s expected value is negative
+- Market-implied view: You discover the market assigns only a 6 % chance that GME finishes the week above $75
+- Expected payoff: A $2 premium on a 6% event means the expected gain is 0.06 × ($75 – $73 break-even) ≈ $0.12, while the expected loss (94 % of the time) is the full $2. The trade’s expected value is negative
 
-**Professional managers: What is my portfolio's tail risk ahead of major events?**
+**Professional managers: Compute portfolio's forward-looking tail risk ahead of earnings season**
 
 - Historical view: A 99% 12-month VaR of 3% is backward-looking and assumes a parametric distribution–often unrealistic before catalysts
 - Market-implied view: Ahead of earnings and a central-bank meeting, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% portfolio-blended VaR
 
-**Corporates: What proportion of my commodity exposure should I hedge next quarter?**
+**Corporates: Decide the next commodity hedge tranche**
 
-- Typically, my finance team hedges a fixed 70% of my jet fuel exposure, while leaving 30% unhedged to benefit if oil price falls
-- I find OIPD shows a fatter upper tail than usual–implying a higher probability of breaching my commodity budget. This points to lifting hedging coverage to 80% to manage price risk
+- Quantify budget risk: As an airline, a portion of next year’s jet fuel is hedged; the rest floats. Use OIPD to estimate the probability of breaching your budget and the expected overspend (earnings-at-risk) on the unhedged slice.
+- Adjust coverage when tails fatten: If OIPD shows higher price risk, add a small 5–10% hedged tranche using to pull P(breach)/EaR back within board guardrails
 
 # License
 
