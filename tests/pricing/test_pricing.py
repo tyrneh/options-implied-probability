@@ -50,8 +50,8 @@ def test_pdf_integrates_to_one():
 
     pdf_x, pdf_y = calculate_pdf(
         df,
-        current_price=S,
-        days_forward=int(T * 365),
+        spot_price=S,
+        days_to_expiry=int(T * 365),
         risk_free_rate=r,
         solver_method="brent",
         pricing_engine="bs",

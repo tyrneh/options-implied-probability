@@ -48,7 +48,7 @@ class _YFinanceCache:
             with open(p, "rb") as f:
                 data = pickle.load(f)
             if datetime.now() - data["timestamp"] < self.ttl:
-                return data["options_data"], data["current_price"]
+                return data["options_data"], data["spot_price"]
         except Exception:
             p.unlink(missing_ok=True)
         return None
@@ -61,7 +61,7 @@ class _YFinanceCache:
                     {
                         "timestamp": datetime.now(),
                         "options_data": df,
-                        "current_price": price,
+                        "spot_price": price,
                     },
                     f,
                 )
@@ -114,7 +114,7 @@ class Reader(AbstractReader):
             hit = self._cache.get(ticker, expiry)
             if hit is not None:
                 df, price = hit
-                df.attrs["current_price"] = price
+                df.attrs["spot_price"] = price
                 return df
 
         yf = self._yf_mod()
@@ -140,7 +140,7 @@ class Reader(AbstractReader):
         except Exception as exc:
             raise YFinanceError(f"Failed to fetch chain: {exc}") from exc
 
-        calls_df.attrs["current_price"] = price
+        calls_df.attrs["spot_price"] = price
         dividend_yield = self._extract_dividend_yield(tk.info)
         calls_df.attrs["dividend_yield"] = dividend_yield
         calls_df.attrs["dividend_schedule"] = (

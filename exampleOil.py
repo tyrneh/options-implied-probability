@@ -1,4 +1,4 @@
-from oipd import RND, MarketParams, ModelParams
+from oipd import RND, MarketInputs, ModelParams
 import matplotlib.pyplot as plt
 from datetime import date
 
@@ -12,9 +12,9 @@ column_mapping = {
 }
 
 # 2️⃣  market parameters
-market = MarketParams(
-    current_price=64.32,
-    current_date=date(2025, 3, 3),
+market = MarketInputs(
+    spot_price=64.32,
+    valuation_date=date(2025, 3, 3),
     expiry_date=date(2025, 12, 19),
     risk_free_rate=0.04,
 )
@@ -38,7 +38,6 @@ print("🎨 Creating publication-ready plots...")
 
 # Default plot - overlays PDF and CDF with dual y-axes
 fig = est.plot(
-    market_params=market,
     figsize=(10, 6),
 )
 plt.show()

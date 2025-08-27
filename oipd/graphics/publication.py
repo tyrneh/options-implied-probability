@@ -16,9 +16,9 @@ def plot_rnd(
     kind: Literal["pdf", "cdf", "both"] = "both",
     figsize: Tuple[float, float] = (10, 5),
     title: Optional[str] = None,
-    show_current_price: bool = True,
-    current_price: Optional[float] = None,
-    current_date: Optional[str] = None,
+    show_spot_price: bool = True,
+    spot_price: Optional[float] = None,
+    valuation_date: Optional[str] = None,
     expiry_date: Optional[str] = None,
     style: Literal["publication", "default"] = "publication",
     source: Optional[str] = None,
@@ -41,11 +41,11 @@ def plot_rnd(
         Figure size in inches (width, height)
     title : str, optional
         Main title for the plot. If None, auto-generates based on kind
-    show_current_price : bool, default True
-        Whether to show a vertical line at current price
-    current_price : float, optional
-        Current price value for reference line
-    current_date : str, optional
+    show_spot_price : bool, default True
+        Whether to show a vertical line at spot price
+    spot_price : float, optional
+        Spot price value for reference line
+    valuation_date : str, optional
         Current date for price annotation (e.g., "Mar 3, 2025")
     expiry_date : str, optional
         Expiry date for the distribution (e.g., "Mar 3, 2025")
@@ -87,11 +87,11 @@ def plot_rnd(
     if style == "publication":
         pdf_color = "#1976D2"  # blue for PDF
         cdf_color = "#C62828"  # Red for CDF
-        current_price_color = "black"  # black for current price
+        spot_price_color = "black"  # black for spot price
     else:
         pdf_color = kwargs.get("color", "tab:blue")
         cdf_color = kwargs.get("color", "tab:orange")
-        current_price_color = "black"  # black for current price
+        spot_price_color = "black"  # black for spot price
 
     # Remove color from kwargs if we're setting it
     plot_kwargs = {k: v for k, v in kwargs.items() if k != "color"}
@@ -207,24 +207,24 @@ def plot_rnd(
         plot_title = title
 
     # Optional: show current price
-    if show_current_price and current_price is not None:
+    if show_spot_price and spot_price is not None:
         # Format date string for annotation
-        if current_date:
-            date_text = current_date
+        if valuation_date:
+            date_text = valuation_date
         else:
             date_text = "current date"
 
-        price_text = f"Current price on {date_text}\nis ${current_price:.2f}"
+        price_text = f"Spot price on {date_text}\nis ${spot_price:.2f}"
 
         # For overlay plots, add to legend; for individual plots, no legend
         if kind == "both":
             ax1.axvline(
-                x=current_price,
-                color=current_price_color,
+                x=spot_price,
+                color=spot_price_color,
                 linestyle="--",
                 alpha=0.7,
                 linewidth=1.5,  # Thinner line
-                label=f"Current: ${current_price:.2f}",
+                label=f"Spot: ${spot_price:.2f}",
             )
             # Add text annotation beside the line
             # Position text right above the x-axis
@@ -232,21 +232,21 @@ def plot_rnd(
             y_text_pos = y_min + (y_max - y_min) * 0.15  # 15% from bottom
 
             ax1.text(
-                current_price
+                spot_price
                 + (prices.max() - prices.min()) * 0.02,  # Slight offset to the right
                 y_text_pos,
                 price_text,
-                color=current_price_color,
+                color=spot_price_color,
                 fontsize=12,  # Bigger font
                 fontstyle="italic",  # Italicized
                 va="bottom",  # Align to bottom so text sits above the position
                 ha="left",
             )
         else:
-            # Individual plots: current price line without legend
+            # Individual plots: spot price line without legend
             ax1.axvline(
-                x=current_price,
-                color=current_price_color,
+                x=spot_price,
+                color=spot_price_color,
                 linestyle="--",
                 alpha=0.7,
                 linewidth=1.5,  # Thinner line
@@ -259,10 +259,10 @@ def plot_rnd(
                 y_text_pos = 0.15  # 15% on CDF scale
 
             ax1.text(
-                current_price + (prices.max() - prices.min()) * 0.02,
+                spot_price + (prices.max() - prices.min()) * 0.02,
                 y_text_pos,
                 price_text,
-                color=current_price_color,
+                color=spot_price_color,
                 fontsize=12,  # Bigger font
                 fontstyle="italic",  # Italicized
                 va="bottom",  # Align to bottom so text sits above the position

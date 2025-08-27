@@ -27,13 +27,13 @@ OIPD provides a single `RND` class that extracts market-implied probability dist
 
 The `RND` class is your high-level facade that users interact with. It has three main ways to load options data:
 
-1. **CSV files**: `RND.from_csv(path, market_params)`
-2. **DataFrames**: `RND.from_dataframe(df, market_params)`
-3. **Live data**: `RND.from_ticker("AAPL", market_params)` (auto-fetches from vendors, only YFinance currently integrated)
+1. **CSV files**: `RND.from_csv(path, market)`
+2. **DataFrames**: `RND.from_dataframe(df, market)`
+3. **Live data**: `RND.from_ticker("AAPL", market)` (auto-fetches from vendors, only YFinance currently integrated)
 
 **Configuration Objects**
 
-- **`MarketParams`**: Market conditions (current price, risk-free rate, expiry date, dividends)
+- **`MarketInputs`**: Market conditions (spot price, risk-free rate, expiry date, dividends)
 - **`ModelParams`**: Algorithm settings (solver type, KDE smoothing, pricing engine)
 
 **Workflow Examples**
@@ -46,8 +46,9 @@ expiry_dates = RND.list_expiry_dates("AAPL")
 print(expiry_dates[:3])  # ['2025-01-17', '2025-01-24', '2025-02-21']
 
 # Then use one of the available dates (None values enable auto-fetch)
-market = MarketParams(
-    current_price=None,
+market = MarketInputs(
+    valuation_date=date.today(),      # required: analysis date
+    spot_price=None,
     dividend_yield=None,
     expiry_date=date(2025, 1, 17),
     risk_free_rate=0.04
@@ -58,14 +59,14 @@ est = RND.from_ticker("AAPL", market)
 _From CSV file:_
 
 ```python
-market = MarketParams(current_price=150, expiry_date=date(2025, 12, 19), risk_free_rate=0.04)
+market = MarketInputs(valuation_date=date.today(), spot_price=150, expiry_date=date(2025, 12, 19), risk_free_rate=0.04)
 est = RND.from_csv("options_data.csv", market, column_mapping={"Strike": "strike", "Last": "last_price"})
 ```
 
 _From DataFrame:_
 
 ```python
-market = MarketParams(current_price=150, expiry_date=date(2025, 12, 19), risk_free_rate=0.04)
+market = MarketInputs(valuation_date=date.today(), spot_price=150, expiry_date=date(2025, 12, 19), risk_free_rate=0.04)
 est = RND.from_dataframe(df, market)
 ```
 
@@ -87,31 +88,91 @@ df = est.to_frame()  # Export as DataFrame
 
 The API follows a scikit-learn-like pattern with `.fit()` and result properties, making it familiar to ML practitioners while being finance-domain specific.
 
-### 2.1 MarketParams
+### 2.1 Auto-fetching Architecture
+
+OIPD uses an immutable data flow for vendor integration that prevents common mistakes and ensures data integrity.
+
+#### Data Flow
+
+```
+MarketInputs (user) + VendorSnapshot (fetched) → ResolvedMarket (merged)
+     ↓                      ↓                           ↓
+  frozen=True          frozen=True                 frozen=True
+  (never modified)     (vendor data)              (final values)
+```
+
+#### Key Principles
+
+1. **MarketInputs is immutable** - It's a `@dataclass(frozen=True)` that is NEVER modified
+2. **Auto-fetched data lives in the result** - Access via `result.market.spot_price`
+3. **Provenance tracking** - The result knows where each value came from (user vs vendor)
+4. **Three resolution modes** - Control how user vs vendor data is prioritized
+
+#### Example: Accessing Auto-fetched Data
+
+```python
+# User provides minimal inputs
+market = MarketInputs(
+    valuation_date=date.today(),
+    expiry_date=date(2025, 12, 19),
+    risk_free_rate=0.04,
+    # spot_price=None,  # Will be auto-fetched
+)
+
+# Fetch and estimate
+result = RND.from_ticker("SPY", market)
+
+# ✅ CORRECT: Access fetched values through result
+print(f"Spot price: ${result.market.spot_price:.2f}")
+print(f"Source: {result.market.provenance.spot_price}")  # "vendor"
+print(result.summary())  # One-line summary of all sources
+
+# ❌ WRONG: The original MarketInputs is never modified
+# print(f"Spot price: ${market.spot_price}")  # Still None!
+```
+
+#### Resolution Modes
+
+- **`"missing"` (default)**: Use user values when available, fill missing from vendor
+- **`"vendor_only"`**: Ignore user values, use only vendor data
+- **`"strict"`**: All fields must come from user (no auto-fetching)
+
+#### Time Specification Options
+
+Users can specify the time horizon in three ways:
+
+1. **`days_to_expiry` only**: Simple days count (assumes valuation_date=today)
+2. **`expiry_date` only**: Expiry date (valuation_date defaults to today)  
+3. **Both dates**: Explicit `valuation_date + expiry_date` pair for historical analysis
+
+If both `days_to_expiry` AND dates are provided, dates take precedence with a warning.
+
+### 2.2 MarketInputs
 
 Configuration object that defines the market environment and time horizon for the RND estimation.
 
 ```
-MarketParams(
-    current_price: float,           # Required (or auto-fetched from ticker)
-    risk_free_rate: float,          # Required
+MarketInputs(
+    risk_free_rate: float,          # Always required
+    valuation_date: date,           # Required: analysis/valuation date
 
-    # Time horizon - provide either:
-    days_forward: int,              # Option 1: days until expiry
-    # OR
-    current_date: date,             # Option 2: valuation date
-    expiry_date: date,              # Option 2: expiration date
+    # Time horizon - provide ONE of these:
+    days_to_expiry: int,            # Option 1: days until expiry  
+    expiry_date: date,              # Option 2: expiration date (valuation defaults to today)
+    # OR both for historical analysis:
+    valuation_date + expiry_date,   # Option 3: explicit date pair
 
-    # Dividends - optional:
+    # Market data - optional for vendor mode:
+    spot_price: float,              # Spot price (auto-fetched from tickers)
     dividend_yield: float,          # Annual dividend yield (e.g., 0.02 for 2%)
     dividend_schedule: DataFrame,   # Discrete dividend payments
 )
 ```
 
-_Provide either `days_forward` or the date pair._ During `from_ticker` unknown
-fields are auto-populated (spot, dividend_yield, possibly a schedule).
+_Time specification is flexible - provide what you know._ During `from_ticker`, unknown
+fields are auto-populated (spot_price, dividend_yield, possibly dividend_schedule).
 
-### 2.2 ModelParams
+### 2.3 ModelParams
 
 Configuration object that controls the mathematical algorithms and smoothing techniques used in the RND calculation.
 
@@ -123,7 +184,7 @@ ModelParams(
 )
 ```
 
-### 2.3 RND – primary estimator
+### 2.4 RND – primary estimator
 
 Main class that fits risk-neutral density models from options data and provides probability distribution results.
 

@@ -204,8 +204,8 @@ class TestIntegrationWithPDFCalculation:
         try:
             pdf_x, pdf_y = calculate_pdf(
                 options_data=options_data,
-                current_price=spot,
-                days_forward=30,
+                spot_price=spot,
+                days_to_expiry=30,
                 risk_free_rate=0.05,
                 solver_method="brent",
                 pricing_engine="bs",
@@ -256,8 +256,8 @@ class TestIntegrationWithPDFCalculation:
             
             pdf_x, pdf_y = calculate_pdf(
                 options_data=options_data,
-                current_price=spot,
-                days_forward=45,
+                spot_price=spot,
+                days_to_expiry=45,
                 risk_free_rate=0.04,
                 solver_method="brent",
                 pricing_engine="bs",

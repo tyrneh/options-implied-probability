@@ -5,7 +5,7 @@
 
 # Overview
 
-OIPD generates probability distribution of future stock prices from options data. A probability distribution is simply a single curve showing how likely each price level is on a future date.
+OIPD generates probability distribution of future stock prices from options data. A probability distribution is simply a single curve showing how likely every price level is on a future date.
 
 These probabilities reflect the consensus, risk-neutral expectations of all market participants. While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
 
@@ -18,12 +18,12 @@ pip install oipd
 
 #### Usage
 ```python
-from oipd import RND, MarketParams
+from oipd import RND, MarketInputs
 from datetime import date
 
 # 1 ─ point to a ticker + expiry
-market = MarketParams(
-    current_price=None,               # auto-fetched spot price
+market = MarketInputs(
+    valuation_date=date.today(),      # required: analysis date  
     expiry_date=date(2025, 12, 19),   # next option expiry you care about
     risk_free_rate=0.04,              # risk-free rate
 )
@@ -46,13 +46,13 @@ OIPD also supports manual CSV options data uploads. See [`TECHNICAL_README.md`](
 
 **Professional managers: What is my portfolio's tail risk ahead of major events?**
 
-- Historical view: A 99% one-month VaR of 3% is backward-looking and assumes a parametric distribution–often unrealistic before catalysts
-- Market-implied view: Ahead of earnings and a central-bank meeting, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% VaR–twice the historical figure–signalling the need to hedge, trim, or tighten limits
+- Historical view: A 99% 12-month VaR of 3% is backward-looking and assumes a parametric distribution–often unrealistic before catalysts
+- Market-implied view: Ahead of earnings and a central-bank meeting, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% portfolio-blended VaR
 
 **Corporates: What proportion of my commodity exposure should I hedge next quarter?**
 
 - Typically, my finance team hedges a fixed 70% of my jet fuel exposure, while leaving 30% unhedged to benefit if oil price falls
-- I find OIPD shows a fatter upper tail–a higher probability of breaching my budget. This points to lifting hedging coverage to 80% to manage price risk
+- I find OIPD shows a fatter upper tail than usual–implying a higher probability of breaching my commodity budget. This points to lifting hedging coverage to 80% to manage price risk
 
 # License
 

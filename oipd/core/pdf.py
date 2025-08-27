@@ -78,8 +78,8 @@ def fit_kde(pdf_point_arrays: tuple) -> tuple:
 
 def calculate_pdf(
     options_data: DataFrame,
-    current_price: float,
-    days_forward: int,
+    spot_price: float,
+    days_to_expiry: int,
     risk_free_rate: float,
     solver_method: str,
     pricing_engine: str = "bs",
@@ -91,8 +91,8 @@ def calculate_pdf(
     Args:
         options_data: a DataFrame containing options price data with
             cols ['strike', 'last_price']
-        current_price: the current price of the security
-        days_forward: the number of days in the future to estimate the
+        spot_price: the current price of the security
+        days_to_expiry: the number of days in the future to estimate the
             price probability density at
         risk_free_rate: annual risk free rate in nominal terms
 
@@ -111,11 +111,11 @@ def calculate_pdf(
     if options_data.empty:
         raise InvalidInputError("options_data cannot be empty")
 
-    if current_price <= 0:
-        raise InvalidInputError(f"current_price must be positive, got {current_price}")
+    if spot_price <= 0:
+        raise InvalidInputError(f"spot_price must be positive, got {spot_price}")
 
-    if days_forward <= 0:
-        raise InvalidInputError(f"days_forward must be positive, got {days_forward}")
+    if days_to_expiry <= 0:
+        raise InvalidInputError(f"days_to_expiry must be positive, got {days_to_expiry}")
 
     if not -1 <= risk_free_rate <= 1:
         raise InvalidInputError(
@@ -128,7 +128,7 @@ def calculate_pdf(
         )
 
     # options_data, min_strike, max_strike = _extrapolate_call_prices(
-    #     options_data, current_price
+    #     options_data, spot_price
     # )
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
@@ -140,8 +140,8 @@ def calculate_pdf(
 
     options_data = _calculate_IV(
         options_data,
-        current_price,
-        days_forward,
+        spot_price,
+        days_to_expiry,
         risk_free_rate,
         solver_method,
         dividend_yield=dividend_yield,
@@ -153,8 +153,8 @@ def calculate_pdf(
     denoised_iv = _fit_bspline_IV(options_data)
     pdf = _create_pdf_point_arrays(
         denoised_iv,
-        current_price,
-        days_forward,
+        spot_price,
+        days_to_expiry,
         risk_free_rate,
         dividend_yield,
         pricing_engine,
@@ -233,7 +233,7 @@ def calculate_quartiles(
 
 
 def _extrapolate_call_prices(
-    options_data: DataFrame, current_price: float
+    options_data: DataFrame, spot_price: float
 ) -> tuple[DataFrame, int, int]:
     """Extrapolate the price of the call options to strike prices outside
     the range of options_data. Extrapolation is done to zero and twice the
@@ -243,7 +243,7 @@ def _extrapolate_call_prices(
     Args:
         options_data: a DataFrame containing options price data with
             cols ['strike', 'last_price']
-        current_price: the current price of the security
+        spot_price: the current price of the security
 
     Returns:
         the extended options_data DataFrame
@@ -251,7 +251,7 @@ def _extrapolate_call_prices(
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
     lower_extrapolation = DataFrame(
-        {"strike": p, "last_price": current_price - p} for p in range(0, min_strike)
+        {"strike": p, "last_price": spot_price - p} for p in range(0, min_strike)
     )
     upper_extrapolation = DataFrame(
         {
@@ -284,8 +284,8 @@ def _calculate_last_price(options_data: DataFrame) -> DataFrame:
 
 def _calculate_IV(
     options_data: DataFrame,
-    current_price: float,
-    days_forward: int,
+    spot_price: float,
+    days_to_expiry: int,
     risk_free_rate: float,
     solver_method: Literal["newton", "brent"],
     dividend_yield: float | None = None,
@@ -293,7 +293,7 @@ def _calculate_IV(
     """
     Vectorised implied volatility solver.
     """
-    years_forward = days_forward / 365
+    years_to_expiry = days_to_expiry / 365
 
     # Choose the IV solver method
     if solver_method == "newton":
@@ -310,7 +310,7 @@ def _calculate_IV(
     q = dividend_yield or 0.0
     iv_values = np.fromiter(
         (
-            iv_solver_scalar(p, current_price, k, years_forward, r=risk_free_rate, q=q)
+            iv_solver_scalar(p, spot_price, k, years_to_expiry, r=risk_free_rate, q=q)
             for p, k in zip(prices_arr, strikes_arr)
         ),
         dtype=float,
@@ -430,8 +430,8 @@ def finite_diff_second_derivative(y: np.ndarray, x: np.ndarray) -> np.ndarray:
 
 def _create_pdf_point_arrays(
     denoised_iv: tuple,
-    current_price: float,
-    days_forward: int,
+    spot_price: float,
+    days_to_expiry: int,
     risk_free_rate: float,
     dividend_yield: float | None = None,
     pricing_engine: str = "bs",
@@ -441,8 +441,8 @@ def _create_pdf_point_arrays(
 
     Args:
         denoised_iv: (x,y) observations of the denoised IV
-        current_price: the current price of the security
-        days_forward: the number of days in the future to estimate the
+        spot_price: the current price of the security
+        days_to_expiry: the number of days in the future to estimate the
             price probability density at
         risk_free_rate: the current annual risk free interest rate, nominal terms
 
@@ -455,12 +455,12 @@ def _create_pdf_point_arrays(
     y_IV = denoised_iv[1]
 
     # convert IV-space to price-space
-    years_forward = days_forward / 365
+    years_to_expiry = days_to_expiry / 365
 
     # Use the selected pricing engine (defaults to BS)
     price_fn = get_pricer(pricing_engine)
     q = dividend_yield or 0.0
-    interpolated = price_fn(current_price, x_IV, y_IV, years_forward, risk_free_rate, q)
+    interpolated = price_fn(spot_price, x_IV, y_IV, years_to_expiry, risk_free_rate, q)
 
     # Use stable finite difference method instead of np.gradient for second derivatives
     # This is critical for numerical stability, especially for deep OTM options

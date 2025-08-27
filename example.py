@@ -1,4 +1,4 @@
-from oipd import RND, MarketParams, ModelParams
+from oipd import RND, MarketInputs, ModelParams
 import matplotlib.pyplot as plt
 from datetime import date
 
@@ -12,9 +12,9 @@ column_mapping = {
 }
 
 # 2️⃣  market parameters
-market = MarketParams(
-    current_price=593.83,  # current price of the underlying asset
-    current_date=date(2025, 3, 3),
+market = MarketInputs(
+    spot_price=593.83,  # current price of the underlying asset
+    valuation_date=date(2025, 3, 3),
     expiry_date=date(2025, 5, 16),
     risk_free_rate=0.04,
 )
@@ -38,7 +38,6 @@ print("🎨 Creating publication-ready plots...")
 
 # Default plot - overlays PDF and CDF with dual y-axes
 fig = est.plot(
-    market_params=market,
     figsize=(10, 6),
 )
 plt.show()
@@ -46,7 +45,6 @@ plt.show()
 # PDF only
 fig = est.plot(
     kind="pdf",
-    market_params=market,
     figsize=(8, 6),
 )
 plt.show()
@@ -54,7 +52,6 @@ plt.show()
 # CDF only
 fig = est.plot(
     kind="cdf",
-    market_params=market,
     figsize=(8, 6),
 )
 plt.show()
@@ -69,34 +66,34 @@ expiry_dates = RND.list_expiry_dates("SPY")
 print(expiry_dates[:])  # ['2025-07-11', '2025-07-18', '2025-07-25']
 
 # 2. Use ticker data with market parameters (current price fetched automatically)
-market = MarketParams(
-    current_price=None,  # Will be auto-fetched and this object will be updated
-    dividend_yield=None,  # Will be auto-fetched and this object will be updated
-    current_date=date(2025, 7, 10),
+market = MarketInputs(
+    spot_price=None,  # Will be auto-fetched (MarketInputs stays immutable)
+    dividend_yield=None,  # Will be auto-fetched (MarketInputs stays immutable)
+    valuation_date=date(2025, 7, 10),
     expiry_date=date(2025, 12, 19),
     risk_free_rate=0.04,
 )
 
 model = ModelParams(fit_kde=True, solver="brent")
 
-# 3. Fetch and estimate - this will update market.current_price automatically
-est = RND.from_ticker("SPY", market, model=model)
+# 3. Fetch and estimate - auto-fetched data is available in the result
+result = RND.from_ticker("SPY", market, model=model)
 
-# 4. Now market.current_price has been set, so you can use it anywhere
-print(f"Fetched current price: ${market.current_price:.2f}")
-print(market.dividend_yield)
+# 4. Access auto-fetched data through the result (NOT through market!)
+print(f"Fetched spot price: ${result.market.spot_price:.2f}")
+print(f"Fetched dividend yield: {result.market.dividend_yield}")
+print(f"Data sources: {result.summary()}")
 
-
-# 5. Plot works perfectly with the same market object
-est.plot(market_params=market)
+# 5. Plot using the result object
+result.plot()
 plt.show()
 
-est.plot(kind="pdf", market_params=market)
+result.plot(kind="pdf")
 plt.show()
 
-est.plot()
+result.plot()
 plt.show()
 
-# Both approaches work now:
-# - est.plot() uses stored market parameters automatically
-# - est.plot(market_params=market) uses the original (now updated) market object
+# Note: result.plot() uses the resolved market parameters from the calculation.
+# The original MarketInputs object remains immutable and unchanged.
+# Auto-fetched values are always accessed through result.market, not the original market object.
