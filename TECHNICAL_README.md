@@ -103,8 +103,8 @@ ModelParams(
 Main class that fits risk-neutral density models from options data and provides probability distribution results.
 
 ```python
-RND.from_csv(path, market, model)
-RND.from_dataframe(df, market, model)
+RND.from_csv(path, market, model, column_mapping={"YourHeader": "oipd_field"})  # Maps CSV headers to OIPD fields
+RND.from_dataframe(df, market, model, column_mapping={"YourHeader": "oipd_field"})  # Maps DataFrame columns to OIPD fields
 RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # (auto-fetches from vendors, only YFinance currently integrated)
 ```
 
