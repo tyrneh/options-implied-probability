@@ -69,7 +69,7 @@ est = RND.from_ticker("AAPL", market)
 
 Configuration object that defines the market environment and time horizon for the RND estimation.
 
-```
+```python
 MarketInputs(
     risk_free_rate: float,          # Required
     valuation_date: date,           # Required 
@@ -90,7 +90,7 @@ MarketInputs(
 
 OPTIONAL configuration object that controls the algorithms used in the RND calculation.
 
-```
+```python
 ModelParams(
     solver        = "brent" | "newton",   # IV root-finder
     fit_kde       = False,                # smooth tails
@@ -110,7 +110,7 @@ RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # (auto-fetches from ve
 
 Returns a fitted instance exposing
 
-```
+```python
 est.pdf_                      # Probability density function values
 est.cdf_                      # Cumulative distribution function values
 est.plot(kind="both")         # Publication-ready plots ("pdf", "cdf", or "both" (default))
