@@ -2,7 +2,7 @@
 
 This document complements the high-level `README.md`. Here you’ll find:
 
-1. Complete installation matrix & extras
+1. Complete installation notes
 2. Detailed API documentation
 3. Theory & algorithmic notes
 
@@ -15,26 +15,24 @@ This document complements the high-level `README.md`. Here you’ll find:
 | Full installation (with yfinance) | `pip install oipd`          |
 | Core maths only (no data vendors) | `pip install oipd[minimal]` |
 
-Core requires at minimum **Python 3.10+**.
+Requires at minimum **Python 3.10+**.
 
 ---
 
 ## 2. API Overview
 
-OIPD provides a single `RND` class that extracts market-implied probability distributions from options data using the Breeden-Litzenberger formula and Black-Scholes pricing.
+OIPD provides a single `RND` class that extracts market-implied probability distributions from options data. We use Black-Scholes pricing with the Breeden-Litzenberger formula for now. Architecture is written to accomodate more pricing models in the future roadmap. 
 
 **Main Entry Point: `RND` Class**
 
-The `RND` class is your high-level facade that users interact with. It has three main ways to load options data:
+The `RND` class is the high-level facade that users interact with. It has three main ways to load options data:
 
-1. **CSV files**: `RND.from_csv(path, market)`
-2. **DataFrames**: `RND.from_dataframe(df, market)`
-3. **Live data**: `RND.from_ticker("AAPL", market)` (auto-fetches from vendors, only YFinance currently integrated)
+1. **CSV files**: `RND.from_csv(path, market, column_mapping=None)`
+2. **DataFrames**: `RND.from_dataframe(df, market, column_mapping=None)`
+3. **Live data**: `RND.from_ticker("AAPL", market)` 
 
-**Configuration Objects**
-
-- **`MarketInputs`**: Market conditions (spot price, risk-free rate, expiry date, dividends)
-- **`ModelParams`**: Algorithm settings (solver type, KDE smoothing, pricing engine)
+`RND` requires the mandatory MarketInputs argument, and an optional ModelParams argument. 
+MarketInputs loads information on market data, while ModelParams specifies algorithm settings.
 
 **Workflow Examples**
 
@@ -45,38 +43,16 @@ _From live data (auto-fetches price & dividends):_
 expiry_dates = RND.list_expiry_dates("AAPL")
 print(expiry_dates[:3])  # ['2025-01-17', '2025-01-24', '2025-02-21']
 
-# Then use one of the available dates (None values enable auto-fetch)
+# Then use one of the available dates
 market = MarketInputs(
     valuation_date=date.today(),      # required: analysis date
-    spot_price=None,
-    dividend_yield=None,
     expiry_date=date(2025, 1, 17),
     risk_free_rate=0.04
 )
+
 est = RND.from_ticker("AAPL", market)
 ```
 
-_From CSV file:_
-
-```python
-market = MarketInputs(valuation_date=date.today(), spot_price=150, expiry_date=date(2025, 12, 19), risk_free_rate=0.04)
-est = RND.from_csv("options_data.csv", market, column_mapping={"Strike": "strike", "Last": "last_price"})
-```
-
-_From DataFrame:_
-
-```python
-market = MarketInputs(valuation_date=date.today(), spot_price=150, expiry_date=date(2025, 12, 19), risk_free_rate=0.04)
-est = RND.from_dataframe(df, market)
-```
-
-_Access results:_
-
-```python
-prob = est.prob_at_or_above(160)  # P(price >= $160)
-est.plot()  # Publication-ready plots
-df = est.to_frame()  # Export as DataFrame
-```
 
 **Smart Features**
 
@@ -88,93 +64,30 @@ df = est.to_frame()  # Export as DataFrame
 
 The API follows a scikit-learn-like pattern with `.fit()` and result properties, making it familiar to ML practitioners while being finance-domain specific.
 
-### 2.1 Auto-fetching Architecture
-
-OIPD uses an immutable data flow for vendor integration that prevents common mistakes and ensures data integrity.
-
-#### Data Flow
-
-```
-MarketInputs (user) + VendorSnapshot (fetched) → ResolvedMarket (merged)
-     ↓                      ↓                           ↓
-  frozen=True          frozen=True                 frozen=True
-  (never modified)     (vendor data)              (final values)
-```
-
-#### Key Principles
-
-1. **MarketInputs is immutable** - It's a `@dataclass(frozen=True)` that is NEVER modified
-2. **Auto-fetched data lives in the result** - Access via `result.market.spot_price`
-3. **Provenance tracking** - The result knows where each value came from (user vs vendor)
-4. **Three resolution modes** - Control how user vs vendor data is prioritized
-
-#### Example: Accessing Auto-fetched Data
-
-```python
-# User provides minimal inputs
-market = MarketInputs(
-    valuation_date=date.today(),
-    expiry_date=date(2025, 12, 19),
-    risk_free_rate=0.04,
-    # spot_price=None,  # Will be auto-fetched
-)
-
-# Fetch and estimate
-result = RND.from_ticker("SPY", market)
-
-# ✅ CORRECT: Access fetched values through result
-print(f"Spot price: ${result.market.spot_price:.2f}")
-print(f"Source: {result.market.provenance.spot_price}")  # "vendor"
-print(result.summary())  # One-line summary of all sources
-
-# ❌ WRONG: The original MarketInputs is never modified
-# print(f"Spot price: ${market.spot_price}")  # Still None!
-```
-
-#### Resolution Modes
-
-- **`"missing"` (default)**: Use user values when available, fill missing from vendor
-- **`"vendor_only"`**: Ignore user values, use only vendor data
-- **`"strict"`**: All fields must come from user (no auto-fetching)
-
-#### Time Specification Options
-
-Users can specify the time horizon in three ways:
-
-1. **`days_to_expiry` only**: Simple days count (assumes valuation_date=today)
-2. **`expiry_date` only**: Expiry date (valuation_date defaults to today)  
-3. **Both dates**: Explicit `valuation_date + expiry_date` pair for historical analysis
-
-If both `days_to_expiry` AND dates are provided, dates take precedence with a warning.
-
-### 2.2 MarketInputs
+### 2.1 MarketInputs
 
 Configuration object that defines the market environment and time horizon for the RND estimation.
 
 ```
 MarketInputs(
-    risk_free_rate: float,          # Always required
-    valuation_date: date,           # Required: analysis/valuation date
+    risk_free_rate: float,          # Required
+    valuation_date: date,           # Required 
 
     # Time horizon - provide ONE of these:
     days_to_expiry: int,            # Option 1: days until expiry  
-    expiry_date: date,              # Option 2: expiration date (valuation defaults to today)
-    # OR both for historical analysis:
-    valuation_date + expiry_date,   # Option 3: explicit date pair
+    expiry_date: date,              # Option 2: expiration date (auto calculates days difference between expiry and valuation dates)
 
-    # Market data - optional for vendor mode:
-    spot_price: float,              # Spot price (auto-fetched from tickers)
-    dividend_yield: float,          # Annual dividend yield (e.g., 0.02 for 2%)
-    dividend_schedule: DataFrame,   # Discrete dividend payments
+    # Market data - optional for vendor mode, as they can be auto fetched:
+    spot_price: float,              # Spot price 
+    #   Dividends - provide ONE of these:
+    dividend_yield: float,          # Option 1: Annual dividend yield (e.g., 0.02 for 2%)
+    dividend_schedule: DataFrame,   # Option 2: Discrete dividend payments, requires 'ex_date' & 'amount' columns
 )
 ```
 
-_Time specification is flexible - provide what you know._ During `from_ticker`, unknown
-fields are auto-populated (spot_price, dividend_yield, possibly dividend_schedule).
-
 ### 2.3 ModelParams
 
-Configuration object that controls the mathematical algorithms and smoothing techniques used in the RND calculation.
+OPTIONAL configuration object that controls the algorithms used in the RND calculation.
 
 ```
 ModelParams(
@@ -184,14 +97,14 @@ ModelParams(
 )
 ```
 
-### 2.4 RND – primary estimator
+### 2.4 RND estimator
 
 Main class that fits risk-neutral density models from options data and provides probability distribution results.
 
-```
-RND.from_csv(path, market, model=...)
-RND.from_dataframe(df, market, ...)
-RND.from_ticker("AAPL", market, vendor="yfinance", ...)
+```python
+RND.from_csv(path, market, model)
+RND.from_dataframe(df, market, model)
+RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # (auto-fetches from vendors, only YFinance currently integrated)
 ```
 
 Returns a fitted instance exposing
@@ -241,17 +154,51 @@ The process of generating the PDFs and CDFs is as follows:
 
 ---
 
-## 5. File layout
+## 5. Auto-fetching Architecture
+
+OIPD uses an immutable data flow for vendor integration that prevents common mistakes and ensures data integrity.
+
+### Data Flow
 
 ```
-oipd/
- ├─ core/          # mathematical primitives (PDF/CDF calculation)
- ├─ pricing/       # pricing engines (Black-Scholes, future Heston…)
- ├─ vendor/        # data connectors (yfinance, alpaca, …)
- ├─ io/            # generic readers (CSV, DataFrame)
- ├─ graphics/      # plotting helpers (matplotlib, publication styles)
- ├─ estimator.py   # high-level façade (RND class)
- └─ generate_pdf.py # legacy CLI interface
+MarketInputs (user) + VendorSnapshot (fetched) → ResolvedMarket (merged)
+     ↓                      ↓                           ↓
+  frozen=True          frozen=True                 frozen=True
+  (never modified)     (vendor data)              (final values)
+```
+
+### Key Principles
+
+1. **MarketInputs is immutable** - It's a `@dataclass(frozen=True)` that is never modified
+2. **Auto-fetched data lives in the result** - Access via `est.market.spot_price`
+3. **Provenance tracking** - The result knows where each value came from (user vs vendor)
+4. **Resolution modes** - Different data sources use different resolution strategies
+
+### Resolution Modes (Internal Behavior)
+
+Different data sources use different resolution strategies:
+
+- **`from_ticker()`**: Uses `"missing"` mode - auto-fetches spot price and dividends from vendors when not provided by user
+- **`from_csv()` / `from_dataframe()`**: Uses `"strict"` mode - all market data must be provided by user, no auto-fetching
+- **`"vendor_only"`**: Internal mode that ignores user values (not currently exposed to users)
+
+### Example: Accessing Auto-fetched Data
+
+```python
+# User provides minimal inputs
+market = MarketInputs(
+    valuation_date=date.today(),
+    expiry_date=date(2025, 12, 19),
+    risk_free_rate=0.04,
+)
+
+# Fetch and estimate
+est = RND.from_ticker("SPY", market)
+
+# ✅ CORRECT: Access fetched values through result
+print(f"Spot price: ${est.market.spot_price:.2f}")
+print(f"Source: {est.market.provenance.spot_price}")  # "vendor"
+print(est.summary())  # One-line summary of all sources
 ```
 
 ---

@@ -21,7 +21,7 @@ pip install oipd
 from oipd import RND, MarketInputs
 from datetime import date
 
-# 1 ─ point to a ticker + expiry
+# 1 ─ point to a ticker and provide market info
 market = MarketInputs(
     valuation_date=date.today(),      # required: analysis date  
     expiry_date=date(2025, 12, 19),   # next option expiry you care about
@@ -44,15 +44,15 @@ OIPD also supports manual CSV options data uploads. See [`TECHNICAL_README.md`](
 - Market-implied view: You discover the market assigns only a 6 % chance that GME finishes the week above $75
 - Expected payoff: A $2 premium on a 6% event means the expected gain is 0.06 × ($75 – $73 break-even) ≈ $0.12, while the expected loss (94 % of the time) is the full $2. The trade’s expected value is negative
 
-**Professional managers: Compute portfolio's forward-looking tail risk ahead of earnings season**
+**Professional managers: Compute your portfolio's forward-looking tail risk ahead of earnings season**
 
 - Historical view: A 99% 12-month VaR of 3% is backward-looking and assumes a parametric distribution–often unrealistic before catalysts
 - Market-implied view: Ahead of earnings and a central-bank meeting, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% portfolio-blended VaR
 
 **Corporates: Decide the next commodity hedge tranche**
 
-- Quantify budget risk: As an airline, a portion of next year’s jet fuel is hedged; the rest floats. Use OIPD to estimate the probability of breaching your budget and the expected overspend (earnings-at-risk) on the unhedged slice.
-- Adjust coverage when tails fatten: If OIPD shows higher price risk, add a small 5–10% hedged tranche using to pull P(breach)/EaR back within board guardrails
+- Quantify budget risk: As an airline, a portion of next year’s jet fuel demand is hedged; the rest floats. Use OIPD to estimate the probability of breaching your budget and the expected overspend (earnings-at-risk) on the unhedged slice.
+- Adjust hedging coverage when tails fatten: If OIPD shows higher price risk, add a small 5–10% hedged tranche using to pull P(breach)/EaR back within board guardrails
 
 # License
 
