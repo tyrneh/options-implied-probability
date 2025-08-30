@@ -5,7 +5,7 @@
 
 # Overview
 
-OIPD generates probability distribution of future stock prices from options data. A probability distribution is simply a single curve showing how likely every price level is on a future date.
+OIPD generates probability distributions of future security prices from options data. A probability distribution is a curve that shows the likelihood of different price outcomes on a specific future date.
 
 These probabilities reflect the consensus, risk-neutral expectations of all market participants. While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
 
