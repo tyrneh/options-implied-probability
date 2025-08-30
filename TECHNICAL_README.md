@@ -21,17 +21,20 @@ Requires at minimum **Python 3.10+**.
 
 ## 2. API Overview
 
-OIPD provides a single `RND` class that extracts market-implied probability distributions from options data. We use Black-Scholes pricing with the Breeden-Litzenberger formula for now. Architecture is written to accomodate more pricing models in the future roadmap. 
+OIPD provides a single `RND` class that extracts market-implied probability distributions from options data.
+ 
+We curently use Black-Scholes pricing with the Breeden-Litzenberger formula. Architecture is written to accomodate more pricing models in the future roadmap. 
 
 **Main Entry Point: `RND` Class**
 
-The `RND` class is the high-level facade that users interact with. It has three main ways to load options data:
+The `RND` class is the high-level facade that users interact with. It has three ways to load options data:
 
-1. **CSV files**: `RND.from_csv(path, market, column_mapping=None)`
-2. **DataFrames**: `RND.from_dataframe(df, market, column_mapping=None)`
+1. **CSV files**: `RND.from_csv(path, market)`
+2. **DataFrames**: `RND.from_dataframe(df, market)`
 3. **Live data**: `RND.from_ticker("AAPL", market)` 
 
-`RND` requires the mandatory MarketInputs argument, and an optional ModelParams argument. 
+`RND` takes the mandatory MarketInputs parameter, and an optional ModelParams parameter. 
+
 MarketInputs loads information on market data, while ModelParams specifies algorithm settings.
 
 **Workflow Examples**
@@ -53,16 +56,14 @@ market = MarketInputs(
 est = RND.from_ticker("AAPL", market)
 ```
 
-
 **Smart Features**
 
 - **Auto-fetching**: `from_ticker()` automatically gets current price and dividend data
-- **Flexible data sources**: Pluggable vendor system (currently yfinance, extensible)
-- **Built-in plotting**: Publication-ready PDF/CDF plots with dual y-axes
+- **Flexible data sources**: Pluggable vendor system (currently yfinance; extensible)
+- **Built-in plotting**: PDF/CDF plots
 - **Probability calculations**: Easy P(price >= X) queries
-- **Column mapping**: Handles different CSV formats automatically
+- **Column mapping**: Handles different header names automatically using the `column_mapping=` argument (for CSV and DataFrame modes only)
 
-The API follows a scikit-learn-like pattern with `.fit()` and result properties, making it familiar to ML practitioners while being finance-domain specific.
 
 ### 2.1 MarketInputs
 
@@ -77,7 +78,7 @@ MarketInputs(
     days_to_expiry: int,            # Option 1: days until expiry  
     expiry_date: date,              # Option 2: expiration date (auto calculates days difference between expiry and valuation dates)
 
-    # Market data - optional for vendor mode, as they can be auto fetched:
+    # Market data - optional for from_ticker() mode, as they can be auto fetched:
     spot_price: float,              # Spot price 
     #   Dividends - provide ONE of these:
     dividend_yield: float,          # Option 1: Annual dividend yield (e.g., 0.02 for 2%)

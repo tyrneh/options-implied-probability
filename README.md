@@ -28,14 +28,16 @@ market = MarketInputs(
     risk_free_rate=0.04,              # risk-free rate
 )
 
-est = RND.from_ticker("AAPL", market)   # run estimator
+# 2 - run estimator
+est = RND.from_ticker("AAPL", market)   
 
-# 2 ─ access results and integrated plotting
+# 3 ─ access results and plots
 est.prob_at_or_above(120)               # P(price >= $120)
 est.plot()                              # plot PDF + CDF in one line
+est.cdf_                                # Cumulative distribution function values
 ```
 
-OIPD also supports manual CSV options data uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.
+OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.
 
 # Use cases
 
@@ -44,7 +46,7 @@ OIPD also supports manual CSV options data uploads. See [`TECHNICAL_README.md`](
 - Market-implied view: You discover the market assigns only a 6 % chance that GME finishes the week above $75
 - Expected payoff: A $2 premium on a 6% event means the expected gain is 0.06 × ($75 – $73 break-even) ≈ $0.12, while the expected loss (94 % of the time) is the full $2. The trade’s expected value is negative
 
-**Professional managers: Compute your portfolio's forward-looking tail risk ahead of earnings season**
+**Professional managers: Compute your portfolio's forward-looking tail risk ahead of turbulent earnings season**
 
 - Historical view: A 99% 12-month VaR of 3% is backward-looking and assumes a parametric distribution–often unrealistic before catalysts
 - Market-implied view: Ahead of earnings and a central-bank meeting, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% portfolio-blended VaR
