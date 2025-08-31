@@ -18,8 +18,12 @@ from oipd.io import CSVReader, DataFrameReader
 from oipd.vendor import get_reader
 from oipd.pricing.utils import prepare_dividends
 from oipd.market_inputs import (
-    MarketInputs, VendorSnapshot, ResolvedMarket, 
-    resolve_market, FillMode, Provenance
+    MarketInputs,
+    VendorSnapshot,
+    ResolvedMarket,
+    resolve_market,
+    FillMode,
+    Provenance,
 )
 
 
@@ -39,6 +43,7 @@ class ModelParams:
     fit_kde: bool = False
     american_to_european: bool = False  # placeholder for future functionality
     pricing_engine: Literal["bs"] = "bs"
+    price_method: Literal["last", "mid"] = "last"
 
 
 @dataclass(frozen=True)
@@ -61,22 +66,22 @@ class RNDResult:
     def to_csv(self, path: str, **kwargs) -> None:
         """Persist results to csv on disk."""
         self.to_frame().to_csv(path, index=False, **kwargs)
-    
+
     def summary(self) -> str:
         """Return a one-line summary of resolved parameters and their sources."""
         return self.market.summary()
-    
+
     def prob_at_or_above(self, price: float) -> float:
         """
         Calculate the probability that the future price will be at or above a specified price.
-        
+
         This is computed as 1 - CDF(price), where CDF is the cumulative distribution function.
-        
+
         Parameters
         ----------
         price : float
             The price threshold to evaluate
-        
+
         Returns
         -------
         float
@@ -87,11 +92,11 @@ class RNDResult:
             return 1.0  # If price is below minimum, probability is 100%
         if price >= self.prices.max():
             return 0.0  # If price is above maximum, probability is 0%
-        
+
         # Interpolate CDF at the specified price
         cdf_at_price = np.interp(price, self.prices, self.cdf)
         return 1.0 - cdf_at_price
-    
+
     def plot(
         self,
         kind: Literal["pdf", "cdf", "both"] = "both",
@@ -131,15 +136,15 @@ class RNDResult:
 
         # Extract spot price and formatted dates from resolved market
         spot_price = self.market.spot_price
-        
+
         # Format dates nicely from resolved market parameters
         valuation_date = None
         expiry_date = None
-        
+
         # Use actual dates from the resolved market
         valuation_date_obj = self.market.valuation_date
         expiry_date_obj = self.market.expiry_date
-        
+
         valuation_date = valuation_date_obj.strftime("%b %d, %Y")
         expiry_date = expiry_date_obj.strftime("%b %d, %Y")
 
@@ -261,9 +266,7 @@ class TickerSource:
 
 
 def _estimate(
-    options_data: pd.DataFrame, 
-    resolved_market: ResolvedMarket, 
-    model: ModelParams
+    options_data: pd.DataFrame, resolved_market: ResolvedMarket, model: ModelParams
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Run the core RND estimation given fully validated input data."""
 
@@ -287,6 +290,7 @@ def _estimate(
             model.solver,
             dividend_yield=q_eff,
             pricing_engine=model.pricing_engine,
+            price_method=model.price_method,
         )
     except (InvalidInputError, CalculationError):
         raise  # preserve stack & message
@@ -325,10 +329,10 @@ class RND:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    
+
     @staticmethod
     def _fetch_vendor_snapshot(
-        ticker: str, 
+        ticker: str,
         expiry_str: str,
         vendor: str = "yfinance",
         cache_enabled: bool = True,
@@ -342,7 +346,7 @@ class RND:
             "bid": "bid",
             "ask": "ask",
         }
-        
+
         source = TickerSource(
             ticker=ticker,
             expiry=expiry_str,
@@ -351,10 +355,10 @@ class RND:
             cache_enabled=cache_enabled,
             cache_ttl_minutes=cache_ttl_minutes,
         )
-        
+
         # Load the options chain
         chain = source.load()
-        
+
         # Create vendor snapshot
         snapshot = VendorSnapshot(
             asof=datetime.now(),
@@ -363,7 +367,7 @@ class RND:
             dividend_yield=source.dividend_yield,
             dividend_schedule=source.dividend_schedule,
         )
-        
+
         return chain, snapshot
 
     def fit(self, source: DataSource, resolved_market: ResolvedMarket) -> "RND":
@@ -371,11 +375,7 @@ class RND:
         options_data = source.load()
         prices, pdf, cdf, meta = _estimate(options_data, resolved_market, self.model)
         self._result = RNDResult(
-            prices=prices, 
-            pdf=pdf, 
-            cdf=cdf, 
-            market=resolved_market, 
-            meta=meta
+            prices=prices, pdf=pdf, cdf=cdf, market=resolved_market, meta=meta
         )
         return self
 
@@ -391,27 +391,21 @@ class RND:
         column_mapping: Optional[Dict[str, str]] = None,
     ) -> RNDResult:
         """Load options data from CSV and estimate RND.
-        
+
         In CSV mode, spot_price and dividend information must be provided
         by the user in the market parameters.
         """
         # Read chain from CSV
         source = CSVSource(path, column_mapping=column_mapping)
         chain = source.load()
-        
+
         # Resolve market parameters (strict mode - no vendor)
         resolved = resolve_market(market, vendor=None, mode="strict")
-        
+
         # Run estimation
         prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
-        
-        return RNDResult(
-            prices=prices,
-            pdf=pdf,
-            cdf=cdf,
-            market=resolved,
-            meta=meta
-        )
+
+        return RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
     @classmethod
     def from_dataframe(
@@ -423,27 +417,21 @@ class RND:
         column_mapping: Optional[Dict[str, str]] = None,
     ) -> RNDResult:
         """Load options data from DataFrame and estimate RND.
-        
-        Similar to from_csv, spot_price and dividend information must be 
+
+        Similar to from_csv, spot_price and dividend information must be
         provided by the user in the market parameters.
         """
         # Process DataFrame
         source = DataFrameSource(df, column_mapping=column_mapping)
         chain = source.load()
-        
+
         # Resolve market parameters (strict mode - no vendor)
         resolved = resolve_market(market, vendor=None, mode="strict")
-        
+
         # Run estimation
         prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
-        
-        return RNDResult(
-            prices=prices,
-            pdf=pdf,
-            cdf=cdf,
-            market=resolved,
-            meta=meta
-        )
+
+        return RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
     @classmethod
     def list_expiry_dates(cls, ticker: str, vendor: str = "yfinance") -> list[str]:
@@ -522,21 +510,21 @@ class RND:
         --------
         >>> # Discover available expiry dates
         >>> expiry_dates = RND.list_expiry_dates("AAPL")
-        >>> 
+        >>>
         >>> # Auto-fetch current price and dividends
         >>> market = MarketInputs(
         ...     valuation_date=date.today(),
-        ...     expiry_date=date(2025, 1, 17), 
+        ...     expiry_date=date(2025, 1, 17),
         ...     risk_free_rate=0.045
         ... )
         >>> result = RND.from_ticker("AAPL", market)
         >>> print(result.summary())  # Shows what was auto-fetched
-        >>> 
+        >>>
         >>> # Override with your own price
         >>> market = MarketInputs(
         ...     valuation_date=date.today(),
         ...     spot_price=150.0,
-        ...     expiry_date=date(2025, 1, 17), 
+        ...     expiry_date=date(2025, 1, 17),
         ...     risk_free_rate=0.045
         ... )
         >>> result = RND.from_ticker("AAPL", market)
@@ -546,39 +534,35 @@ class RND:
             raise ValueError(
                 "expiry_date must be provided in MarketInputs for ticker-based data fetching"
             )
-        
+
         expiry = market.expiry_date.strftime("%Y-%m-%d")
-        
+
         # Fetch chain and vendor snapshot
         chain, snapshot = cls._fetch_vendor_snapshot(
             ticker, expiry, vendor, cache_enabled, cache_ttl_minutes
         )
-        
+
         # Resolve market parameters by merging user inputs with vendor snapshot
         resolved = resolve_market(market, snapshot, mode=fill)
-        
+
         # Run estimation
         prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
-        
+
         # Add ticker and vendor info to metadata
-        meta.update({
-            "ticker": ticker,
-            "vendor": snapshot.vendor,
-            "asof": snapshot.asof.isoformat(),
-        })
-        
-        result = RNDResult(
-            prices=prices,
-            pdf=pdf,
-            cdf=cdf,
-            market=resolved,
-            meta=meta
+        meta.update(
+            {
+                "ticker": ticker,
+                "vendor": snapshot.vendor,
+                "asof": snapshot.asof.isoformat(),
+            }
         )
-        
+
+        result = RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
+
         # Print summary if requested
         if echo:
             print(result.summary())
-        
+
         return result
 
     # ------------------------------------------------------------------
@@ -614,9 +598,7 @@ class RND:
     def prob_at_or_above(self, price: float) -> float:
         """Delegate to result.prob_at_or_above() for backward compatibility."""
         return self.result.prob_at_or_above(price)
-    
+
     def plot(self, **kwargs):
         """Delegate to result.plot() for backward compatibility."""
         return self.result.plot(**kwargs)
-
-

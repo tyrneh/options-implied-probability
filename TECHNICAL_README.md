@@ -92,9 +92,10 @@ OPTIONAL configuration object that controls the algorithms used in the RND calcu
 
 ```python
 ModelParams(
-    solver        = "brent" | "newton",   # IV root-finder
+    solver        = "newton" | "brent",   # IV root-finder; defaults to newton
     fit_kde       = False,                # smooth tails
     pricing_engine= "bs",                # placeholder for alt models
+    price_method  = "last" | "mid",       # defaults to 'last'; can use mid-price calculated as `(bid + ask) / 2`
 )
 ```
 

@@ -84,6 +84,7 @@ def calculate_pdf(
     solver_method: str,
     pricing_engine: str = "bs",
     dividend_yield: float | None = None,
+    price_method: str = "last",
 ) -> Tuple[np.ndarray]:
     """The main execution path for the pdf module. Takes a `DataFrame` of
     options data as input and makes a series of function calls to
@@ -133,7 +134,7 @@ def calculate_pdf(
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
 
-    options_data = _calculate_last_price(options_data)
+    options_data = _calculate_price(options_data, price_method)
 
     if options_data.empty:
         raise CalculationError("No valid options data after price calculation")
@@ -267,18 +268,26 @@ def _extrapolate_call_prices(
     )
 
 
-def _calculate_last_price(options_data: DataFrame) -> DataFrame:
-    """Take the last-price of the options at each strike price.
+def _calculate_price(options_data: DataFrame, price_method: str) -> DataFrame:
+    """Calculate option price using the specified method (last price or mid-price).
 
     Args:
         options_data: a DataFrame containing options price data with
-            cols ['strike', 'last_price']
+            cols ['strike', 'last_price', 'bid', 'ask']
+        price_method: Method to calculate price - 'last' or 'mid'
 
     Returns:
-        the options_data DataFrame, with an additional column for mid-price
+        the options_data DataFrame, with a 'price' column containing the calculated prices
     """
-    options_data["last_price"] = options_data["last_price"]
-    options_data = options_data[options_data.last_price >= 0]
+    if price_method == "mid":
+        # Use mid-price (average of bid and ask)
+        options_data["price"] = (options_data["bid"] + options_data["ask"]) / 2
+    else:  # "last"
+        # Use last traded price
+        options_data["price"] = options_data["last_price"]
+    
+    # Filter out negative prices
+    options_data = options_data[options_data.price >= 0]
     return options_data
 
 
@@ -304,7 +313,7 @@ def _calculate_IV(
         raise ValueError("Invalid solver_method. Choose either 'newton' or 'brent'.")
 
     # Vectorised wrapper – falls back to scalar solver per strike
-    prices_arr = options_data["last_price"].values
+    prices_arr = options_data["price"].values
     strikes_arr = options_data["strike"].values
 
     q = dividend_yield or 0.0
