@@ -82,9 +82,9 @@ def calculate_pdf(
     days_to_expiry: int,
     risk_free_rate: float,
     solver_method: str,
-    pricing_engine: str = "bs",
-    dividend_yield: float | None = None,
-    price_method: str = "last",
+    pricing_engine: str,
+    dividend_yield: float | None,
+    price_method: str,
 ) -> Tuple[np.ndarray]:
     """The main execution path for the pdf module. Takes a `DataFrame` of
     options data as input and makes a series of function calls to
@@ -116,7 +116,9 @@ def calculate_pdf(
         raise InvalidInputError(f"spot_price must be positive, got {spot_price}")
 
     if days_to_expiry <= 0:
-        raise InvalidInputError(f"days_to_expiry must be positive, got {days_to_expiry}")
+        raise InvalidInputError(
+            f"days_to_expiry must be positive, got {days_to_expiry}"
+        )
 
     if not -1 <= risk_free_rate <= 1:
         raise InvalidInputError(
@@ -279,15 +281,51 @@ def _calculate_price(options_data: DataFrame, price_method: str) -> DataFrame:
     Returns:
         the options_data DataFrame, with a 'price' column containing the calculated prices
     """
+    import warnings
+    
+    options_data = options_data.copy()
+    
     if price_method == "mid":
-        # Use mid-price (average of bid and ask)
-        options_data["price"] = (options_data["bid"] + options_data["ask"]) / 2
+        # Check if we have any valid bid/ask data
+        has_any_bid_ask = ~options_data[["bid", "ask"]].isna().all().all()
+        
+        if not has_any_bid_ask:
+            # No bid/ask data available at all - fall back to last
+            warnings.warn(
+                "Requested price_method='mid' but bid/ask data not available. "
+                "Falling back to price_method='last'.",
+                UserWarning
+            )
+            options_data["price"] = options_data["last_price"]
+        else:
+            # Calculate mid price with row-by-row fallback
+            bid_ask_valid = ~options_data[["bid", "ask"]].isna().any(axis=1)
+            
+            # Use mid where possible
+            options_data.loc[bid_ask_valid, "price"] = (
+                options_data.loc[bid_ask_valid, "bid"] + 
+                options_data.loc[bid_ask_valid, "ask"]
+            ) / 2
+            
+            # Fall back to last_price for rows with missing bid/ask
+            options_data.loc[~bid_ask_valid, "price"] = (
+                options_data.loc[~bid_ask_valid, "last_price"]
+            )
+            
+            n_fallback = (~bid_ask_valid).sum()
+            if n_fallback > 0:
+                warnings.warn(
+                    f"Using last_price for {n_fallback} strikes with missing bid/ask data.",
+                    UserWarning
+                )
     else:  # "last"
         # Use last traded price
         options_data["price"] = options_data["last_price"]
+
+    # Filter out negative prices and NaN prices
+    valid_prices = (options_data["price"] >= 0) & options_data["price"].notna()
+    options_data = options_data[valid_prices]
     
-    # Filter out negative prices
-    options_data = options_data[options_data.price >= 0]
     return options_data
 
 
@@ -382,58 +420,61 @@ def _fit_bspline_IV(options_data: DataFrame) -> DataFrame:
 def finite_diff_second_derivative(y: np.ndarray, x: np.ndarray) -> np.ndarray:
     """
     Calculate second derivative using 5-point stencil for improved numerical stability.
-    
+
     This replaces the unstable np.gradient approach with a more robust finite difference
     method that's particularly important for deep out-of-the-money options where
     the Breeden-Litzenberger formula becomes numerically challenging.
-    
+
     For interior points: f''(x) = [-f(x-2h) + 16f(x-h) - 30f(x) + 16f(x+h) - f(x+2h)] / (12h²)
     For boundary points: Uses lower-order accurate formulas
-    
+
     Args:
         y: Function values (option prices)
         x: Grid points (strikes)
-    
+
     Returns:
         Second derivative values at each grid point
-    
+
     Raises:
         ValueError: If grid spacing is non-uniform or arrays have insufficient length
     """
     if len(x) != len(y):
         raise ValueError(f"Arrays must have same length. Got x: {len(x)}, y: {len(y)}")
-    
+
     if len(x) < 5:
         raise ValueError(f"Need at least 5 points for 5-point stencil. Got {len(x)}")
-    
+
     # Check for uniform grid spacing (required for finite differences)
     h = np.diff(x)
     if not np.allclose(h, h[0], rtol=1e-6):
         # For non-uniform grids, fall back to np.gradient but warn user
         import warnings
+
         warnings.warn(
             "Non-uniform grid detected. Using np.gradient fallback which may be less stable. "
             "Consider interpolating to uniform grid first.",
-            UserWarning
+            UserWarning,
         )
         return np.gradient(np.gradient(y, x), x)
-    
+
     h = h[0]  # Grid spacing
     d2y = np.zeros_like(y)
-    
+
     # Interior points using 5-point stencil (4th order accurate)
     for i in range(2, len(y) - 2):
-        d2y[i] = (-y[i-2] + 16*y[i-1] - 30*y[i] + 16*y[i+1] - y[i+2]) / (12 * h**2)
-    
+        d2y[i] = (-y[i - 2] + 16 * y[i - 1] - 30 * y[i] + 16 * y[i + 1] - y[i + 2]) / (
+            12 * h**2
+        )
+
     # Boundary points using forward/backward differences (2nd order accurate)
     # Left boundary (first two points)
-    d2y[0] = (2*y[0] - 5*y[1] + 4*y[2] - y[3]) / h**2
-    d2y[1] = (y[0] - 2*y[1] + y[2]) / h**2
-    
-    # Right boundary (last two points)  
-    d2y[-2] = (y[-3] - 2*y[-2] + y[-1]) / h**2
-    d2y[-1] = (2*y[-1] - 5*y[-2] + 4*y[-3] - y[-4]) / h**2
-    
+    d2y[0] = (2 * y[0] - 5 * y[1] + 4 * y[2] - y[3]) / h**2
+    d2y[1] = (y[0] - 2 * y[1] + y[2]) / h**2
+
+    # Right boundary (last two points)
+    d2y[-2] = (y[-3] - 2 * y[-2] + y[-1]) / h**2
+    d2y[-1] = (2 * y[-1] - 5 * y[-2] + 4 * y[-3] - y[-4]) / h**2
+
     return d2y
 
 
@@ -442,8 +483,8 @@ def _create_pdf_point_arrays(
     spot_price: float,
     days_to_expiry: int,
     risk_free_rate: float,
-    dividend_yield: float | None = None,
-    pricing_engine: str = "bs",
+    dividend_yield: float | None,
+    pricing_engine: str,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Create two arrays containing x- and y-axis values representing a calculated
     price PDF
@@ -476,7 +517,7 @@ def _create_pdf_point_arrays(
     second_derivative_discrete = finite_diff_second_derivative(interpolated, x_IV)
 
     # apply coefficient to reflect the time value of money
-    pdf = np.exp(risk_free_rate * years_forward) * second_derivative_discrete
+    pdf = np.exp(risk_free_rate * years_to_expiry) * second_derivative_discrete
 
     # ensure non-negative pdf values (may occur for far OOM options)
     pdf = np.maximum(pdf, 0)  # Set all negative values to 0

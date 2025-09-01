@@ -197,7 +197,9 @@ class TestIntegrationWithPDFCalculation:
         
         options_data = pd.DataFrame({
             'strike': strikes,
-            'last_price': call_prices
+            'last_price': call_prices,
+            'bid': call_prices * 0.98,  # Mock bid/ask data
+            'ask': call_prices * 1.02
         })
         
         # Calculate PDF
@@ -209,7 +211,8 @@ class TestIntegrationWithPDFCalculation:
                 risk_free_rate=0.05,
                 solver_method="brent",
                 pricing_engine="bs",
-                dividend_yield=0.0
+                dividend_yield=0.0,
+                price_method="last"
             )
             
             # Basic sanity checks
@@ -247,7 +250,9 @@ class TestIntegrationWithPDFCalculation:
         
         options_data = pd.DataFrame({
             'strike': strikes,
-            'last_price': noisy_prices
+            'last_price': noisy_prices,
+            'bid': noisy_prices * 0.97,  # Mock bid/ask data
+            'ask': noisy_prices * 1.03
         })
         
         # This should not crash or produce extreme values
@@ -261,7 +266,8 @@ class TestIntegrationWithPDFCalculation:
                 risk_free_rate=0.04,
                 solver_method="brent",
                 pricing_engine="bs",
-                dividend_yield=0.01
+                dividend_yield=0.01,
+                price_method="last"
             )
             
             # Check for numerical stability

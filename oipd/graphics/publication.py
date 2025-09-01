@@ -117,7 +117,7 @@ def plot_rnd(
                 **plot_kwargs,
             )
         ax1.set_xlabel("Price at expiry", fontsize=11)
-        ax1.set_ylabel("Density", fontsize=11, color="#333333")  # Black y-axis title
+        ax1.set_ylabel("Probability density", fontsize=11, color="#333333")  # Black y-axis title
         ax1.tick_params(axis="y", labelcolor=pdf_color)
         # Ensure PDF y-axis starts at 0
         ax1.set_ylim(bottom=0)

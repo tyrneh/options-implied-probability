@@ -34,7 +34,6 @@ est = RND.from_ticker("AAPL", market)
 # 3 ─ access results and plots
 est.prob_at_or_above(120)               # P(price >= $120)
 est.plot()                              # plot PDF + CDF in one line
-est.cdf_                                # Cumulative distribution function values
 ```
 
 OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.

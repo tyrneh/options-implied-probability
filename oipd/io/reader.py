@@ -58,23 +58,62 @@ class AbstractReader(ABC):
     def _clean_data(self, raw_data: DataFrame) -> DataFrame:
         """Default cleaning implementation.
 
-        It verifies that the required columns exist and casts them to the proper type.
+        It verifies that required columns exist and converts them to proper numeric types.
+        Optional columns (bid, ask) are handled gracefully if missing.
+        Handles common data issues like missing values (dashes, empty strings) and 
+        comma-separated numbers (e.g., "1,200").
 
         Arguments:
             raw_data: the raw data ingested from the data source.
 
         Returns:
-            A DataFrame with required columns cleaned.
+            A DataFrame with required columns cleaned and optional columns added if missing.
         """
-        required_columns = {"strike", "last_price", "bid", "ask"}
-        missing_columns = required_columns - set(raw_data.columns)
-        if missing_columns:
-            raise ValueError(f"Data is missing required columns: {missing_columns}")
+        import pandas as pd
+        import numpy as np
+        import warnings
+        
+        # Define required vs optional columns
+        required_columns = {"strike", "last_price"}
+        optional_columns = {"bid", "ask"}
+        all_expected = required_columns | optional_columns
+        
+        # Check for required columns only
+        missing_required = required_columns - set(raw_data.columns)
+        if missing_required:
+            raise ValueError(f"Data is missing required columns: {missing_required}")
+        
+        # Check which optional columns are present
+        present_optional = optional_columns & set(raw_data.columns)
+        missing_optional = optional_columns - set(raw_data.columns)
+        
+        if missing_optional:
+            warnings.warn(
+                f"Optional columns not present: {missing_optional}. "
+                f"Some functionality may be limited (e.g., price_method='mid').",
+                UserWarning
+            )
 
-        raw_data["strike"] = raw_data["strike"].astype(np.float64)
-        raw_data["last_price"] = raw_data["last_price"].astype(np.float64)
-        raw_data["bid"] = raw_data["bid"].astype(np.float64)
-        raw_data["ask"] = raw_data["ask"].astype(np.float64)
+        # Create a copy to avoid modifying the original data
+        raw_data = raw_data.copy()
+
+        # Clean all present columns (required + present optional)
+        columns_to_clean = required_columns | present_optional
+        
+        for col in columns_to_clean:
+            # Handle string columns that might have commas in numbers
+            if raw_data[col].dtype == 'object':
+                # Remove commas from numeric strings (e.g., "1,200" -> "1200")
+                raw_data[col] = raw_data[col].astype(str).str.replace(',', '', regex=False)
+            
+            # Convert to numeric, coercing invalid values (dashes, empty strings, etc.) to NaN
+            raw_data[col] = pd.to_numeric(raw_data[col], errors='coerce')
+
+        # Add placeholder NaN columns for missing optional columns
+        # This ensures consistent DataFrame structure
+        for col in missing_optional:
+            raw_data[col] = np.nan
+
         return raw_data
 
     @abstractmethod

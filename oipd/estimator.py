@@ -97,6 +97,32 @@ class RNDResult:
         cdf_at_price = np.interp(price, self.prices, self.cdf)
         return 1.0 - cdf_at_price
 
+    def prob_below(self, price: float) -> float:
+        """
+        Calculate the probability that the future price will be below a specified price.
+
+        This is computed as CDF(price), where CDF is the cumulative distribution function.
+
+        Parameters
+        ----------
+        price : float
+            The price threshold to evaluate
+
+        Returns
+        -------
+        float
+            Probability (between 0 and 1) that the future price will be below the specified price
+        """
+        # Handle edge cases
+        if price <= self.prices.min():
+            return 0.0  # If price is at or below minimum, probability is 0%
+        if price >= self.prices.max():
+            return 1.0  # If price is at or above maximum, probability is 100%
+
+        # Interpolate CDF at the specified price
+        cdf_at_price = np.interp(price, self.prices, self.cdf)
+        return cdf_at_price
+
     def plot(
         self,
         kind: Literal["pdf", "cdf", "both"] = "both",
@@ -575,14 +601,6 @@ class RND:
             raise ValueError("You must call `fit` first before accessing results.")
         return self._result
 
-    @property
-    def pdf_(self):
-        """Alias for result.pdf for scikit-learn similarity."""
-        return self.result.pdf
-
-    @property
-    def cdf_(self):
-        return self.result.cdf
 
     # ------------------------------------------------------------------
     # Utility helpers
@@ -598,6 +616,10 @@ class RND:
     def prob_at_or_above(self, price: float) -> float:
         """Delegate to result.prob_at_or_above() for backward compatibility."""
         return self.result.prob_at_or_above(price)
+
+    def prob_below(self, price: float) -> float:
+        """Delegate to result.prob_below() for backward compatibility."""
+        return self.result.prob_below(price)
 
     def plot(self, **kwargs):
         """Delegate to result.plot() for backward compatibility."""

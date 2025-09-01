@@ -41,19 +41,19 @@ class DataFrameReader(AbstractReader):
         Raises:
             ValueError: If data contains invalid values
         """
-        # Check for negative prices
+        # Check for NaN values in required columns only
+        required_columns = ["strike", "last_price"]
+        for col in required_columns:
+            if cleaned_data[col].isna().any():
+                raise ValueError(f"Options data contains NaN values in required column '{col}'")
+
+        # Check for negative prices (only for non-NaN values)
         if (cleaned_data["last_price"] < 0).any():
             raise ValueError("Options data contains negative prices")
 
         # Check for zero or negative strikes
         if (cleaned_data["strike"] <= 0).any():
             raise ValueError("Options data contains non-positive strike prices")
-
-        # Check for NaN values in critical columns
-        critical_columns = ["strike", "last_price"]
-        for col in critical_columns:
-            if cleaned_data[col].isna().any():
-                raise ValueError(f"Options data contains NaN values in column '{col}'")
 
         # Sort by strike price for consistency
         cleaned_data = cleaned_data.sort_values("strike")

@@ -112,11 +112,10 @@ RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # (auto-fetches from ve
 Returns a fitted instance exposing
 
 ```python
-est.pdf_                      # Probability density function values
-est.cdf_                      # Cumulative distribution function values
 est.plot(kind="both")         # Publication-ready plots ("pdf", "cdf", or "both" (default))
 est.prob_at_or_above(120)     # P(future price >= $120)
 est.to_frame()                # Export as pandas DataFrame
+est.to_csv(path)              # Export as a CSV
 ```
 
 ---
