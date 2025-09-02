@@ -83,6 +83,10 @@ def plot_rnd(
     # Create single plot
     fig, ax1 = plt.subplots(1, 1, figsize=figsize)
 
+    # Extract axis-related parameters that shouldn't go to plot()
+    xlim = kwargs.pop("xlim", None)
+    ylim = kwargs.pop("ylim", None)
+
     # Define colors for publication style
     if style == "publication":
         pdf_color = "#1976D2"  # blue for PDF
@@ -117,9 +121,7 @@ def plot_rnd(
                 **plot_kwargs,
             )
         ax1.set_xlabel("Price at expiry", fontsize=11)
-        ax1.set_ylabel(
-            "Probability density", fontsize=11, color="#333333"
-        )  # Black y-axis title
+        ax1.set_ylabel("Density", fontsize=11, color="#333333")  # Black y-axis title
         ax1.tick_params(axis="y", labelcolor=pdf_color)
         # Ensure PDF y-axis starts at 0
         ax1.set_ylim(bottom=0)
@@ -270,6 +272,12 @@ def plot_rnd(
                 va="bottom",  # Align to bottom so text sits above the position
                 ha="left",
             )
+
+    # Apply axis limits if provided
+    if xlim is not None:
+        ax1.set_xlim(xlim)
+    if ylim is not None:
+        ax1.set_ylim(ylim)
 
     # Handle title and layout
     if style == "publication":

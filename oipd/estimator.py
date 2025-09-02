@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Protocol, Optional, Dict, Literal, cast, Any
-from datetime import date, datetime
+from datetime import datetime
 
 import pandas as pd
 import numpy as np
@@ -24,7 +24,6 @@ from oipd.market_inputs import (
     ResolvedMarket,
     resolve_market,
     FillMode,
-    Provenance,
 )
 
 

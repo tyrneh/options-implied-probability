@@ -60,7 +60,7 @@ class AbstractReader(ABC):
 
         It verifies that required columns exist and converts them to proper numeric types.
         Optional columns (bid, ask) are handled gracefully if missing.
-        Handles common data issues like missing values (dashes, empty strings) and 
+        Handles common data issues like missing values (dashes, empty strings) and
         comma-separated numbers (e.g., "1,200").
 
         Arguments:
@@ -72,26 +72,24 @@ class AbstractReader(ABC):
         import pandas as pd
         import numpy as np
         import warnings
-        
+
         # Define required vs optional columns
         required_columns = {"strike", "last_price"}
         optional_columns = {"bid", "ask", "last_trade_date"}
         all_expected = required_columns | optional_columns
-        
+
         # Check for required columns only
         missing_required = required_columns - set(raw_data.columns)
         if missing_required:
             raise ValueError(f"Data is missing required columns: {missing_required}")
-        
+
         # Check which optional columns are present
         present_optional = optional_columns & set(raw_data.columns)
         missing_optional = optional_columns - set(raw_data.columns)
-        
+
         if missing_optional:
             warnings.warn(
-                f"Optional columns not present: {missing_optional}. "
-                f"Some functionality may be limited (e.g., price_method='mid').",
-                UserWarning
+                f"Optional columns not present: {missing_optional}.", UserWarning
             )
 
         # Create a copy to avoid modifying the original data
@@ -99,15 +97,17 @@ class AbstractReader(ABC):
 
         # Clean all present columns (required + present optional)
         columns_to_clean = required_columns | present_optional
-        
+
         for col in columns_to_clean:
             # Handle string columns that might have commas in numbers
-            if raw_data[col].dtype == 'object':
+            if raw_data[col].dtype == "object":
                 # Remove commas from numeric strings (e.g., "1,200" -> "1200")
-                raw_data[col] = raw_data[col].astype(str).str.replace(',', '', regex=False)
-            
+                raw_data[col] = (
+                    raw_data[col].astype(str).str.replace(",", "", regex=False)
+                )
+
             # Convert to numeric, coercing invalid values (dashes, empty strings, etc.) to NaN
-            raw_data[col] = pd.to_numeric(raw_data[col], errors='coerce')
+            raw_data[col] = pd.to_numeric(raw_data[col], errors="coerce")
 
         # Add placeholder NaN columns for missing optional columns
         # This ensures consistent DataFrame structure

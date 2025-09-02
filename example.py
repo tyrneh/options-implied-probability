@@ -30,23 +30,9 @@ est_sp500 = RND.from_csv(
     column_mapping=column_mapping_sp500,
 )
 
-# Default plot - overlays PDF and CDF with dual y-axes
-fig = est_sp500.plot(
-    figsize=(10, 6),
-)
-plt.show()
-
 # PDF only
 fig = est_sp500.plot(
-    kind="pdf",
-    figsize=(8, 6),
-)
-plt.show()
-
-# CDF only
-fig = est_sp500.plot(
-    kind="cdf",
-    figsize=(8, 6),
+    kind="pdf", figsize=(6, 4), title="S&P500", source="S&P500 e-mini futures options"
 )
 plt.show()
 
@@ -57,6 +43,84 @@ print(prob)
 prob = est_sp500.prob_below(6500)
 print(prob)
 
+# ============================================
+# Crude Oil
+# ============================================
+
+#     strike , last_price , bid , ask
+column_mapping_wti = {
+    "Strike": "strike",
+    "Last": "last_price",
+    "Bid": "bid",
+    "Ask": "ask",
+}
+
+# 2️⃣  market parameters
+market_wti = MarketInputs(
+    spot_price=64.01,  # current price of the underlying asset
+    valuation_date=date(2025, 8, 30),
+    expiry_date=date(2025, 12, 19),
+    risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
+)
+
+# 3️⃣  optional model knobs (could omit)
+model_wti = ModelParams(fit_kde=False, price_method="last", max_staleness_days=None)
+
+# 4️⃣  run using S&P500 e-mini futures options chain
+est_wti = RND.from_csv(
+    "data/CrudeWTICalls_date20250830_strike20251216_price6401.csv",
+    market_wti,
+    model=model_wti,
+    column_mapping=column_mapping_wti,
+)
+
+# PDF only
+fig = est_wti.plot(
+    kind="pdf",
+    figsize=(8, 6),
+    xlim=(50, 110),
+)
+plt.show()
+
+
+# ============================================
+# Bitcoin
+# ============================================
+
+#     strike , last_price , bid , ask
+column_mapping_bitcoin = {
+    "Strike": "strike",
+    "Last": "last_price",
+    "Bid": "bid",
+    "Ask": "ask",
+}
+
+# 2️⃣  market parameters
+market_bitcoin = MarketInputs(
+    spot_price=108864,  # current price of the underlying asset
+    valuation_date=date(2025, 8, 30),
+    expiry_date=date(2025, 12, 26),
+    risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
+)
+
+# 3️⃣  optional model knobs (could omit)
+model_bitcoin = ModelParams(fit_kde=False, price_method="last", max_staleness_days=None)
+
+# 4️⃣  run using S&P500 e-mini futures options chain
+est_bitcoin = RND.from_csv(
+    "data/BitcoinCalls_date20250830_strike20251226_price108864.csv",
+    market_bitcoin,
+    model=model_bitcoin,
+    column_mapping=column_mapping_bitcoin,
+)
+
+# PDF only
+fig = est_bitcoin.plot(
+    kind="pdf",
+    figsize=(8, 6),
+    xlim=(0, 200000),
+)
+plt.show()
 
 # ============================================
 # YFINANCE
