@@ -17,13 +17,12 @@ market_sp500 = MarketInputs(
     valuation_date=date(2025, 8, 30),
     expiry_date=date(2025, 12, 19),
     risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
-    dividend_yield=0.016,  # S&P 500 dividend yield
 )
 
 # 3️⃣  optional model knobs (could omit)
 model_sp500 = ModelParams(fit_kde=False, price_method="last")
 
-# 4️⃣  run
+# 4️⃣  run using S&P500 e-mini futures options chain
 est_sp500 = RND.from_csv(
     "data/s-p-futures_date20250830_strike20251219_price646026.csv",
     market_sp500,
@@ -53,6 +52,9 @@ plt.show()
 
 # ---- test prob at or above a price X ---- #
 prob = est_sp500.prob_at_or_above(6500)
+print(prob)
+
+prob = est_sp500.prob_below(6500)
 print(prob)
 
 

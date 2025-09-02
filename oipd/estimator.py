@@ -6,6 +6,7 @@ from datetime import date, datetime
 
 import pandas as pd
 import numpy as np
+import warnings
 
 from oipd.core import (
     calculate_pdf,
@@ -44,6 +45,7 @@ class ModelParams:
     american_to_european: bool = False  # placeholder for future functionality
     pricing_engine: Literal["bs"] = "bs"
     price_method: Literal["last", "mid"] = "last"
+    max_staleness_days: Optional[int] = 3
 
 
 @dataclass(frozen=True)
@@ -305,6 +307,43 @@ def _estimate(
         r=resolved_market.risk_free_rate,
         valuation_date=val_date,
     )
+
+    # Filter stale data if configured and last_trade_date column is present
+    if (
+        model.max_staleness_days is not None
+        and "last_trade_date" in options_data.columns
+    ):
+
+        # Check if the column has valid date data
+        last_trade_datetimes = pd.to_datetime(options_data["last_trade_date"])
+
+        # Skip filtering if column has NaT values (common in CSV files without date data)
+        if last_trade_datetimes.isna().any():
+            # Column exists but has missing values - skip filtering
+            pass
+        else:
+            # Calculate days since trade relative to valuation_date
+            options_data = options_data.copy()  # Don't modify original
+            last_trade_dates = last_trade_datetimes.dt.date
+
+            # Calculate days difference manually
+            days_old = []
+            for trade_date in last_trade_dates:
+                days_diff = (resolved_market.valuation_date - trade_date).days
+                days_old.append(days_diff)
+            days_old = pd.Series(days_old)
+
+            # Filter out stale data
+            fresh_mask = days_old <= model.max_staleness_days
+            stale_count = (~fresh_mask).sum()
+
+            if stale_count > 0:
+                warnings.warn(
+                    f"Filtered {stale_count} strikes older than {model.max_staleness_days} days "
+                    f"(most recent: {days_old.min()} days old, oldest: {days_old.max()} days old)",
+                    UserWarning,
+                )
+                options_data = options_data[fresh_mask].reset_index(drop=True)
 
     # 1. Calculate PDF
     try:
@@ -600,7 +639,6 @@ class RND:
         if self._result is None:
             raise ValueError("You must call `fit` first before accessing results.")
         return self._result
-
 
     # ------------------------------------------------------------------
     # Utility helpers

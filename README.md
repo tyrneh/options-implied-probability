@@ -23,8 +23,8 @@ from datetime import date
 
 # 1 ─ point to a ticker and provide market info
 market = MarketInputs(
-    valuation_date=date.today(),      # required: analysis date  
-    expiry_date=date(2025, 12, 19),   # next option expiry you care about
+    valuation_date=date.today(),      # the "as-of" date for the analysis
+    expiry_date=date(2025, 12, 19),   # option expiry you care about
     risk_free_rate=0.04,              # risk-free rate
 )
 

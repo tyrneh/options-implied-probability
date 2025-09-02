@@ -115,6 +115,16 @@ class Reader(AbstractReader):
             if hit is not None:
                 df, price = hit
                 df.attrs["spot_price"] = price
+                
+                # Apply column mapping to cached data
+                column_mapping = {
+                    'lastPrice': 'last_price',
+                    'lastTradeDate': 'last_trade_date'
+                }
+                for yf_name, std_name in column_mapping.items():
+                    if yf_name in df.columns:
+                        df = df.rename(columns={yf_name: std_name})
+                
                 return df
 
         yf = self._yf_mod()
@@ -146,6 +156,17 @@ class Reader(AbstractReader):
         calls_df.attrs["dividend_schedule"] = (
             None  # yfinance cannot infer forward schedule
         )
+
+        # Map yfinance column names to our standard names
+        column_mapping = {
+            'lastPrice': 'last_price',
+            'lastTradeDate': 'last_trade_date'
+        }
+        
+        # Apply mapping for columns that exist
+        for yf_name, std_name in column_mapping.items():
+            if yf_name in calls_df.columns:
+                calls_df = calls_df.rename(columns={yf_name: std_name})
 
         if self._cache:
             self._cache.set(ticker, expiry, calls_df.copy(), price)

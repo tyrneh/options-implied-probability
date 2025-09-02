@@ -75,7 +75,7 @@ class AbstractReader(ABC):
         
         # Define required vs optional columns
         required_columns = {"strike", "last_price"}
-        optional_columns = {"bid", "ask"}
+        optional_columns = {"bid", "ask", "last_trade_date"}
         all_expected = required_columns | optional_columns
         
         # Check for required columns only

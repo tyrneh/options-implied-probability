@@ -65,7 +65,7 @@ def plot_rnd(
     --------
     >>> plot_rnd(prices, pdf, cdf)  # Shows overlayed PDF and CDF line plots with dual y-axes
     >>> plot_rnd(prices, pdf, cdf, kind='pdf')  # Shows only PDF line plot
-    >>> plot_rnd(prices, pdf, cdf, expiry_date='Dec 19, 2025')  # Titles use "future price on Dec 19, 2025"
+    >>> plot_rnd(prices, pdf, cdf, expiry_date='Dec 19, 2025')  # Titles use "price on Dec 19, 2025"
     >>> plot_rnd(prices, pdf, cdf, source='Source: Bloomberg, Author analysis')
     """
     try:
@@ -117,7 +117,9 @@ def plot_rnd(
                 **plot_kwargs,
             )
         ax1.set_xlabel("Price at expiry", fontsize=11)
-        ax1.set_ylabel("Probability density", fontsize=11, color="#333333")  # Black y-axis title
+        ax1.set_ylabel(
+            "Probability density", fontsize=11, color="#333333"
+        )  # Black y-axis title
         ax1.tick_params(axis="y", labelcolor=pdf_color)
         # Ensure PDF y-axis starts at 0
         ax1.set_ylim(bottom=0)
@@ -189,18 +191,18 @@ def plot_rnd(
     if title is None:
         if kind == "pdf":
             if expiry_date:
-                plot_title = f"Implied PDF of future price on {expiry_date}"
+                plot_title = f"Implied PDF of price on {expiry_date}"
             else:
                 plot_title = "PDF"
         elif kind == "cdf":
             if expiry_date:
-                plot_title = f"Implied CDF of future price on {expiry_date}"
+                plot_title = f"Implied CDF of price on {expiry_date}"
             else:
                 plot_title = "CDF"
         else:
             # For overlay plots, use expiry date if available
             if expiry_date:
-                plot_title = f"Implied PDF and CDF of future price on {expiry_date}"
+                plot_title = f"Implied PDF and CDF of price on {expiry_date}"
             else:
                 plot_title = "Risk-Neutral Distribution"
     else:
