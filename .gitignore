@@ -123,6 +123,7 @@ CLAUDE.md
 .claude/
 .reviews/
 .reviews/*
+PRDs/*
 
 # Spyder project settings
 .spyderproject
