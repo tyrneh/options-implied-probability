@@ -145,44 +145,112 @@ class Reader(AbstractReader):
         try:
             chain = tk.option_chain(expiry)
             calls_df = chain.calls
-            if calls_df.empty:
+            puts_df = chain.puts
+            
+            if calls_df.empty and puts_df.empty:
+                raise YFinanceError("No options data returned")
+            elif calls_df.empty:
                 raise YFinanceError("No call data returned")
         except Exception as exc:
             raise YFinanceError(f"Failed to fetch chain: {exc}") from exc
 
-        calls_df.attrs["spot_price"] = price
-        dividend_yield = self._extract_dividend_yield(tk.info)
-        calls_df.attrs["dividend_yield"] = dividend_yield
-        calls_df.attrs["dividend_schedule"] = (
-            None  # yfinance cannot infer forward schedule
-        )
-
-        # Map yfinance column names to our standard names
+        # Map yfinance column names to our standard names for both DataFrames
         column_mapping = {
             'lastPrice': 'last_price',
             'lastTradeDate': 'last_trade_date'
         }
         
-        # Apply mapping for columns that exist
+        # Apply mapping for calls
         for yf_name, std_name in column_mapping.items():
             if yf_name in calls_df.columns:
                 calls_df = calls_df.rename(columns={yf_name: std_name})
+        
+        # Apply mapping for puts if available
+        if not puts_df.empty:
+            for yf_name, std_name in column_mapping.items():
+                if yf_name in puts_df.columns:
+                    puts_df = puts_df.rename(columns={yf_name: std_name})
+        
+        # Combine calls and puts into single DataFrame with option_type column
+        final_df = self._combine_options_data(calls_df, puts_df)
+        
+        # Set metadata on final DataFrame
+        final_df.attrs["spot_price"] = price
+        dividend_yield = self._extract_dividend_yield(tk.info)
+        final_df.attrs["dividend_yield"] = dividend_yield
+        final_df.attrs["dividend_schedule"] = (
+            None  # yfinance cannot infer forward schedule
+        )
 
         if self._cache:
-            self._cache.set(ticker, expiry, calls_df.copy(), price)
+            self._cache.set(ticker, expiry, final_df.copy(), price)
 
-        return calls_df
+        return final_df
 
     def _transform_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        if (df["last_price"] < 0).any():
-            raise ValueError("Negative option prices detected")
-        if (df["strike"] <= 0).any():
-            raise ValueError("Non-positive strikes detected")
-        if df[["strike", "last_price"]].isna().any().any():
-            raise ValueError("NaN values in critical columns")
+        """Apply yfinance-specific transformations.
+        
+        Arguments:
+            df: The validated DataFrame
+            
+        Returns:
+            Transformed DataFrame
+            
+        Raises:
+            ValueError: If insufficient data points
+            
+        Note:
+            Common validation (NaN checks, negative prices, etc.) is handled 
+            by the base class _validate_data() method.
+        """
+        # Ensure we have enough data points for meaningful analysis
         if len(df) < 5:
             raise ValueError("Need at least 5 strikes for a meaningful smile")
-        return df.sort_values("strike").reset_index(drop=True)
+        return df.reset_index(drop=True)
+
+    # ---------- options data helpers ----------------------------------------
+    def _combine_options_data(self, calls_df: pd.DataFrame, puts_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Combine calls and puts into standardized format with option_type column.
+        
+        Converts yfinance's separate calls/puts DataFrames into the standardized format:
+        columns: [strike, last_price, option_type, bid, ask, ...]
+        where option_type is 'C' for calls, 'P' for puts
+        
+        Parameters
+        ----------
+        calls_df : pd.DataFrame
+            Call options data from yfinance
+        puts_df : pd.DataFrame  
+            Put options data from yfinance
+            
+        Returns
+        -------
+        pd.DataFrame
+            Combined options data in standardized format
+        """
+        combined_data = []
+        
+        # Add calls with option_type = 'C'
+        if not calls_df.empty:
+            calls_copy = calls_df.copy()
+            calls_copy['option_type'] = 'C'
+            combined_data.append(calls_copy)
+        
+        # Add puts with option_type = 'P'  
+        if not puts_df.empty:
+            puts_copy = puts_df.copy()
+            puts_copy['option_type'] = 'P'
+            combined_data.append(puts_copy)
+        
+        if not combined_data:
+            raise YFinanceError("No options data available")
+        
+        # Combine and sort by strike
+        combined_df = pd.concat(combined_data, ignore_index=True)
+        combined_df = combined_df.sort_values(['strike', 'option_type']).reset_index(drop=True)
+        
+        return combined_df
 
     # ---------- dividend helpers -------------------------------------------
     def _extract_dividend_yield(self, info) -> Optional[float]:

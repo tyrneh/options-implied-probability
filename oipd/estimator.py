@@ -15,6 +15,7 @@ from oipd.core import (
     InvalidInputError,
     CalculationError,
 )
+from oipd.core.parity import preprocess_with_parity
 from oipd.io import CSVReader, DataFrameReader
 from oipd.vendor import get_reader
 from oipd.pricing.utils import prepare_dividends
@@ -307,6 +308,10 @@ def _estimate(
         valuation_date=val_date,
     )
 
+    # Apply put-call parity preprocessing if beneficial
+    discount_factor = np.exp(-resolved_market.risk_free_rate * resolved_market.days_to_expiry / 365.0)
+    options_data = preprocess_with_parity(options_data, spot_eff, discount_factor)
+
     # Filter stale data if configured and last_trade_date column is present
     if (
         model.max_staleness_days is not None
@@ -404,11 +409,11 @@ class RND:
     ) -> tuple[pd.DataFrame, VendorSnapshot]:
         """Fetch options chain and vendor snapshot for a ticker."""
         # Create ticker source to fetch data
+        # Note: yfinance doesn't have option_type - we create it when combining calls/puts
         column_mapping = {
-            "strike": "strike",
             "lastPrice": "last_price",
-            "bid": "bid",
-            "ask": "ask",
+            "lastTradeDate": "last_trade_date",
+            # strike, bid, ask are already correctly named in yfinance
         }
 
         source = TickerSource(

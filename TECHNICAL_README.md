@@ -111,6 +111,55 @@ RND.from_dataframe(df, market, model, column_mapping={"YourHeader": "oipd_field"
 RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # (auto-fetches from vendors, only YFinance currently integrated)
 ```
 
+#### Expected Data Format
+
+OIPD expects the following columns in your data:
+
+**Required columns:**
+- `strike` (float): Option strike price
+- `last_price` (float): Option price (last traded price or mark)
+
+**Optional columns for enhanced functionality:**
+- `option_type` (str): "C" for calls, "P" for puts (enables put-call parity preprocessing)
+- `bid` (float): Bid price
+- `ask` (float): Ask price  
+- `last_trade_date` (datetime): When the option was last traded (for staleness filtering)
+
+**Example data format:**
+```python
+# CSV/DataFrame with put-call parity support
+strike  | last_price | option_type | bid  | ask  | last_trade_date
+95.0    | 2.50      | C          | 2.45 | 2.55 | 2025-01-15
+95.0    | 1.20      | P          | 1.15 | 1.25 | 2025-01-15
+100.0   | 1.85      | C          | 1.80 | 1.90 | 2025-01-15
+100.0   | 2.10      | P          | 2.05 | 2.15 | 2025-01-15
+```
+
+**Column mapping examples:**
+```python
+# For CSV with different column names
+column_mapping = {
+    "Strike": "strike",
+    "Last Price": "last_price", 
+    "Type": "option_type",        # Maps "Type" to "option_type"
+    "Bid": "bid",
+    "Ask": "ask"
+}
+```
+
+#### Put-Call Parity Enhancement
+
+When both calls and puts are available (indicated by `option_type` column), OIPD automatically applies put-call parity preprocessing to improve data quality:
+
+- **Infers forward price** from at-the-money call-put pairs
+- **Uses OTM options only**: calls above forward, puts below forward  
+- **Replaces ITM calls** with synthetic calls derived from OTM puts
+- **Completely transparent** - no changes to your code required
+
+This preprocessing happens automatically when `option_type` column is detected and improves the accuracy of the risk-neutral density estimation.
+
+**Note:** For vendor data sources (like yfinance), the `option_type` column is created automatically when combining calls and puts - no column mapping needed for this field.
+
 Returns a fitted instance exposing
 
 ```python

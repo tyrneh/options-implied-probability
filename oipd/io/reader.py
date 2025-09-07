@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Union, Optional, Dict
 
 from pandas import DataFrame
+import pandas as pd
 import numpy as np
 
 
@@ -43,7 +44,8 @@ class AbstractReader(ABC):
             input_data = input_data.rename(columns=column_mapping)
 
         cleaned_data = self._clean_data(input_data)
-        transformed_cleaned_data = self._transform_data(cleaned_data)
+        validated_data = self._validate_data(cleaned_data)
+        transformed_cleaned_data = self._transform_data(validated_data)
         return transformed_cleaned_data
 
     @abstractmethod
@@ -115,6 +117,45 @@ class AbstractReader(ABC):
             raw_data[col] = np.nan
 
         return raw_data
+
+    def _validate_data(self, cleaned_data: DataFrame) -> DataFrame:
+        """Common validation logic for all readers.
+        
+        Validates that data meets minimum requirements for options processing:
+        - Strike prices must not contain NaN values
+        - Strike prices must be positive
+        - Last prices must not be negative (NaN values allowed, filtered downstream)
+        
+        Arguments:
+            cleaned_data: DataFrame after column cleaning
+            
+        Returns:
+            Validated and sorted DataFrame
+            
+        Raises:
+            ValueError: If validation fails
+        """
+        # Check for NaN values in strike column (required)
+        if cleaned_data["strike"].isna().any():
+            raise ValueError("Options data contains NaN values in strike column")
+        
+        # Check for zero or negative strikes
+        if (cleaned_data["strike"] <= 0).any():
+            raise ValueError("Options data contains non-positive strike prices")
+        
+        # Check for negative prices (only for valid numeric values)
+        # NaN and non-numeric values are allowed and will be filtered downstream
+        if "last_price" in cleaned_data.columns:
+            # Convert to numeric, treating non-numeric values as NaN
+            numeric_prices = pd.to_numeric(cleaned_data["last_price"], errors='coerce')
+            valid_prices = numeric_prices.notna()
+            if valid_prices.any() and (numeric_prices.loc[valid_prices] < 0).any():
+                raise ValueError("Options data contains negative prices")
+        
+        # Sort by strike price for consistency
+        cleaned_data = cleaned_data.sort_values("strike")
+        
+        return cleaned_data
 
     @abstractmethod
     def _transform_data(self, cleaned_data: DataFrame):

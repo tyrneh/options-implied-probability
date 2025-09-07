@@ -93,6 +93,7 @@ column_mapping_bitcoin = {
     "Last": "last_price",
     "Bid": "bid",
     "Ask": "ask",
+    "OptionType": "option_type",
 }
 
 # 2️⃣  market parameters
@@ -104,11 +105,11 @@ market_bitcoin = MarketInputs(
 )
 
 # 3️⃣  optional model knobs (could omit)
-model_bitcoin = ModelParams(fit_kde=False, price_method="last", max_staleness_days=None)
+model_bitcoin = ModelParams(fit_kde=False, price_method="mid", max_staleness_days=None)
 
 # 4️⃣  run using S&P500 e-mini futures options chain
 est_bitcoin = RND.from_csv(
-    "data/BitcoinCalls_date20250830_strike20251226_price108864.csv",
+    "data/bitcoin_date20250830_strike20251226_price108864.csv",
     market_bitcoin,
     model=model_bitcoin,
     column_mapping=column_mapping_bitcoin,

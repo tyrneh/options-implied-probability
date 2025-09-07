@@ -57,33 +57,18 @@ class CSVReader(AbstractReader):
     # Inherits _clean_data() from AbstractReader.
 
     def _transform_data(self, cleaned_data: DataFrame) -> DataFrame:
-        """Apply any processing steps needed to get the data in a `DataFrame` of
-        cleaned, ingested data into the correct units, type, fp accuracy etc.
+        """Apply any processing steps specific to CSV data.
 
         Arguments:
-            cleaned_data: the raw ingested data in a DataFrame
+            cleaned_data: the validated data in a DataFrame
 
         Returns:
             Transformed DataFrame
-
-        Raises:
-            ValueError: If data contains invalid values
-        """
-        # Check for NaN values in required columns only
-        required_columns = ["strike", "last_price"]
-        for col in required_columns:
-            if cleaned_data[col].isna().any():
-                raise ValueError(f"Options data contains NaN values in required column '{col}'")
         
-        # Check for negative prices (only for non-NaN values)
-        if (cleaned_data["last_price"] < 0).any():
-            raise ValueError("Options data contains negative prices")
-
-        # Check for zero or negative strikes
-        if (cleaned_data["strike"] <= 0).any():
-            raise ValueError("Options data contains non-positive strike prices")
-
-        # Sort by strike price for consistency
-        cleaned_data = cleaned_data.sort_values("strike")
-
+        Note:
+            Common validation (NaN checks, negative prices, etc.) is handled 
+            by the base class _validate_data() method.
+        """
+        # CSV-specific transformations can be added here if needed
+        # For now, just return the data as-is since validation is done by base class
         return cleaned_data
