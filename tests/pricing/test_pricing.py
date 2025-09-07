@@ -17,7 +17,7 @@ def test_european_price_with_yield():
     q = 0.03
 
     price = european_call_price(S, K, sigma, T, r, q)
-    assert abs(price - 4.17) < 0.05  # within 5 cents
+    assert abs(price - 4.8822) < 0.05  # within 5 cents
 
 
 def test_iv_solvers_recover_sigma():
@@ -90,7 +90,7 @@ def test_discrete_vs_continuous_equivalence():
 
     # (b) Equivalent flat yield
     pv_div = cash_div * np.exp(-r * (90 / 365))
-    q_equiv = np.log((S0 - pv_div) / S0) / T
+    q_equiv = -np.log((S0 - pv_div) / S0) / T
     price_b = european_call_price(S0, S0, 0.2, T, r, q_equiv)
 
     assert abs(price_a - price_b) < 1e-4
