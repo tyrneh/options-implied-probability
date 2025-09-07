@@ -116,16 +116,25 @@ class TestDetectParityOpportunity:
         
         assert detect_parity_opportunity(df) is False
         
-    def test_detect_insufficient_data(self):
-        """Test that insufficient put coverage returns False."""
+    def test_detect_requires_pair(self):
+        """Parity detection requires at least one same-strike pair."""
         df = pd.DataFrame({
             'strike': [95, 100],
             'last_price': [2.5, 1.2],
             'option_type': ['C', 'P']
         })
-        
-        # Only 1 put, need at least 3 for good coverage
+
         assert detect_parity_opportunity(df) is False
+
+    def test_detect_single_pair(self):
+        """Detection should succeed with a single call-put pair."""
+        df = pd.DataFrame({
+            'strike': [100, 100],
+            'last_price': [2.5, 1.2],
+            'option_type': ['C', 'P']
+        })
+
+        assert detect_parity_opportunity(df) is True
 
 
 class TestInferForwardFromATM:
@@ -295,26 +304,27 @@ class TestPreprocessWithParity:
         # Should return original data unchanged
         pd.testing.assert_frame_equal(result, df)
         
-    def test_preprocess_fallback_on_error(self):
+    def test_preprocess_fallback_on_error(self, monkeypatch):
         """Test that preprocessing falls back gracefully on errors."""
-        # Create data that will cause forward inference to fail
         df = pd.DataFrame({
-            'strike': [95, 100],
-            'last_price': [0, 0],  # Invalid prices
+            'strike': [100, 100],
+            'last_price': [2.0, 1.5],
             'option_type': ['C', 'P']
         })
-        
+
         spot_price = 100.0
         discount_factor = 0.99
-        
+
+        def boom(*args, **kwargs):
+            raise ValueError("boom")
+
+        monkeypatch.setattr("oipd.core.parity.infer_forward_from_atm", boom)
+
         with warnings.catch_warnings(record=True) as w:
             result = preprocess_with_parity(df, spot_price, discount_factor)
-            
-            # Should have issued a warning
-            assert len(w) == 1
-            assert "Put-call parity preprocessing failed" in str(w[0].message)
-            
-        # Should return original data
+
+            assert any("Put-call parity preprocessing failed" in str(msg.message) for msg in w)
+
         pd.testing.assert_frame_equal(result, df)
 
 
@@ -368,11 +378,12 @@ class TestIntegrationScenarios:
         discount_factor = 0.99
         
         result = preprocess_with_parity(df, spot_price, discount_factor)
-        
-        # Should only process strikes with both calls and puts
-        # Only strikes 95 and 105 have both
-        assert len(result) == 2
-        assert set(result['strike']) == {95, 105}
+
+        # Should return one row per strike using available data
+        assert len(result) == 3
+        assert set(result['strike']) == {95, 100, 105}
+        assert result.loc[result['strike'] == 95, 'source'].iloc[0] == 'put_converted'
+        assert result.loc[result['strike'] == 100, 'source'].iloc[0] == 'call'
 
 
 if __name__ == "__main__":

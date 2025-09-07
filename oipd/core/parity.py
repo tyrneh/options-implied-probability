@@ -59,41 +59,44 @@ def infer_forward_from_atm(
             "Expected DataFrame with either (call_price, put_price) columns "
             "or (last_price, option_type) columns"
         )
-    
+
     # Find strikes that have both calls and puts
     has_both = df.dropna(subset=['call_price', 'put_price'])
     if has_both.empty:
         raise ValueError("No strikes found with both call and put options")
-    
+
     # Sort by distance from spot price to find ATM
     has_both = has_both.copy()
     has_both['distance_from_spot'] = abs(has_both['strike'] - spot_price)
     has_both = has_both.sort_values('distance_from_spot')
-    
+
     # Try strikes starting from closest to spot
     for _, row in has_both.iterrows():
         try:
             k_atm = row['strike']
             call_price = row['call_price']
             put_price = row['put_price']
-            
-            # Basic sanity check - prices should be positive and reasonable
+
+            # Basic sanity check - prices should be positive
             if call_price <= 0 or put_price <= 0:
                 continue
-            if call_price > spot_price or put_price > k_atm:  # Very rough bounds check
-                continue
-                
+
             # Calculate forward using put-call parity: F = K + (C - P) / DF
             forward_price = k_atm + (call_price - put_price) / discount_factor
-            
-            # Sanity check on forward price
-            if forward_price > 0 and abs(forward_price - spot_price) < 0.5 * spot_price:
+
+            # Bounds check: option prices should not violate intrinsic values
+            intrinsic_call = max(0.0, discount_factor * (forward_price - k_atm))
+            intrinsic_put = max(0.0, discount_factor * (k_atm - forward_price))
+            if call_price < intrinsic_call or put_price < intrinsic_put:
+                continue
+
+            if forward_price > 0:
                 return forward_price
-                
+
         except (KeyError, TypeError, ValueError):
             # Skip this strike if data is bad
             continue
-    
+
     # If we get here, no good ATM pair was found
     available_strikes = sorted(has_both['strike'].tolist())
     raise ValueError(
@@ -108,94 +111,91 @@ def apply_put_call_parity(
     discount_factor: float
 ) -> pd.DataFrame:
     """
-    Apply put-call parity to create cleaned call prices using OTM selection.
-    
-    This function expects a DataFrame with both call and put prices for the same strikes.
-    It implements the PRD logic:
-    - For K ≤ F: Replace ITM call with synthetic call from OTM put  
-    - For K > F: Keep OTM call as-is
-    
+    Apply put-call parity to produce one clean call price per strike.
+
+    For each unique strike in the union of calls and puts:
+      * If K > F: use the call price when available; otherwise convert the put
+      * If K ≤ F: use the put converted via parity; fallback to call when put missing
+
     Parameters
     ----------
     options_df : pd.DataFrame
-        Options data with columns: strike, call_price, put_price
-        (or last_price with option_type indicator)
+        Options data with either separate call/put columns or option_type format
     forward_price : float
-        Inferred forward price for OTM boundary
+        Inferred forward price
     discount_factor : float
-        exp(-r * T) for discounting calculations
-        
+        exp(-r * T)
+
     Returns
     -------
     pd.DataFrame
-        Cleaned options data with columns matching input format:
-        - strike: option strike price
-        - last_price: cleaned call price (ready for existing pipeline)
-        - Additional diagnostic columns if needed
+        DataFrame with columns: strike, last_price, source, F_used, DF_used
     """
     # Detect input format and standardize
     if 'call_price' in options_df.columns and 'put_price' in options_df.columns:
-        # Format: separate call_price and put_price columns
         df = options_df.copy()
     elif 'last_price' in options_df.columns and 'option_type' in options_df.columns:
-        # Format: single price column with option_type indicator
         df = _pivot_option_types(options_df)
     else:
         raise ValueError(
             "Expected DataFrame with either (call_price, put_price) columns "
             "or (last_price, option_type) columns"
         )
-    
-    # Get strikes that have both calls and puts
-    has_both = df.dropna(subset=['call_price', 'put_price'])
-    if has_both.empty:
-        raise ValueError("No strikes found with both call and put prices")
-    
+
     results = []
-    
-    for _, row in has_both.iterrows():
+
+    for _, row in df.iterrows():
         strike = row['strike']
-        call_price = row['call_price']
-        put_price = row['put_price']
-        
-        if strike <= forward_price:
-            # ITM call region: Replace call with synthetic call from put
-            # C_synthetic = P + DF * (F - K)
-            synthetic_call = _convert_put_to_call(put_price, strike, forward_price, discount_factor)
-            final_price = synthetic_call
-            source = "put_converted"
+        call_price = row.get('call_price')
+        put_price = row.get('put_price')
+
+        if strike > forward_price:
+            if pd.notna(call_price) and call_price > 0:
+                final_price = call_price
+                source = "call"
+            elif pd.notna(put_price) and put_price > 0:
+                final_price = _convert_put_to_call(put_price, strike, forward_price, discount_factor)
+                source = "put_converted"
+            else:
+                continue
         else:
-            # OTM call region: Keep original call
-            final_price = call_price
-            source = "call"
-        
-        # Apply bounds check
-        intrinsic_value = max(0, discount_factor * (forward_price - strike))
+            if pd.notna(put_price) and put_price > 0:
+                final_price = _convert_put_to_call(put_price, strike, forward_price, discount_factor)
+                source = "put_converted"
+            elif pd.notna(call_price) and call_price > 0:
+                final_price = call_price
+                source = "call"
+            else:
+                continue
+
+        intrinsic_value = max(0.0, discount_factor * (forward_price - strike))
         final_price = max(final_price, intrinsic_value)
-        
-        results.append({
-            'strike': strike,
-            'last_price': final_price,  # Use standard column name for pipeline
-            'source': source
-        })
-    
+
+        results.append(
+            {
+                'strike': strike,
+                'last_price': final_price,
+                'source': source,
+            }
+        )
+
     if not results:
         raise ValueError("No valid option prices after put-call parity conversion")
-    
-    result_df = pd.DataFrame(results)
-    
+
+    result_df = pd.DataFrame(results).sort_values('strike').reset_index(drop=True)
+    result_df['F_used'] = forward_price
+    result_df['DF_used'] = discount_factor
+
     # Preserve original columns that might be needed downstream
     original_cols = set(options_df.columns) - {'call_price', 'put_price', 'option_type', 'last_price', 'strike'}
     for col in original_cols:
         if col in options_df.columns:
-            # Add the column back, matching by strike
-            merged = result_df.merge(
+            result_df = result_df.merge(
                 options_df[['strike', col]].drop_duplicates('strike'),
                 on='strike',
                 how='left'
             )
-            result_df = merged
-    
+
     return result_df.sort_values('strike').reset_index(drop=True)
 
 
@@ -203,18 +203,26 @@ def _pivot_option_types(options_df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert option_type format to call_price/put_price format.
     
-    Input: DataFrame with columns [strike, last_price, option_type] where option_type is 'C' or 'P'
+    Input: DataFrame with columns [strike, option_type] and price fields such as
+    bid/ask, mid, or last_price
     Output: DataFrame with columns [strike, call_price, put_price]
     """
-    # Only work with the columns we need to avoid column name conflicts
-    df = options_df[['strike', 'last_price', 'option_type']].copy()
+    # Compute a unified price column per row
+    df = options_df.copy()
+    df['price'] = np.nan
+    for idx, row in df.iterrows():
+        try:
+            df.at[idx, 'price'] = _get_option_price(row)
+        except Exception:
+            df.at[idx, 'price'] = np.nan
+    df = df[['strike', 'price', 'option_type']]
     
     try:
         # Pivot to get separate call and put price columns
         pivoted = df.pivot_table(
             index='strike', 
-            columns='option_type', 
-            values='last_price', 
+            columns='option_type',
+            values='price',
             aggfunc='first'  # Take first value if duplicates
         ).reset_index()
         
@@ -243,11 +251,11 @@ def _pivot_option_types(options_df: pd.DataFrame) -> pd.DataFrame:
     except Exception as e:
         # If pivot fails, try alternative approach using groupby
         try:
-            calls = df[df['option_type'] == 'C'][['strike', 'last_price']].copy()
-            calls = calls.rename(columns={'last_price': 'call_price'})
-            
-            puts = df[df['option_type'] == 'P'][['strike', 'last_price']].copy()
-            puts = puts.rename(columns={'last_price': 'put_price'})
+            calls = df[df['option_type'] == 'C'][['strike', 'price']].copy()
+            calls = calls.rename(columns={'price': 'call_price'})
+
+            puts = df[df['option_type'] == 'P'][['strike', 'price']].copy()
+            puts = puts.rename(columns={'price': 'put_price'})
             
             # Merge on strike
             result = pd.merge(calls, puts, on='strike', how='outer')
@@ -265,32 +273,28 @@ def _pivot_option_types(options_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _get_option_price(option_row: pd.Series) -> float:
+    """Extract a price from a quote row.
+
+    Preference order: explicit ``mid`` column, bid/ask midpoint, then ``last_price``.
+    Raises ValueError if no usable price is found.
     """
-    Extract option price from a row, preferring mid over last_price.
-    
-    Parameters
-    ----------
-    option_row : pd.Series
-        Single row from options DataFrame
-        
-    Returns
-    -------
-    float
-        Option price to use
-    """
-    # Try mid price first (if bid/ask available)
+    # Explicit mid column
+    if 'mid' in option_row and pd.notna(option_row['mid']) and option_row['mid'] > 0:
+        return float(option_row['mid'])
+
+    # Compute mid from bid/ask
     if 'bid' in option_row and 'ask' in option_row:
         bid = option_row['bid']
         ask = option_row['ask']
         if pd.notna(bid) and pd.notna(ask) and bid > 0 and ask > bid:
             return (bid + ask) / 2.0
-    
+
     # Fallback to last_price
     if 'last_price' in option_row:
         last_price = option_row['last_price']
         if pd.notna(last_price) and last_price > 0:
             return float(last_price)
-    
+
     raise ValueError(f"No valid price found in option row: {option_row.to_dict()}")
 
 
@@ -370,10 +374,9 @@ def detect_parity_opportunity(options_df: pd.DataFrame) -> bool:
         
         # Check for strikes with both calls and puts
         has_both = df.dropna(subset=['call_price', 'put_price'])
-        
+
         # Need at least one common strike for forward inference
-        # and reasonable overall coverage
-        return len(has_both) >= 1 and len(df[df['put_price'].notna()]) >= 3
+        return len(has_both) >= 1
         
     except Exception:
         # If any error in detection, assume no parity opportunity
