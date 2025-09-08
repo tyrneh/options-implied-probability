@@ -9,6 +9,10 @@ from scipy.optimize import brentq
 from scipy.stats import norm, gaussian_kde
 
 from oipd.pricing import get_pricer
+from oipd.pricing.european import (
+    european_call_price as _bs_price,
+    european_call_vega as _bs_vega,
+)
 
 
 class OIPDError(Exception):
@@ -136,6 +140,7 @@ def calculate_pdf(
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
 
+    # this step calculates the mid or last price depending on user argument
     options_data = _calculate_price(options_data, price_method)
 
     if options_data.empty:
@@ -271,61 +276,25 @@ def _extrapolate_call_prices(
 
 
 def _calculate_price(options_data: DataFrame, price_method: str) -> DataFrame:
-    """Calculate option price using the specified method (last price or mid-price).
+    """Select the appropriate price column based on the specified method.
 
     Args:
         options_data: a DataFrame containing options price data with
-            cols ['strike', 'last_price', 'bid', 'ask']
+            cols ['strike', 'last_price', 'mid'] (from put-call parity processing)
         price_method: Method to calculate price - 'last' or 'mid'
 
     Returns:
-        the options_data DataFrame, with a 'price' column containing the calculated prices
+        the options_data DataFrame, with a 'price' column containing the selected prices
     """
-    import warnings
-    
     options_data = options_data.copy()
-    
+
     if price_method == "mid":
-        # Check if we have any valid bid/ask data
-        has_any_bid_ask = ~options_data[["bid", "ask"]].isna().all().all()
-        
-        if not has_any_bid_ask:
-            # No bid/ask data available at all - fall back to last
-            warnings.warn(
-                "Requested price_method='mid' but bid/ask data not available. "
-                "Falling back to price_method='last'.",
-                UserWarning
-            )
-            options_data["price"] = options_data["last_price"]
-        else:
-            # Calculate mid price with row-by-row fallback
-            bid_ask_valid = ~options_data[["bid", "ask"]].isna().any(axis=1)
-            
-            # Use mid where possible
-            options_data.loc[bid_ask_valid, "price"] = (
-                options_data.loc[bid_ask_valid, "bid"] + 
-                options_data.loc[bid_ask_valid, "ask"]
-            ) / 2
-            
-            # Fall back to last_price for rows with missing bid/ask
-            options_data.loc[~bid_ask_valid, "price"] = (
-                options_data.loc[~bid_ask_valid, "last_price"]
-            )
-            
-            n_fallback = (~bid_ask_valid).sum()
-            if n_fallback > 0:
-                warnings.warn(
-                    f"Using last_price for {n_fallback} strikes with missing bid/ask data.",
-                    UserWarning
-                )
+        # Use synthetic mid prices from put-call parity processing
+        options_data["price"] = options_data["mid"]
     else:  # "last"
-        # Use last traded price
+        # Use synthetic last prices from put-call parity processing
         options_data["price"] = options_data["last_price"]
 
-    # Filter out negative prices and NaN prices
-    valid_prices = (options_data["price"] >= 0) & options_data["price"].notna()
-    options_data = options_data[valid_prices]
-    
     return options_data
 
 
@@ -354,7 +323,7 @@ def _calculate_IV(
     prices_arr = options_data["price"].values
     strikes_arr = options_data["strike"].values
 
-    q = dividend_yield or 0.0
+    q = dividend_yield
     iv_values = np.fromiter(
         (
             iv_solver_scalar(p, spot_price, k, years_to_expiry, r=risk_free_rate, q=q)
@@ -375,6 +344,7 @@ def _fit_bspline_IV(options_data: DataFrame) -> DataFrame:
         From this smoothed IV function, generate (x,y) coordinates
         representing observations of the denoised IV
 
+    TODO: Update with the new put-call parity preprocessing (mid price accepted as well as last price)
     Args:
         options_data: a DataFrame containing options price data with
             cols ['strike', 'last_price', 'iv']
@@ -569,8 +539,6 @@ def _bs_iv_brent_method(price, S, K, t, r, q=0.0):
         return np.nan  # No volatility if time is zero or negative
 
     try:
-        from oipd.pricing.european import european_call_price as _bs_price
-
         return brentq(lambda iv: _bs_price(S, K, iv, t, r, q) - price, 1e-6, 5.0)
     except ValueError:
         return np.nan  # Return NaN if no solution is found
@@ -613,11 +581,6 @@ def _bs_iv_newton_method(
         )  # Lower guess for ATM, higher for OTM
 
     iv = initial_guess
-
-    from oipd.pricing.european import (
-        european_call_price as _bs_price,
-        european_call_vega as _bs_vega,
-    )
 
     for i in range(max_iter):
         # Compute model price and Vega
