@@ -5,9 +5,11 @@
 
 # Overview
 
-OIPD generates probability distributions of future security prices from options data. A probability distribution is a curve that shows the likelihood of different price outcomes on a specific future date.
+OIPD generates probability distributions of future security prices from options data. A probability distribution is a curve that shows the likelihood of different price outcomes on a specific future date. These probabilities reflect the consensus expectations of all market participants. While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
 
-These probabilities reflect the consensus, risk-neutral expectations of all market participants. While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
+OIPD provides institutional‑grade risk neutral density (RND) estimation, transforming a specialist quant‑desk technique into an accessible, production‑ready tool.
+
+
 
 # Quick start
 
