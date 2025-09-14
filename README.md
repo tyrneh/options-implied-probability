@@ -9,6 +9,10 @@ OIPD generates probability distributions of future security prices from options 
 
 OIPD provides institutional‑grade risk neutral density (RND) estimation, transforming a specialist quant‑desk technique into an accessible, production‑ready tool.
 
+<p align="center">
+  <img src="example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block;" />
+</p>
+
 
 
 # Quick start
