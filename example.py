@@ -32,7 +32,9 @@ est_gamestop = RND.from_csv(
 )
 
 # PDF only
-fig = est_gamestop.plot(kind="pdf", figsize=(6, 4), source="Gamestop options")
+fig = est_gamestop.plot(
+    kind="pdf", title="Implied Gamestop price on Jan 16, 2026", figsize=(6, 4)
+)
 plt.show()
 
 # ---- test prob at or above a price X ---- #
@@ -80,7 +82,8 @@ est_wti = RND.from_csv(
 fig = est_wti.plot(
     kind="pdf",
     figsize=(8, 6),
-    xlim=(40, 140),
+    xlim=(0, 140),
+    title="Implied crude oil price on Dec 16, 2025",
 )
 plt.show()
 
@@ -92,41 +95,42 @@ print(prob)
 # Bitcoin
 # ============================================
 
-# #     strike , last_price , bid , ask
-# column_mapping_bitcoin = {
-#     "Strike": "strike",
-#     "Last": "last_price",
-#     "Bid": "bid",
-#     "Ask": "ask",
-#     "OptionType": "option_type",
-# }
+#     strike , last_price , bid , ask
+column_mapping_bitcoin = {
+    "Strike": "strike",
+    "Last": "last_price",
+    "Bid": "bid",
+    "Ask": "ask",
+    "OptionType": "option_type",
+}
 
-# # 2️⃣  market parameters
-# market_bitcoin = MarketInputs(
-#     spot_price=108864,  # current price of the underlying asset
-#     valuation_date=date(2025, 8, 30),
-#     expiry_date=date(2025, 12, 26),
-#     risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
-# )
+# 2️⃣  market parameters
+market_bitcoin = MarketInputs(
+    spot_price=108864,  # current price of the underlying asset
+    valuation_date=date(2025, 8, 30),
+    expiry_date=date(2025, 12, 26),
+    risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
+)
 
-# # 3️⃣  optional model knobs (could omit)
-# model_bitcoin = ModelParams(fit_kde=False, price_method="mid", max_staleness_days=None)
+# 3️⃣  optional model knobs (could omit)
+model_bitcoin = ModelParams(fit_kde=False, price_method="mid", max_staleness_days=None)
 
-# # 4️⃣  run using S&P500 e-mini futures options chain
-# est_bitcoin = RND.from_csv(
-#     "data/bitcoin_date20250830_strike20251226_price108864.csv",
-#     market_bitcoin,
-#     model=model_bitcoin,
-#     column_mapping=column_mapping_bitcoin,
-# )
+# 4️⃣  run using S&P500 e-mini futures options chain
+est_bitcoin = RND.from_csv(
+    "data/bitcoin_date20250830_strike20251226_price108864.csv",
+    market_bitcoin,
+    model=model_bitcoin,
+    column_mapping=column_mapping_bitcoin,
+)
 
-# # PDF only
-# fig = est_bitcoin.plot(
-#     kind="pdf",
-#     figsize=(8, 6),
-#     xlim=(0, 200000),
-# )
-# plt.show()
+# PDF only
+fig = est_bitcoin.plot(
+    kind="pdf",
+    figsize=(8, 6),
+    xlim=(60000, 150000),
+    title="Implied Bitcoin price on Dec 26, 2025",
+)
+plt.show()
 
 # ============================================
 # YFINANCE
@@ -168,3 +172,5 @@ plt.show()
 # Auto-fetched values are always accessed through result.market, not the original market object.
 
 result.to_frame()
+
+result.prob_below(177.82)

@@ -28,25 +28,17 @@ market = MarketInputs(
     risk_free_rate=0.04,              # risk-free rate
 )
 
-# 2 - run estimator
+# 2 - run estimator, auto fetching data from Yahoo Finance
 est = RND.from_ticker("AAPL", market)   
 
 # 3 ─ access results and plots
 est.prob_at_or_above(120)               # P(price >= $120)
-est.plot()                              # plot PDF + CDF in one line
+est.prob_below(100)                     # P(price < $100)
+est.plot()                              # plot PDF + CDF 
 ```
 
 OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.
 
-By default OIPD prices and inverts options in forward space using the Black-76
-model. If your dataset lacks put quotes and a forward cannot be inferred,
-switch to Black-Scholes and supply a dividend yield or schedule:
-
-```python
-model = ModelParams(pricing_engine="bs")
-market = MarketInputs(..., dividend_yield=0.02)
-RND.from_dataframe(df, market, model=model)
-```
 
 # Use cases
 
@@ -64,6 +56,15 @@ RND.from_dataframe(df, market, model=model)
 
 - Quantify budget risk: As an airline, a portion of next year’s jet fuel demand is hedged; the rest floats. Use OIPD to estimate the probability of breaching your budget and the expected overspend (earnings-at-risk) on the unhedged slice.
 - Adjust hedging coverage when tails fatten: If OIPD shows higher price risk, add a small 5–10% hedged tranche using to pull P(breach)/EaR back within board guardrails
+
+# Key features
+1. Foundations in rigourous options-theory 
+    - Integrated put-call parity to (1) eliminate noisy data, and (2) infer forward-looking dividends information, no dividend guesswork required from user
+    - Black76 pricing engine in forward-space, compatible with equities, futures, and FX asset classes
+    - Thoughtfully designed architecture, pluggable pricing models and input parameters, and extensible for future pricing models
+2. Ease-of-use conveniences
+    - Integration with Yahoo Finance to auto-fetch options data based on a ticker name
+    - Integrated results and visualizations 
 
 # License
 
