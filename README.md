@@ -52,7 +52,7 @@ OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](
 
 # Use cases
 
-**Retail traders: Quantify expected payoff of GME call options for $2 at $75 strike**
+**Retail traders: XYZ**
 
 - XYZ
 
