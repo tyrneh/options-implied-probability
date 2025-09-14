@@ -7,9 +7,9 @@
 
 OIPD transforms raw options data into probability distributions of future asset prices.
 
-In plain terms: it takes the collective expectations embedded in option prices and turns them into a curve that shows the likelihood of different prices on a given future date — much like a forecast, but for prices.
+In plain terms: it takes the market's collective expectations embedded in option prices and turns them into a curve that shows the likelihood of different prices on a given future date — much like a forecast, but for prices.
 
-These probabilities reflect the consensus expectations of all market participants. Markets can’t predict the future with certainty. But under the efficient market hypothesis, option prices represent the best available estimate of where prices might go.
+While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
 
 Traditionally, extracting these “risk-neutral densities” required institutional knowledge and resources, limited to specialist quant-desks. OIPD makes this capability accessible to everyone — delivering an institutional-grade tool in a simple, production-ready Python package.
 
