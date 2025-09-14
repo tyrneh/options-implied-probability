@@ -54,8 +54,7 @@ OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](
 
 **Retail traders: Quantify expected payoff of GME call options for $2 at $75 strike**
 
-- Market-implied view: You discover the market assigns only a 6 % chance that GME finishes the week above $75
-- Expected payoff: A $2 premium on a 6% event means the expected gain is 0.06 × ($75 – $73 break-even) ≈ $0.12, while the expected loss (94 % of the time) is the full $2. The trade’s expected value is negative
+- XYZ
 
 **Professional managers: Compute your portfolio's forward-looking tail risk ahead of turbulent earnings season**
 
