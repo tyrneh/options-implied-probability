@@ -218,7 +218,7 @@ def plot_rnd(
         else:
             date_text = "current date"
 
-        price_text = f"Spot price on {date_text}\nis ${spot_price:.2f}"
+        price_text = f"Spot price on {date_text}\nis ${spot_price:,.2f}"
 
         # For overlay plots, add to legend; for individual plots, no legend
         if kind == "both":
@@ -228,7 +228,7 @@ def plot_rnd(
                 linestyle="--",
                 alpha=0.7,
                 linewidth=1.5,  # Thinner line
-                label=f"Spot: ${spot_price:.2f}",
+                label=f"Spot: ${spot_price:,.2f}",
             )
             # Add text annotation beside the line
             # Position text right above the x-axis
@@ -278,6 +278,13 @@ def plot_rnd(
         ax1.set_xlim(xlim)
     if ylim is not None:
         ax1.set_ylim(ylim)
+
+    # Format x-axis with thousands separator (e.g., 10,000), always applied
+    try:
+        ax1.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
+    except Exception:
+        # Fallback silently if StrMethodFormatter is unavailable
+        pass
 
     # Handle title and layout
     if style == "publication":
