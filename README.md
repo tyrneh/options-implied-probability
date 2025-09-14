@@ -7,7 +7,7 @@
 
 OIPD transforms raw options data into probability distributions of future asset prices.
 
-In plain terms: it takes the market's collective expectations embedded in option prices and turns them into a curve that shows the likelihood of different prices on a given future date — much like a forecast, but for prices.
+In plain terms: it takes the market's collective expectations embedded in option prices and turns them into a curve that shows the likelihood of different outcomes on a future date — much like a forecast, but for prices.
 
 While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
 
