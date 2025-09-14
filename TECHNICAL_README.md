@@ -23,7 +23,7 @@ Requires at minimum **Python 3.10+**.
 
 OIPD provides a single `RND` class that extracts market-implied probability distributions from options data.
  
-We curently use Black-Scholes pricing with the Breeden-Litzenberger formula. Architecture is written to accomodate more pricing models in the future roadmap. 
+The default implementation uses Black-76 pricing in forward space with the Breeden-Litzenberger formula. Users may switch to Black-Scholes when only calls are available and dividend assumptions are provided.
 
 **Main Entry Point: `RND` Class**
 
@@ -39,7 +39,7 @@ MarketInputs loads information on market data, while ModelParams specifies algor
 
 **Workflow Examples**
 
-_From live data (auto-fetches price & dividends):_
+_From live data (auto-fetches price and, when needed, dividend data):_
 
 ```python
 # First, discover available expiry dates
@@ -58,7 +58,7 @@ est = RND.from_ticker("AAPL", market)
 
 **Smart Features**
 
-- **Auto-fetching**: `from_ticker()` automatically gets current price and dividend data
+- **Auto-fetching**: `from_ticker()` retrieves current price and dividend data when required
 - **Flexible data sources**: Pluggable vendor system (currently yfinance; extensible)
 - **Built-in plotting**: PDF/CDF plots
 - **Probability calculations**: Easy P(price >= X) queries
@@ -94,10 +94,10 @@ OPTIONAL configuration object that controls the algorithms used in the RND calcu
 ModelParams(
     solver             = "newton" | "brent",   # IV root-finder; defaults to newton
     fit_kde            = False,                # smooth tails
-    pricing_engine     = "bs",                # placeholder for alt models
+    pricing_engine     = "black76" | "bs",     # default forward-based Black-76
     price_method       = "last" | "mid",       # defaults to 'last'; can use mid-price calculated as `(bid + ask) / 2`
     max_staleness_days = 3,                   # filter options older than N calendar days from valuation_date (default: 3)
-                                              # set to None to disable filtering
+                                             # set to None to disable filtering
 )
 ```
 
@@ -192,9 +192,9 @@ For a complete reading of the financial theory, see [this paper](https://www.ban
 The process of generating the PDFs and CDFs is as follows:
 
 1. For an underlying asset, options data along the full range of strike prices are read from a CSV file to create a DataFrame. This gives us a table of strike prices along with the last price[^1] each option sold for
-2. Using the Black-Sholes formula, we convert strike prices into implied volatilities (IV)[^2]. IV are solved using either Newton's Method or Brent's root-finding algorithm, as specified by the `solver_method` argument.
+2. Using the chosen pricing model (Black-76 by default) we convert strike prices into implied volatilities (IV)[^2]. IV are solved using either Newton's Method or Brent's root-finding algorithm, as specified by the `solver_method` argument.
 3. Using B-spline, we fit a curve-of-best-fit onto the resulting IVs over the full range of strike prices[^3]. Thus, we have extracted a continuous model from discrete IV observations - this is called the volatility smile
-4. From the volatility smile, we use Black-Scholes to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
+4. From the volatility smile, we use the same pricing model to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
 5. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^4]
 6. We can fit a KDE onto the resulting PDF, which in some cases will improve edge-behavior at very high or very low prices. This is specified by the argument `fit_kernal_pdf`
 7. Once we have the PDF, we can calculate the CDF

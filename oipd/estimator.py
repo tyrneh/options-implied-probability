@@ -43,7 +43,7 @@ class ModelParams:
     solver: Literal["brent", "newton"] = "brent"
     fit_kde: bool = False
     american_to_european: bool = False  # placeholder for future functionality
-    pricing_engine: Literal["bs"] = "bs"
+    pricing_engine: Literal["black76", "bs"] = "black76"
     price_method: Literal["last", "mid"] = "last"
     max_staleness_days: Optional[int] = 3
 
@@ -298,19 +298,37 @@ def _estimate(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Run the core RND estimation given fully validated input data."""
 
-    # Determine effective spot and q considering dividend inputs
     val_date = resolved_market.valuation_date
-    spot_eff, q_eff = prepare_dividends(
-        spot=resolved_market.spot_price,
-        dividend_schedule=resolved_market.dividend_schedule,
-        dividend_yield=resolved_market.dividend_yield,
-        r=resolved_market.risk_free_rate,
-        valuation_date=val_date,
-    )
+
+    if model.pricing_engine == "bs":
+        spot_eff, q_eff = prepare_dividends(
+            spot=resolved_market.spot_price,
+            dividend_schedule=resolved_market.dividend_schedule,
+            dividend_yield=resolved_market.dividend_yield,
+            r=resolved_market.risk_free_rate,
+            valuation_date=val_date,
+        )
+        forward_price = None
+    else:
+        spot_eff = resolved_market.spot_price
+        q_eff = None
+        forward_price = None
 
     # Apply put-call parity preprocessing if beneficial
     discount_factor = np.exp(-resolved_market.risk_free_rate * resolved_market.days_to_expiry / 365.0)
     options_data = preprocess_with_parity(options_data, spot_eff, discount_factor)
+
+    if model.pricing_engine == "black76":
+        if "F_used" not in options_data.columns:
+            warnings.warn(
+                "Black-76 requires a parity-implied forward but put quotes are missing. "
+                "Rerun with ModelParams(pricing_engine='bs') and provide dividend_yield or dividend_schedule.",
+                UserWarning,
+            )
+            raise ValueError(
+                "Put options missing: switch to Black-Scholes with explicit dividend inputs"
+            )
+        forward_price = float(options_data["F_used"].iloc[0])
 
     # Filter stale data if configured and last_trade_date column is present
     if (
@@ -357,9 +375,10 @@ def _estimate(
             resolved_market.days_to_expiry,
             resolved_market.risk_free_rate,
             model.solver,
-            dividend_yield=q_eff,
-            pricing_engine=model.pricing_engine,
-            price_method=model.price_method,
+            model.pricing_engine,
+            q_eff,
+            model.price_method,
+            forward_price=forward_price,
         )
     except (InvalidInputError, CalculationError):
         raise  # preserve stack & message

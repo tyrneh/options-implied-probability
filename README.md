@@ -38,6 +38,16 @@ est.plot()                              # plot PDF + CDF in one line
 
 OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.
 
+By default OIPD prices and inverts options in forward space using the Black-76
+model. If your dataset lacks put quotes and a forward cannot be inferred,
+switch to Black-Scholes and supply a dividend yield or schedule:
+
+```python
+model = ModelParams(pricing_engine="bs")
+market = MarketInputs(..., dividend_yield=0.02)
+RND.from_dataframe(df, market, model=model)
+```
+
 # Use cases
 
 **Retail traders: Quantify expected payoff of GME call options for $2 at $75 strike**

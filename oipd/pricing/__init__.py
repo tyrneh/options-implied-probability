@@ -12,12 +12,14 @@ from typing import Callable, Dict
 # Import concrete pricers (keep the import cost minimal – each module should be
 # lightweight).
 # ---------------------------------------------------------------------------
-from .european import european_call_price
+from .black_scholes import black_scholes_call_price
+from .black76 import black76_call_price
 
 # Map *engine_name* -> pricing function.  Naming convention keeps it short but
 # descriptive.  Users will refer to these strings via ModelParams.pricing_engine.
 _PRICERS: Dict[str, Callable] = {
-    "bs": european_call_price,  # Black-Scholes European call
+    "bs": black_scholes_call_price,  # Black-Scholes European call
+    "black76": black76_call_price,  # Black-76 forward call
 }
 
 

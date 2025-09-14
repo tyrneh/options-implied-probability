@@ -2,10 +2,14 @@ import numpy as np
 import pandas as pd
 from datetime import date, timedelta
 
-from oipd.pricing.european import european_call_price
-from oipd.core.pdf import calculate_pdf
-
-from oipd.core.pdf import _bs_iv_brent_method, _bs_iv_newton_method
+from oipd.pricing.black_scholes import black_scholes_call_price
+from oipd.pricing.black76 import black76_call_price
+from oipd.core.pdf import (
+    calculate_pdf,
+    _bs_iv_brent_method,
+    _bs_iv_newton_method,
+    _black76_iv_brent_method,
+)
 
 
 def test_european_price_with_yield():
@@ -16,7 +20,7 @@ def test_european_price_with_yield():
     r = 0.0  # for textbook comparison
     q = 0.03
 
-    price = european_call_price(S, K, sigma, T, r, q)
+    price = black_scholes_call_price(S, K, sigma, T, r, q)
     assert abs(price - 4.8822) < 0.05  # within 5 cents
 
 
@@ -27,7 +31,7 @@ def test_iv_solvers_recover_sigma():
     T = 0.5
     r = 0.0
     q = 0.03
-    price = european_call_price(S, K, true_sigma, T, r, q)
+    price = black_scholes_call_price(S, K, true_sigma, T, r, q)
 
     brent = _bs_iv_brent_method(price, S, K, T, r, q)
     newton = _bs_iv_newton_method(price, S, K, T, r, q)
@@ -45,7 +49,7 @@ def test_pdf_integrates_to_one():
     q = 0.02
     T = 0.5
 
-    prices = european_call_price(S, strikes, sigma, T, r, q)
+    prices = black_scholes_call_price(S, strikes, sigma, T, r, q)
     df = pd.DataFrame({"strike": strikes, "last_price": prices})
 
     # Add required bid/ask columns for the new price_method functionality
@@ -54,7 +58,7 @@ def test_pdf_integrates_to_one():
     
     pdf_x, pdf_y = calculate_pdf(
         df,
-        spot_price=S,
+        underlying_price=S,
         days_to_expiry=int(T * 365),
         risk_free_rate=r,
         solver_method="brent",
@@ -86,11 +90,35 @@ def test_discrete_vs_continuous_equivalence():
         dividend_yield=None,
         valuation_date=date.today(),
     )
-    price_a = european_call_price(spot_a, S0, 0.2, T, r, q_a)
+    price_a = black_scholes_call_price(spot_a, S0, 0.2, T, r, q_a)
 
     # (b) Equivalent flat yield
     pv_div = cash_div * np.exp(-r * (90 / 365))
     q_equiv = -np.log((S0 - pv_div) / S0) / T
-    price_b = european_call_price(S0, S0, 0.2, T, r, q_equiv)
+    price_b = black_scholes_call_price(S0, S0, 0.2, T, r, q_equiv)
 
     assert abs(price_a - price_b) < 1e-4
+
+
+def test_black76_round_trip():
+    F = 100.0
+    K = 100.0
+    sigma = 0.2
+    T = 0.5
+    r = 0.01
+    price = black76_call_price(F, K, sigma, T, r)
+    est = _black76_iv_brent_method(price, F, K, T, r)
+    assert abs(est - sigma) < 1e-4
+
+
+def test_black76_bs_equivalence():
+    S = 95.0
+    F = 100.0
+    K = 100.0
+    sigma = 0.25
+    T = 0.5
+    r = 0.03
+    q_star = r - np.log(F / S) / T
+    price_black = black76_call_price(F, K, sigma, T, r)
+    price_bs = black_scholes_call_price(S, K, sigma, T, r, q_star)
+    assert abs(price_black - price_bs) < 1e-6

@@ -2,46 +2,45 @@ from oipd import RND, MarketInputs, ModelParams
 import matplotlib.pyplot as plt
 from datetime import date
 
-# # 1️⃣  what the library expects internally
-# #     strike , last_price , bid , ask
-# column_mapping_sp500 = {
-#     "Strike": "strike",
-#     "Price": "last_price",
-#     "Bid": "bid",
-#     "Ask": "ask",
-# }
+# 1️⃣  what the library expects internally
+#     strike , last_price , bid , ask
+column_mapping_gamestop = {
+    "Strike": "strike",
+    "Last": "last_price",
+    "Bid": "bid",
+    "Ask": "ask",
+    "OptionType": "option_type",
+}
 
-# # 2️⃣  market parameters
-# market_sp500 = MarketInputs(
-#     spot_price=6460.26,  # current price of the underlying asset
-#     valuation_date=date(2025, 8, 30),
-#     expiry_date=date(2025, 12, 19),
-#     risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
-# )
+# 2️⃣  market parameters
+market_gamestop = MarketInputs(
+    spot_price=23.235,  # current price of the underlying asset
+    valuation_date=date(2025, 9, 8),
+    expiry_date=date(2026, 1, 16),
+    risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
+)
 
-# # 3️⃣  optional model knobs (could omit)
-# model_sp500 = ModelParams(fit_kde=False, price_method="last")
+# 3️⃣  optional model knobs (could omit)
+model_gamestop = ModelParams(fit_kde=False, price_method="mid")
 
-# # 4️⃣  run using S&P500 e-mini futures options chain
-# est_sp500 = RND.from_csv(
-#     "data/s-p-futures_date20250830_strike20251219_price646026.csv",
-#     market_sp500,
-#     model=model_sp500,
-#     column_mapping=column_mapping_sp500,
-# )
+# 4️⃣  run using Gamestop options chain
+est_gamestop = RND.from_csv(
+    "data/GME_date250908exp260116_current23235.csv",
+    market_gamestop,
+    model=model_gamestop,
+    column_mapping=column_mapping_gamestop,
+)
 
-# # PDF only
-# fig = est_sp500.plot(
-#     kind="pdf", figsize=(6, 4), title="S&P500", source="S&P500 e-mini futures options"
-# )
-# plt.show()
+# PDF only
+fig = est_gamestop.plot(kind="pdf", figsize=(6, 4), source="Gamestop options")
+plt.show()
 
-# # ---- test prob at or above a price X ---- #
-# prob = est_sp500.prob_at_or_above(6500)
-# print(prob)
+# ---- test prob at or above a price X ---- #
+prob = est_gamestop.prob_at_or_above(120)
+print(prob)
 
-# prob = est_sp500.prob_below(6500)
-# print(prob)
+prob = est_gamestop.prob_below(150)
+print(prob)
 
 # ============================================
 # Crude Oil
@@ -58,20 +57,20 @@ column_mapping_wti = {
 
 # 2️⃣  market parameters
 market_wti = MarketInputs(
-    spot_price=64.01,  # current price of the underlying asset
-    valuation_date=date(2025, 8, 30),
-    expiry_date=date(2025, 12, 19),
+    spot_price=61.69,  # current price of the underlying asset
+    valuation_date=date(2025, 9, 8),
+    expiry_date=date(2025, 12, 16),
     risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
 )
 
 # 3️⃣  optional model knobs (could omit)
 model_wti = ModelParams(
-    solver="brent", fit_kde=False, price_method="last", max_staleness_days=None
+    solver="brent", fit_kde=False, price_method="mid", max_staleness_days=None
 )
 
 # 4️⃣  run using S&P500 e-mini futures options chain
 est_wti = RND.from_csv(
-    "data/CrudeWTI_date20250830_strike20251216_price6401.csv",
+    "data/WTIfutures_date250908exp251216_spot6169.csv",
     market_wti,
     model=model_wti,
     column_mapping=column_mapping_wti,
@@ -81,9 +80,12 @@ est_wti = RND.from_csv(
 fig = est_wti.plot(
     kind="pdf",
     figsize=(8, 6),
-    xlim=(50, 110),
+    xlim=(40, 140),
 )
 plt.show()
+
+prob = est_wti.prob_below(200)
+print(prob)
 
 
 # ============================================

@@ -9,7 +9,7 @@ from typing import Union
 ArrayLike = Union[float, np.ndarray]
 
 
-def european_call_price(
+def black_scholes_call_price(
     S: ArrayLike,
     K: ArrayLike,
     sigma: ArrayLike,
@@ -41,7 +41,7 @@ def european_call_price(
     return call
 
 
-def european_call_vega(
+def black_scholes_call_vega(
     S: ArrayLike,
     K: ArrayLike,
     sigma: ArrayLike,

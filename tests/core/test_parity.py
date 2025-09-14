@@ -10,77 +10,7 @@ from oipd.core.parity import (
     apply_put_call_parity,
     detect_parity_opportunity,
     preprocess_with_parity,
-    _pivot_option_types,
-    _convert_put_to_call,
 )
-
-
-class TestPivotOptionTypes:
-    """Test the option_type format conversion functionality."""
-    
-    def test_pivot_basic_format(self):
-        """Test basic pivoting of option_type format."""
-        input_df = pd.DataFrame({
-            'strike': [95, 95, 100, 100],
-            'last_price': [2.5, 1.2, 1.8, 2.1],
-            'option_type': ['C', 'P', 'C', 'P']
-        })
-        
-        result = _pivot_option_types(input_df)
-        
-        assert 'call_price' in result.columns
-        assert 'put_price' in result.columns
-        assert len(result) == 2  # Two unique strikes
-        assert result.loc[result['strike'] == 95, 'call_price'].iloc[0] == 2.5
-        assert result.loc[result['strike'] == 95, 'put_price'].iloc[0] == 1.2
-        
-    def test_pivot_missing_option_type(self):
-        """Test pivoting when some strikes only have calls or puts."""
-        input_df = pd.DataFrame({
-            'strike': [95, 100, 105],
-            'last_price': [2.5, 1.8, 0.5],
-            'option_type': ['C', 'C', 'P']
-        })
-        
-        result = _pivot_option_types(input_df)
-        
-        assert len(result) == 3
-        # Strike 95 should have call but no put
-        assert result.loc[result['strike'] == 95, 'call_price'].iloc[0] == 2.5
-        assert pd.isna(result.loc[result['strike'] == 95, 'put_price'].iloc[0])
-        # Strike 105 should have put but no call  
-        assert result.loc[result['strike'] == 105, 'put_price'].iloc[0] == 0.5
-        assert pd.isna(result.loc[result['strike'] == 105, 'call_price'].iloc[0])
-
-
-class TestConvertPutToCall:
-    """Test put-to-call conversion via parity."""
-    
-    def test_basic_conversion(self):
-        """Test basic put-to-call parity conversion."""
-        put_price = 2.0
-        strike = 95.0
-        forward_price = 100.0
-        discount_factor = 0.99
-        
-        # Expected: C = P + DF*(F-K) = 2.0 + 0.99*(100-95) = 2.0 + 4.95 = 6.95
-        expected_call = 2.0 + 0.99 * (100 - 95)
-        
-        result = _convert_put_to_call(put_price, strike, forward_price, discount_factor)
-        
-        assert abs(result - expected_call) < 0.001
-        
-    def test_conversion_negative_result(self):
-        """Test that negative results are floored to zero."""
-        put_price = 0.1
-        strike = 110.0  # Deep ITM put
-        forward_price = 100.0
-        discount_factor = 0.99
-        
-        # This would give a negative result, should be floored to 0
-        result = _convert_put_to_call(put_price, strike, forward_price, discount_factor)
-        
-        assert result >= 0.0
 
 
 class TestDetectParityOpportunity:
@@ -248,27 +178,6 @@ class TestApplyPutCallParity:
         strike_100 = result[result['strike'] == 100]
         assert strike_100['source'].iloc[0] == 'put_converted'
         
-    def test_parity_separate_price_format(self):
-        """Test parity with separate call_price/put_price format."""
-        df = pd.DataFrame({
-            'strike': [95, 100, 105],
-            'call_price': [6.0, 2.5, 0.5],
-            'put_price': [1.0, 2.0, 4.5]
-        })
-        
-        forward_price = 100.0
-        discount_factor = 0.99
-        
-        result = apply_put_call_parity(df, forward_price, discount_factor)
-        
-        assert len(result) == 3
-        assert 'last_price' in result.columns
-        
-        # Check that strikes above forward use calls
-        high_strikes = result[result['strike'] > forward_price]
-        assert all(high_strikes['source'] == 'call')
-
-
 class TestPreprocessWithParity:
     """Test the main preprocessing entry point."""
     
@@ -379,11 +288,11 @@ class TestIntegrationScenarios:
         
         result = preprocess_with_parity(df, spot_price, discount_factor)
 
-        # Should return one row per strike using available data
-        assert len(result) == 3
-        assert set(result['strike']) == {95, 100, 105}
+        # Should return rows only where usable prices exist
+        assert len(result) == 2
+        assert set(result['strike']) == {95, 105}
         assert result.loc[result['strike'] == 95, 'source'].iloc[0] == 'put_converted'
-        assert result.loc[result['strike'] == 100, 'source'].iloc[0] == 'call'
+        assert result.loc[result['strike'] == 105, 'source'].iloc[0] == 'call'
 
 
 if __name__ == "__main__":

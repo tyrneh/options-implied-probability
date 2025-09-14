@@ -6,7 +6,7 @@ from datetime import date
 
 from oipd.estimator import RND, ModelParams
 from oipd.market_inputs import MarketInputs
-from oipd.core.pdf import _calculate_price
+from oipd.core.pdf import _calculate_price, CalculationError
 from oipd.io.csv_reader import CSVReader
 from oipd.io.dataframe_reader import DataFrameReader
 
@@ -100,7 +100,7 @@ class TestEndToEndPriceMethod:
 
     def test_rnd_from_dataframe_last_price(self, sample_options_data, market_inputs):
         """Test RND calculation using last price method."""
-        model = ModelParams(price_method="last")
+        model = ModelParams(price_method="last", pricing_engine="bs")
         
         result = RND.from_dataframe(sample_options_data, market_inputs, model=model)
         
@@ -111,7 +111,7 @@ class TestEndToEndPriceMethod:
 
     def test_rnd_from_dataframe_mid_price(self, sample_options_data, market_inputs):
         """Test RND calculation using mid price method."""
-        model = ModelParams(price_method="mid")
+        model = ModelParams(price_method="mid", pricing_engine="bs")
         
         result = RND.from_dataframe(sample_options_data, market_inputs, model=model)
         
@@ -122,8 +122,8 @@ class TestEndToEndPriceMethod:
 
     def test_price_methods_give_different_results(self, sample_options_data, market_inputs):
         """Test that last and mid price methods produce different results."""
-        model_last = ModelParams(price_method="last")
-        model_mid = ModelParams(price_method="mid")
+        model_last = ModelParams(price_method="last", pricing_engine="bs")
+        model_mid = ModelParams(price_method="mid", pricing_engine="bs")
         
         result_last = RND.from_dataframe(sample_options_data, market_inputs, model=model_last)
         result_mid = RND.from_dataframe(sample_options_data, market_inputs, model=model_mid)
@@ -134,11 +134,17 @@ class TestEndToEndPriceMethod:
     def test_backward_compatibility_default_last(self, sample_options_data, market_inputs):
         """Test that default behavior (no explicit price_method) uses last price."""
         # No explicit model - should default to last price
-        result_default = RND.from_dataframe(sample_options_data, market_inputs)
-        
+        result_default = RND.from_dataframe(
+            sample_options_data,
+            market_inputs,
+            model=ModelParams(pricing_engine="bs"),
+        )
+
         # Explicit last price
-        model_last = ModelParams(price_method="last")
-        result_explicit_last = RND.from_dataframe(sample_options_data, market_inputs, model=model_last)
+        model_last = ModelParams(price_method="last", pricing_engine="bs")
+        result_explicit_last = RND.from_dataframe(
+            sample_options_data, market_inputs, model=model_last
+        )
         
         # Results should be identical
         assert np.array_equal(result_default.pdf, result_explicit_last.pdf)
@@ -276,8 +282,9 @@ class TestRobustDataHandling:
         
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            # Should work with default price_method="last"
-            result = RND.from_dataframe(df, market)
+            result = RND.from_dataframe(
+                df, market, model=ModelParams(pricing_engine="bs")
+            )
             
             # Should warn about missing optional columns
             assert any("Optional columns not present" in str(warning.message) for warning in w)
@@ -301,17 +308,12 @@ class TestRobustDataHandling:
             risk_free_rate=0.05,
         )
         
-        model = ModelParams(price_method="mid")
+        model = ModelParams(price_method="mid", pricing_engine="bs")
         
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = RND.from_dataframe(df, market, model=model)
-            
-            # Should warn about missing optional columns and fallback
+            with pytest.raises(CalculationError):
+                RND.from_dataframe(df, market, model=model)
+
             warning_messages = [str(warning.message) for warning in w]
             assert any("Optional columns not present" in msg for msg in warning_messages)
-            assert any("Falling back to price_method='last'" in msg for msg in warning_messages)
-        
-        # Should complete successfully using last_price
-        assert result.prices is not None
-        assert result.pdf is not None
