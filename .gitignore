@@ -125,6 +125,9 @@ CLAUDE.md
 .reviews/*
 PRDs/*
 PRDs/
+.codex/
+.codex/*
+AGENTS.md
 
 # Spyder project settings
 .spyderproject
@@ -149,6 +152,9 @@ dmypy.json
 
 .DS_Store
 
-# old readme
+# Archive 
 README_ARCHIVE.md
+example_new.py
+example.ipynb
+exampleOil.py
 
