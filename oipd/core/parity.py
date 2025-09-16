@@ -18,7 +18,7 @@ import warnings
 
 
 def infer_forward_from_atm(
-    options_df: pd.DataFrame, spot_price: float, discount_factor: float
+    options_df: pd.DataFrame, underlying_price: float, discount_factor: float
 ) -> float:
     """
     Infer forward price from ATM call-put pair using put-call parity.
@@ -31,7 +31,7 @@ def infer_forward_from_atm(
     options_df : pd.DataFrame
         Options data with columns: strike, call_price, put_price
         (or strike, last_price, option_type)
-    spot_price : float
+    underlying_price : float
         Current underlying price (used to find ATM strike)
     discount_factor : float
         exp(-r * T) for present value calculations
@@ -63,7 +63,7 @@ def infer_forward_from_atm(
                         "strike": row["strike"],
                         "call_price": row["call_price"],
                         "put_price": row["put_price"],
-                        "distance_from_spot": abs(row["strike"] - spot_price),
+                        "distance_from_underlying": abs(row["strike"] - underlying_price),
                     }
                 )
 
@@ -97,7 +97,7 @@ def infer_forward_from_atm(
                             "strike": strike,
                             "call_price": call_price,
                             "put_price": put_price,
-                            "distance_from_spot": abs(strike - spot_price),
+                            "distance_from_underlying": abs(strike - underlying_price),
                         }
                     )
     else:
@@ -109,10 +109,10 @@ def infer_forward_from_atm(
     if not candidate_pairs:
         raise ValueError("No strikes found with both call and put options")
 
-    # Sort by distance from spot price to find ATM
-    candidate_pairs.sort(key=lambda x: x["distance_from_spot"])
+    # Sort by distance from current underlying price to find ATM
+    candidate_pairs.sort(key=lambda x: x["distance_from_underlying"])
 
-    # Try strikes starting from closest to spot
+    # Try strikes starting from closest to the current price
     for pair in candidate_pairs:
         try:
             k_atm = pair["strike"]
@@ -138,7 +138,7 @@ def infer_forward_from_atm(
     # If we get here, no good ATM pair was found
     available_strikes = sorted([pair["strike"] for pair in candidate_pairs])
     raise ValueError(
-        f"Could not find a clean ATM call-put pair near spot {spot_price:.2f}. "
+        f"Could not find a clean ATM call-put pair near price {underlying_price:.2f}. "
         f"Available strikes with both options: {available_strikes}"
     )
 
@@ -450,7 +450,7 @@ def detect_parity_opportunity(options_df: pd.DataFrame) -> bool:
 
 
 def preprocess_with_parity(
-    options_df: pd.DataFrame, spot_price: float, discount_factor: float
+    options_df: pd.DataFrame, underlying_price: float, discount_factor: float
 ) -> pd.DataFrame:
     """
     Convenience function to apply put-call parity preprocessing if beneficial.
@@ -461,7 +461,7 @@ def preprocess_with_parity(
     ----------
     options_df : pd.DataFrame
         Options data (various formats supported)
-    spot_price : float
+    underlying_price : float
         Current underlying price
     discount_factor : float
         exp(-r * T) for discounting
@@ -489,7 +489,7 @@ def preprocess_with_parity(
 
     try:
         # Apply parity preprocessing
-        forward_price = infer_forward_from_atm(options_df, spot_price, discount_factor)
+        forward_price = infer_forward_from_atm(options_df, underlying_price, discount_factor)
         cleaned_df = apply_put_call_parity(options_df, forward_price, discount_factor)
         return cleaned_df
 

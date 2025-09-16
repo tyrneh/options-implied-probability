@@ -94,7 +94,7 @@ class TestEndToEndPriceMethod:
         return MarketInputs(
             valuation_date=date(2024, 1, 1),
             expiry_date=date(2024, 2, 1),
-            spot_price=100.0,
+            underlying_price=100.0,
             risk_free_rate=0.05,
         )
 
@@ -276,7 +276,7 @@ class TestRobustDataHandling:
         market = MarketInputs(
             valuation_date=date(2024, 1, 1),
             expiry_date=date(2024, 2, 1),
-            spot_price=100.0,
+            underlying_price=100.0,
             risk_free_rate=0.05,
         )
         
@@ -304,7 +304,7 @@ class TestRobustDataHandling:
         market = MarketInputs(
             valuation_date=date(2024, 1, 1),
             expiry_date=date(2024, 2, 1),
-            spot_price=100.0,
+            underlying_price=100.0,
             risk_free_rate=0.05,
         )
         

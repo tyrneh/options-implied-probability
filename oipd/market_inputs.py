@@ -6,7 +6,17 @@ from datetime import datetime, date
 
 @dataclass(frozen=True)
 class MarketInputs:
-    """User-provided market parameters (may have missing fields for vendor mode)."""
+    """
+    User-provided market parameters (may have missing fields for vendor mode).
+
+    Terminology
+    ----------
+    `underlying_price` is the current tradable price of the instrument the
+    option is written on:
+    - For equity/ETF/FX spot options (Black–Scholes), this is the cash spot S.
+    - For options on futures (Black‑76), this is the current futures price F
+      of the relevant contract.
+    """
     
     # Required fields first
     risk_free_rate: float
@@ -14,10 +24,15 @@ class MarketInputs:
     
     # Optional fields second
     days_to_expiry: Optional[int] = None
-    spot_price: Optional[float] = None
+    underlying_price: Optional[float] = None
     dividend_yield: Optional[float] = None
     dividend_schedule: Optional[pd.DataFrame] = None  # columns: ex_date, amount
     expiry_date: Optional[date] = None
+
+    # Convenience alias used in some UIs
+    @property
+    def current_price(self) -> Optional[float]:  # pragma: no cover - trivial alias
+        return self.underlying_price
 
 
 @dataclass(frozen=True)
@@ -26,26 +41,39 @@ class VendorSnapshot:
     
     asof: datetime
     vendor: str
-    spot_price: Optional[float] = None
+    underlying_price: Optional[float] = None
     dividend_yield: Optional[float] = None
     dividend_schedule: Optional[pd.DataFrame] = None
+
+    # Read-only aliases to reduce terminology confusion
+    @property
+    def current_price(self) -> Optional[float]:  # pragma: no cover - trivial alias
+        return self.underlying_price
 
 
 @dataclass(frozen=True)
 class Provenance:
     """Tracks the source of each resolved market parameter."""
     
-    spot_price: Literal["user", "vendor", "none"]
+    price: Literal["user", "vendor", "none"]
     dividends: Literal["user_schedule", "user_yield", "vendor_schedule", "vendor_yield", "none"]
 
 
 @dataclass(frozen=True)
 class ResolvedMarket:
-    """Immutable, fully-resolved market parameters used in calculations."""
+    """
+    Immutable, fully-resolved market parameters used in calculations.
+
+    The attribute `underlying_price` holds the current price of the instrument
+    the option is written on. For futures options (Black‑76), this is the
+    current futures price F for the selected contract (not a cash spot).
+
+    A convenience alias `current_price` is provided for readability.
+    """
     
     risk_free_rate: float
     days_to_expiry: int
-    spot_price: float
+    underlying_price: float
     valuation_date: date  # Valuation date for dividend calculations
     expiry_date: date   # Option expiry date
     dividend_yield: Optional[float]
@@ -57,11 +85,16 @@ class ResolvedMarket:
         """Return a one-line summary of resolved parameters and their sources."""
         div_desc = self.provenance.dividends.replace("_", " ")
         return (
-            f"Used spot {self.spot_price:.4f} "
-            f"(source: {self.provenance.spot_price}); "
+            f"Used underlying {self.underlying_price:.4f} "
+            f"(source: {self.provenance.price}); "
             f"dividends: {div_desc}; "
             f"days_to_expiry={self.days_to_expiry}; r={self.risk_free_rate}"
         )
+
+    # Read-only aliases ----------------------------------------------------------
+    @property
+    def current_price(self) -> float:  # pragma: no cover - trivial alias
+        return self.underlying_price
 
 
 FillMode = Literal["missing", "vendor_only", "strict"]
@@ -155,14 +188,14 @@ def resolve_market(
             return field_vendor, "vendor"
         return None, "none"
     
-    # 2) Resolve spot price
-    spot, spot_src = pick(
-        inputs.spot_price, 
-        vendor.spot_price if vendor else None, 
-        "spot_price"
+    # 2) Resolve current/underlying price
+    price, price_src = pick(
+        inputs.underlying_price,
+        vendor.underlying_price if vendor else None,
+        "underlying_price",
     )
-    if spot is None or spot <= 0:
-        raise ValueError("No valid spot_price available (user or vendor)")
+    if price is None or price <= 0:
+        raise ValueError("No valid underlying_price available (user or vendor)")
     
     # 3) Resolve dividends with precedence:
     # user schedule > user yield > vendor schedule > vendor yield > none
@@ -181,7 +214,7 @@ def resolve_market(
         sched, yld, div_src = None, None, "none"
     
     # Build provenance
-    prov = Provenance(spot_price=spot_src, dividends=div_src)
+    prov = Provenance(price=price_src, dividends=div_src)
     
     # Build metadata
     meta = {
@@ -193,7 +226,7 @@ def resolve_market(
     return ResolvedMarket(
         risk_free_rate=inputs.risk_free_rate,
         days_to_expiry=days_to_expiry,
-        spot_price=spot,
+        underlying_price=price,
         valuation_date=valuation_date,
         expiry_date=expiry,
         dividend_yield=yld,

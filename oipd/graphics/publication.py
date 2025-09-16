@@ -16,8 +16,8 @@ def plot_rnd(
     kind: Literal["pdf", "cdf", "both"] = "both",
     figsize: Tuple[float, float] = (10, 5),
     title: Optional[str] = None,
-    show_spot_price: bool = True,
-    spot_price: Optional[float] = None,
+    show_current_price: bool = True,
+    current_price: Optional[float] = None,
     valuation_date: Optional[str] = None,
     expiry_date: Optional[str] = None,
     style: Literal["publication", "default"] = "publication",
@@ -41,10 +41,10 @@ def plot_rnd(
         Figure size in inches (width, height)
     title : str, optional
         Main title for the plot. If None, auto-generates based on kind
-    show_spot_price : bool, default True
-        Whether to show a vertical line at spot price
-    spot_price : float, optional
-        Spot price value for reference line
+    show_current_price : bool, default True
+        Whether to show a vertical line at the current price
+    current_price : float, optional
+        Current price value for reference line
     valuation_date : str, optional
         Current date for price annotation (e.g., "Mar 3, 2025")
     expiry_date : str, optional
@@ -211,24 +211,26 @@ def plot_rnd(
         plot_title = title
 
     # Optional: show current price
-    if show_spot_price and spot_price is not None:
+    if show_current_price and current_price is not None:
         # Format date string for annotation
         if valuation_date:
             date_text = valuation_date
         else:
             date_text = "current date"
 
-        price_text = f"Spot price on {date_text}\nis ${spot_price:,.2f}"
+        # Display current price label without the word "spot"
+        price_text = f"Price on {date_text}\nis ${current_price:,.2f}"
 
         # For overlay plots, add to legend; for individual plots, no legend
         if kind == "both":
             ax1.axvline(
-                x=spot_price,
+                x=current_price,
                 color=spot_price_color,
                 linestyle="--",
                 alpha=0.7,
                 linewidth=1.5,  # Thinner line
-                label=f"Spot: ${spot_price:,.2f}",
+                # Legend label aligns with on-chart text
+                label=f"Price: ${current_price:,.2f}",
             )
             # Add text annotation beside the line
             # Position text right above the x-axis
@@ -236,7 +238,7 @@ def plot_rnd(
             y_text_pos = y_min + (y_max - y_min) * 0.15  # 15% from bottom
 
             ax1.text(
-                spot_price
+                current_price
                 + (prices.max() - prices.min()) * 0.02,  # Slight offset to the right
                 y_text_pos,
                 price_text,
@@ -249,7 +251,7 @@ def plot_rnd(
         else:
             # Individual plots: spot price line without legend
             ax1.axvline(
-                x=spot_price,
+                x=current_price,
                 color=spot_price_color,
                 linestyle="--",
                 alpha=0.7,
@@ -263,7 +265,7 @@ def plot_rnd(
                 y_text_pos = 0.15  # 15% on CDF scale
 
             ax1.text(
-                spot_price + (prices.max() - prices.min()) * 0.02,
+                current_price + (prices.max() - prices.min()) * 0.02,
                 y_text_pos,
                 price_text,
                 color=spot_price_color,
@@ -273,15 +275,25 @@ def plot_rnd(
                 ha="left",
             )
 
-    # Apply axis limits if provided
+    # Apply axis limits if provided; otherwise keep auto limits but clamp left >= 0
     if xlim is not None:
         ax1.set_xlim(xlim)
+    else:
+        try:
+            # Trigger Matplotlib autoscale to compute limits
+            ax1.relim()
+            ax1.autoscale_view()
+            left, right = ax1.get_xlim()
+            if left < 0:
+                ax1.set_xlim(left=0, right=right)
+        except Exception:
+            pass
     if ylim is not None:
         ax1.set_ylim(ylim)
 
     # Format x-axis with thousands separator (e.g., 10,000), always applied
     try:
-        ax1.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
+        ax1.xaxis.set_major_formatter(ticker.StrMethodFormatter("{x:,.0f}"))
     except Exception:
         # Fallback silently if StrMethodFormatter is unavailable
         pass

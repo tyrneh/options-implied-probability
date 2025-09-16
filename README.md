@@ -13,8 +13,8 @@ While markets don't predict the future with certainty, under the efficient marke
 
 Traditionally, extracting these “risk-neutral densities” required institutional knowledge and resources, limited to specialist quant-desks. OIPD makes this capability accessible to everyone — delivering an institutional-grade tool in a simple, production-ready Python package.
 
-<p align="center">
-  <img src="example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block;" />
+<p align="center" style="margin-top: 50px;">
+  <img src="example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:32px;" />
 </p>
 
 

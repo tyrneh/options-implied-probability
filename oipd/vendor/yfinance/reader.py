@@ -48,7 +48,7 @@ class _YFinanceCache:
             with open(p, "rb") as f:
                 data = pickle.load(f)
             if datetime.now() - data["timestamp"] < self.ttl:
-                return data["options_data"], data["spot_price"]
+                return data["options_data"], data["underlying_price"]
         except Exception:
             p.unlink(missing_ok=True)
         return None
@@ -61,7 +61,7 @@ class _YFinanceCache:
                     {
                         "timestamp": datetime.now(),
                         "options_data": df,
-                        "spot_price": price,
+                        "underlying_price": price,
                     },
                     f,
                 )
@@ -114,7 +114,7 @@ class Reader(AbstractReader):
             hit = self._cache.get(ticker, expiry)
             if hit is not None:
                 df, price = hit
-                df.attrs["spot_price"] = price
+                df.attrs["underlying_price"] = price
                 
                 # Apply column mapping to cached data
                 column_mapping = {
@@ -175,7 +175,7 @@ class Reader(AbstractReader):
         final_df = self._combine_options_data(calls_df, puts_df)
         
         # Set metadata on final DataFrame
-        final_df.attrs["spot_price"] = price
+        final_df.attrs["underlying_price"] = price
         dividend_yield = self._extract_dividend_yield(tk.info)
         final_df.attrs["dividend_yield"] = dividend_yield
         final_df.attrs["dividend_schedule"] = (

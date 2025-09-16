@@ -11,14 +11,13 @@ import warnings
 from oipd.core import (
     calculate_pdf,
     calculate_cdf,
-    fit_kde,
     InvalidInputError,
     CalculationError,
 )
 from oipd.core.parity import preprocess_with_parity
 from oipd.io import CSVReader, DataFrameReader
 from oipd.vendor import get_reader
-from oipd.pricing.utils import prepare_dividends
+from oipd.pricing.utils import prepare_dividends, implied_dividend_yield_from_forward
 from oipd.market_inputs import (
     MarketInputs,
     VendorSnapshot,
@@ -41,11 +40,10 @@ class ModelParams:
     """Model / algorithm specific knobs that users may tune."""
 
     solver: Literal["brent", "newton"] = "brent"
-    fit_kde: bool = False
     american_to_european: bool = False  # placeholder for future functionality
     pricing_engine: Literal["black76", "bs"] = "black76"
     price_method: Literal["last", "mid"] = "last"
-    max_staleness_days: Optional[int] = 3
+    max_staleness_days: Optional[int] = 1
 
 
 @dataclass(frozen=True)
@@ -71,7 +69,37 @@ class RNDResult:
 
     def summary(self) -> str:
         """Return a one-line summary of resolved parameters and their sources."""
-        return self.market.summary()
+        # Build message in desired order, optionally including implied yield
+        underlying = self.market.underlying_price
+        price_src = self.market.provenance.price
+        div_src = self.market.provenance.dividends
+        days = self.market.days_to_expiry
+        r = self.market.risk_free_rate
+
+        # Dividends wording with explicit yield when available
+        if div_src == "vendor_yield" and self.market.dividend_yield is not None:
+            div_text = f"vendor yield of {self.market.dividend_yield:.4%}"
+        elif div_src == "user_yield" and self.market.dividend_yield is not None:
+            div_text = f"user yield of {self.market.dividend_yield:.4%}"
+        elif div_src == "vendor_schedule":
+            div_text = "vendor schedule"
+        elif div_src == "user_schedule":
+            div_text = "user schedule"
+        else:
+            div_text = "none"
+
+        msg = f"Used underlying {underlying:.4f} (source: {price_src}); dividends: {div_text}"
+
+        F = self.meta.get("forward_price")
+        if F is not None:
+            try:
+                q = self.implied_dividend_yield()
+                msg += f", implied annualised dividend yield of {q:.4%} (implied from put-call parity (via forward))"
+            except Exception:
+                pass
+
+        msg += f"; days_to_expiry={days}; r={r};"
+        return msg
 
     def prob_at_or_above(self, price: float) -> float:
         """
@@ -125,12 +153,42 @@ class RNDResult:
         cdf_at_price = np.interp(price, self.prices, self.cdf)
         return cdf_at_price
 
+    def implied_dividend_yield(self) -> float:
+        """
+        Compute the annualized implied continuous dividend yield q implied by
+        put-call parity when a forward was inferred.
+
+        Uses q = r - (1/T) * ln(F / S) with T in years, where:
+        - r is the risk-free rate from the resolved market
+        - F is the parity-inferred forward price captured in meta['forward_price']
+        - S is the resolved underlying price
+
+        Returns
+        -------
+        float
+            Implied continuous dividend yield. Raises ValueError if forward is
+            not available in metadata.
+        """
+        F = self.meta.get("forward_price")
+        if F is None:
+            raise ValueError(
+                "No parity-inferred forward available to imply dividend yield."
+            )
+        S = float(self.market.underlying_price)
+        if S <= 0:
+            raise ValueError("Invalid underlying price for implied yield calculation.")
+        T = float(self.market.days_to_expiry) / 365.0
+        if T <= 0:
+            raise ValueError("Non-positive time to expiry.")
+        r = float(self.market.risk_free_rate)
+        return implied_dividend_yield_from_forward(S, float(F), r, T)
+
     def plot(
         self,
         kind: Literal["pdf", "cdf", "both"] = "both",
         figsize: tuple[float, float] = (10, 5),
         title: Optional[str] = None,
-        show_spot_price: bool = True,
+        show_current_price: bool = True,
         style: Literal["publication", "default"] = "publication",
         source: Optional[str] = None,
         **kwargs,
@@ -146,8 +204,8 @@ class RNDResult:
             Figure size in inches (width, height)
         title : str, optional
             Main title for the plot. If None, auto-generates based on kind
-        show_spot_price : bool, default True
-            Whether to show a vertical line at spot price
+        show_current_price : bool, default True
+            Whether to show a vertical line at the current price
         style : {'publication', 'default'}, default 'publication'
             Visual style for the plots
         source : str, optional
@@ -162,8 +220,8 @@ class RNDResult:
         """
         from oipd.graphics import plot_rnd
 
-        # Extract spot price and formatted dates from resolved market
-        spot_price = self.market.spot_price
+        # Extract current/underlying price and formatted dates from resolved market
+        underlying_price = self.market.underlying_price
 
         # Format dates nicely from resolved market parameters
         valuation_date = None
@@ -183,8 +241,8 @@ class RNDResult:
             kind=kind,
             figsize=figsize,
             title=title,
-            show_spot_price=show_spot_price,
-            spot_price=spot_price,
+            show_current_price=show_current_price,
+            current_price=underlying_price,
             valuation_date=valuation_date,
             expiry_date=expiry_date,
             style=style,
@@ -256,7 +314,7 @@ class TickerSource:
         except TypeError:
             self._reader = reader_cls()
 
-        self._spot_price: Optional[float] = None
+        self._underlying_price: Optional[float] = None
         self._dividend_yield: Optional[float] = None
         self._dividend_schedule: Optional[pd.DataFrame] = None
 
@@ -265,17 +323,17 @@ class TickerSource:
         ticker_expiry = f"{self._ticker}:{self._expiry}"
         df = self._reader.read(ticker_expiry, column_mapping=self._column_mapping)
 
-        # Extract spot price from DataFrame metadata
-        self._spot_price = df.attrs.get("spot_price")
+        # Extract current/underlying price from DataFrame metadata
+        self._underlying_price = df.attrs.get("underlying_price")
         self._dividend_yield = df.attrs.get("dividend_yield")
         self._dividend_schedule = df.attrs.get("dividend_schedule")
 
         return df
 
     @property
-    def spot_price(self) -> Optional[float]:
-        """Get the spot price fetched from yfinance"""
-        return self._spot_price
+    def underlying_price(self) -> Optional[float]:
+        """Get the current underlying price fetched from vendor"""
+        return self._underlying_price
 
     @property
     def dividend_yield(self) -> Optional[float]:
@@ -302,7 +360,7 @@ def _estimate(
 
     if model.pricing_engine == "bs":
         spot_eff, q_eff = prepare_dividends(
-            spot=resolved_market.spot_price,
+            underlying=resolved_market.underlying_price,
             dividend_schedule=resolved_market.dividend_schedule,
             dividend_yield=resolved_market.dividend_yield,
             r=resolved_market.risk_free_rate,
@@ -310,13 +368,22 @@ def _estimate(
         )
         forward_price = None
     else:
-        spot_eff = resolved_market.spot_price
+        spot_eff = resolved_market.underlying_price
         q_eff = None
         forward_price = None
 
     # Apply put-call parity preprocessing if beneficial
-    discount_factor = np.exp(-resolved_market.risk_free_rate * resolved_market.days_to_expiry / 365.0)
+    discount_factor = np.exp(
+        -resolved_market.risk_free_rate * resolved_market.days_to_expiry / 365.0
+    )
     options_data = preprocess_with_parity(options_data, spot_eff, discount_factor)
+
+    # Capture parity-inferred forward if available (applies to both engines)
+    if "F_used" in options_data.columns:
+        try:
+            forward_price = float(options_data["F_used"].iloc[0])
+        except Exception:
+            pass
 
     if model.pricing_engine == "black76":
         if "F_used" not in options_data.columns:
@@ -385,11 +452,7 @@ def _estimate(
     except Exception as exc:
         raise CalculationError(f"Unexpected error during PDF calculation: {exc}")
 
-    # 2. Optionally smooth via KDE
-    if model.fit_kde:
-        pdf_point_arrays = fit_kde(pdf_point_arrays)
-
-    # 3. Convert PDF → CDF
+    # 2. Convert PDF → CDF
     price_array, pdf_array = cast(tuple[np.ndarray, np.ndarray], pdf_point_arrays)
     try:
         _, cdf_array = calculate_cdf(
@@ -399,6 +462,12 @@ def _estimate(
         raise CalculationError(f"Failed to compute CDF: {exc}")
 
     meta = {"model_params": model}
+    # If we inferred a forward via parity, record it for downstream consumers
+    if forward_price is not None:
+        try:
+            meta["forward_price"] = float(forward_price)
+        except Exception:
+            pass
     return price_array, pdf_array, cdf_array, meta
 
 
@@ -451,7 +520,7 @@ class RND:
         snapshot = VendorSnapshot(
             asof=datetime.now(),
             vendor=vendor,
-            spot_price=source.spot_price,
+            underlying_price=source.underlying_price,
             dividend_yield=source.dividend_yield,
             dividend_schedule=source.dividend_schedule,
         )
@@ -480,7 +549,7 @@ class RND:
     ) -> RNDResult:
         """Load options data from CSV and estimate RND.
 
-        In CSV mode, spot_price and dividend information must be provided
+        In CSV mode, underlying_price and dividend information must be provided
         by the user in the market parameters.
         """
         # Read chain from CSV
@@ -506,7 +575,7 @@ class RND:
     ) -> RNDResult:
         """Load options data from DataFrame and estimate RND.
 
-        Similar to from_csv, spot_price and dividend information must be
+        Similar to from_csv, underlying_price and dividend information must be
         provided by the user in the market parameters.
         """
         # Process DataFrame
@@ -572,7 +641,7 @@ class RND:
             Stock ticker symbol (e.g., "AAPL", "SPY")
         market : MarketInputs
             Market parameters including expiry date and risk-free rate.
-            If spot_price is not provided, it will be fetched automatically.
+            If underlying_price is not provided, it will be fetched automatically.
         model : ModelParams, optional
             Model configuration parameters
         vendor : str, default "yfinance"
@@ -611,7 +680,7 @@ class RND:
         >>> # Override with your own price
         >>> market = MarketInputs(
         ...     valuation_date=date.today(),
-        ...     spot_price=150.0,
+        ...     underlying_price=150.0,
         ...     expiry_date=date(2025, 1, 17),
         ...     risk_free_rate=0.045
         ... )

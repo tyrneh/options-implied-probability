@@ -18,7 +18,7 @@ def generate_pdf_figure(
     *,
     security_ticker: Optional[str] = None,
     expiry_date: Optional[datetime] = None,
-    spot_price: Optional[Union[float, bool]] = False,
+    current_price: Optional[Union[float, bool]] = False,
     title: Optional[str] = None,
 ) -> Figure:
     """Generate a PDF figure with flexible parameters.
@@ -31,8 +31,8 @@ def generate_pdf_figure(
         Ticker symbol for the title
     expiry_date : datetime, optional
         Expiry date for the title
-    spot_price : float or False, optional
-        Spot price to show as vertical line
+    current_price : float or False, optional
+        Current price to show as vertical line
     title : str, optional
         Custom title (overrides auto-generated title)
     """
@@ -60,15 +60,15 @@ def generate_pdf_figure(
     # format y-axis
     ax.set_ylim(bottom=0)
 
-    if spot_price:
-        label = f"{spot_price:.2f}"
+    if current_price:
+        label = f"{current_price:.2f}"
         line = ax.axvline(
-            x=spot_price, color="green", linestyle=":", label=label, linewidth=0.75
+            x=current_price, color="green", linestyle=":", label=label, linewidth=0.75
         )
         # calculate the offset so that it is centered in the current range
         bottom, top = ax.get_ylim()
         label_y_offset = -0.5 + (top - bottom) * 0.2
-        _label_line_no_warnings(line, x=spot_price, yoffset=label_y_offset)
+        _label_line_no_warnings(line, x=current_price, yoffset=label_y_offset)
 
     return fig
 
@@ -78,7 +78,7 @@ def generate_cdf_figure(
     *,
     security_ticker: Optional[str] = None,
     expiry_date: Optional[datetime] = None,
-    spot_price: Optional[Union[float, bool]] = False,
+    current_price: Optional[Union[float, bool]] = False,
     quartiles: Optional[bool] = False,
     title: Optional[str] = None,
 ) -> Figure:
@@ -94,8 +94,8 @@ def generate_cdf_figure(
         Ticker symbol for the title
     expiry_date : datetime, optional
         Expiry date for the title
-    spot_price : float or False, optional
-        Spot price to show as vertical line
+    current_price : float or False, optional
+        Current price to show as vertical line
     quartiles : bool, optional
         Whether to show quartile lines
     title : str, optional
@@ -132,12 +132,12 @@ def generate_cdf_figure(
     ax.set_yticks(linspace(0, 1, 11))
     ax.yaxis.set_minor_locator(MultipleLocator(0.05))
 
-    if spot_price:
-        label = f"{spot_price:.2f}"
+    if current_price:
+        label = f"{current_price:.2f}"
         line = ax.axvline(
-            x=spot_price, color="green", linestyle=":", label=label, linewidth=0.75
+            x=current_price, color="green", linestyle=":", label=label, linewidth=0.75
         )
-        _label_line_no_warnings(line, x=spot_price, yoffset=0.35)
+        _label_line_no_warnings(line, x=current_price, yoffset=0.35)
     if quartiles:
         quartile_bounds = calculate_quartiles(density_function)
         x_start, x_end = ax.get_xlim()

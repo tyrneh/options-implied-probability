@@ -79,7 +79,7 @@ MarketInputs(
     expiry_date: date,              # Option 2: expiration date (auto calculates days difference between expiry and valuation dates)
 
     # Market data - optional for from_ticker() mode, as they can be auto fetched:
-    spot_price: float,              # Spot price 
+    underlying_price: float,        # Current price (spot S or futures F) 
     #   Dividends - provide ONE of these:
     dividend_yield: float,          # Option 1: Annual dividend yield (e.g., 0.02 for 2%)
     dividend_schedule: DataFrame,   # Option 2: Discrete dividend payments, requires 'ex_date' & 'amount' columns
@@ -93,7 +93,6 @@ OPTIONAL configuration object that controls the algorithms used in the RND calcu
 ```python
 ModelParams(
     solver             = "newton" | "brent",   # IV root-finder; defaults to newton
-    fit_kde            = False,                # smooth tails
     pricing_engine     = "black76" | "bs",     # default forward-based Black-76
     price_method       = "last" | "mid",       # defaults to 'last'; can use mid-price calculated as `(bid + ask) / 2`
     max_staleness_days = 3,                   # filter options older than N calendar days from valuation_date (default: 3)
@@ -196,8 +195,7 @@ The process of generating the PDFs and CDFs is as follows:
 3. Using B-spline, we fit a curve-of-best-fit onto the resulting IVs over the full range of strike prices[^3]. Thus, we have extracted a continuous model from discrete IV observations - this is called the volatility smile
 4. From the volatility smile, we use the same pricing model to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
 5. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^4]
-6. We can fit a KDE onto the resulting PDF, which in some cases will improve edge-behavior at very high or very low prices. This is specified by the argument `fit_kernal_pdf`
-7. Once we have the PDF, we can calculate the CDF
+6. Once we have the PDF, we can calculate the CDF
 
 [^1]: We chose to use last price instead of calculating the mid-price given the bid-ask spread. This is because Yahoo Finance, a common source for options chain data, often lacks bid-ask data. See for example [Apple options](https://finance.yahoo.com/quote/AAPL/options/)
 [^2]: We convert from price-space to IV-space, and then back to price-space as described in step 4. See this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/) for a breakdown of why we do this double conversion
@@ -222,7 +220,7 @@ MarketInputs (user) + VendorSnapshot (fetched) → ResolvedMarket (merged)
 ### Key Principles
 
 1. **MarketInputs is immutable** - It's a `@dataclass(frozen=True)` that is never modified
-2. **Auto-fetched data lives in the result** - Access via `est.market.spot_price`
+2. **Auto-fetched data lives in the result** - Access via `est.market.underlying_price`
 3. **Provenance tracking** - The result knows where each value came from (user vs vendor)
 4. **Resolution modes** - Different data sources use different resolution strategies
 
@@ -230,7 +228,7 @@ MarketInputs (user) + VendorSnapshot (fetched) → ResolvedMarket (merged)
 
 Different data sources use different resolution strategies:
 
-- **`from_ticker()`**: Uses `"missing"` mode - auto-fetches spot price and dividends from vendors when not provided by user
+- **`from_ticker()`**: Uses `"missing"` mode - auto-fetches current price and dividends from vendors when not provided by user
 - **`from_csv()` / `from_dataframe()`**: Uses `"strict"` mode - all market data must be provided by user, no auto-fetching
 - **`"vendor_only"`**: Internal mode that ignores user values (not currently exposed to users)
 
@@ -248,8 +246,8 @@ market = MarketInputs(
 est = RND.from_ticker("SPY", market)
 
 # ✅ CORRECT: Access fetched values through result
-print(f"Spot price: ${est.market.spot_price:.2f}")
-print(f"Source: {est.market.provenance.spot_price}")  # "vendor"
+print(f"Current price: ${est.market.underlying_price:.2f}")
+print(f"Source: {est.market.provenance.price}")  # "vendor"
 print(est.summary())  # One-line summary of all sources
 ```
 

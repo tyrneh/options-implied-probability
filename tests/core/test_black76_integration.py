@@ -30,7 +30,7 @@ def test_black76_estimator_with_puts():
     market = MarketInputs(
         valuation_date=date(2024, 1, 1),
         expiry_date=date(2024, 1, 1) + timedelta(days=int(T * 365)),
-        spot_price=S,
+        underlying_price=S,
         risk_free_rate=r,
     )
     result = RND.from_dataframe(df, market, model=ModelParams(pricing_engine="black76"))
@@ -42,7 +42,7 @@ def test_black76_requires_puts():
     market = MarketInputs(
         valuation_date=date(2024, 1, 1),
         expiry_date=date(2024, 1, 1) + timedelta(days=int(T * 365)),
-        spot_price=S,
+        underlying_price=S,
         risk_free_rate=r,
     )
     with pytest.raises(ValueError):

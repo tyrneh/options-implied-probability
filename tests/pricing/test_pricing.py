@@ -84,7 +84,7 @@ def test_discrete_vs_continuous_equivalence():
     from oipd.pricing.utils import prepare_dividends
 
     spot_a, q_a = prepare_dividends(
-        spot=S0,
+        underlying=S0,
         dividend_schedule=schedule,
         r=r,
         dividend_yield=None,

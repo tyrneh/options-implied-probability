@@ -7,7 +7,6 @@ from scipy.integrate import simpson
 from scipy import interpolate
 from scipy.interpolate import interp1d
 from scipy.optimize import brentq
-from scipy.stats import norm, gaussian_kde
 
 from oipd.pricing import get_pricer
 from oipd.pricing.black_scholes import (
@@ -35,51 +34,9 @@ class CalculationError(OIPDError):
     pass
 
 
-def fit_kde(pdf_point_arrays: tuple) -> tuple:
-    """
-    Fits a Kernel Density Estimation (KDE) to the given implied probability density function (PDF).
-
-    Args:
-        pdf_point_arrays (tuple): A tuple containing:
-            - A numpy array of price values
-            - A numpy array of PDF values
-
-    Returns:
-        tuple: (prices, fitted_pdf), where:
-            - prices: The original price array
-            - fitted_pdf: The KDE-fitted probability density values
-
-    Raises:
-        InvalidInputError: If input arrays are empty or have mismatched lengths
-    """
-    # Validate input
-    if not isinstance(pdf_point_arrays, tuple) or len(pdf_point_arrays) != 2:
-        raise InvalidInputError("pdf_point_arrays must be a tuple of two arrays")
-
-    # Unpack tuple
-    prices, pdf_values = pdf_point_arrays
-
-    if len(prices) == 0 or len(pdf_values) == 0:
-        raise InvalidInputError("Input arrays cannot be empty")
-
-    if len(prices) != len(pdf_values):
-        raise InvalidInputError(
-            f"Price and PDF arrays must have same length. Got {len(prices)} and {len(pdf_values)}"
-        )
-
-    # Normalize PDF to ensure it integrates to 1
-    pdf_values /= np.trapz(pdf_values, prices)  # Use trapezoidal rule for normalization
-
-    try:
-        # Fit KDE using price points weighted by the normalized PDF
-        kde = gaussian_kde(prices, weights=pdf_values)
-
-        # Generate KDE-fitted PDF values
-        fitted_pdf = kde.pdf(prices)
-    except Exception as e:
-        raise CalculationError(f"Failed to fit KDE: {str(e)}")
-
-    return (prices, fitted_pdf)
+"""
+Core routines for computing option-implied PDF/CDF and related helpers.
+"""
 
 
 def calculate_pdf(
@@ -99,7 +56,8 @@ def calculate_pdf(
     Args:
         options_data: a DataFrame containing options price data with
             cols ['strike', 'last_price']
-        underlying_price: spot price (Black-Scholes) or forward price (Black-76)
+        underlying_price: current price of the instrument — cash spot S for
+            Black–Scholes or current futures price F for Black‑76
         days_to_expiry: the number of days in the future to estimate the
             price probability density at
         risk_free_rate: annual risk free rate in nominal terms
@@ -145,7 +103,7 @@ def calculate_pdf(
         )
 
     # options_data, min_strike, max_strike = _extrapolate_call_prices(
-    #     options_data, spot_price
+    #     options_data, underlying_price
     # )
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
@@ -258,7 +216,7 @@ def calculate_quartiles(
 
 
 def _extrapolate_call_prices(
-    options_data: DataFrame, spot_price: float
+    options_data: DataFrame, underlying_price: float
 ) -> tuple[DataFrame, int, int]:
     """Extrapolate the price of the call options to strike prices outside
     the range of options_data. Extrapolation is done to zero and twice the
@@ -268,7 +226,7 @@ def _extrapolate_call_prices(
     Args:
         options_data: a DataFrame containing options price data with
             cols ['strike', 'last_price']
-        spot_price: the current price of the security
+        underlying_price: the current price of the instrument
 
     Returns:
         the extended options_data DataFrame
@@ -276,7 +234,7 @@ def _extrapolate_call_prices(
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
     lower_extrapolation = DataFrame(
-        {"strike": p, "last_price": spot_price - p} for p in range(0, min_strike)
+        {"strike": p, "last_price": underlying_price - p} for p in range(0, min_strike)
     )
     upper_extrapolation = DataFrame(
         {
@@ -514,7 +472,7 @@ def _create_pdf_point_arrays(
 
     Args:
         denoised_iv: (x,y) observations of the denoised IV
-        spot_price: the current price of the security
+        underlying_price: the current price of the instrument
         days_to_expiry: the number of days in the future to estimate the
             price probability density at
         risk_free_rate: the current annual risk free interest rate, nominal terms

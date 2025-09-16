@@ -5,7 +5,6 @@ from oipd.core import (
     calculate_pdf,
     calculate_cdf,
     calculate_quartiles,
-    fit_kde,
     OIPDError,
     InvalidInputError,
     CalculationError,
@@ -28,7 +27,6 @@ __all__ = [
     "calculate_pdf",
     "calculate_cdf",
     "calculate_quartiles",
-    "fit_kde",
     # Exceptions
     "OIPDError",
     "InvalidInputError",

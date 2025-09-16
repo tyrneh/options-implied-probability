@@ -8,9 +8,7 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
-__all__ = [
-    "prepare_dividends",
-]
+__all__ = ["prepare_dividends", "implied_dividend_yield_from_forward"]
 
 
 def _present_value(schedule: pd.DataFrame, r: float, valuation_date: date) -> float:
@@ -24,19 +22,19 @@ def _present_value(schedule: pd.DataFrame, r: float, valuation_date: date) -> fl
 
 
 def prepare_dividends(
-    spot: float,
+    underlying: float,
     *,
     dividend_schedule: Optional[pd.DataFrame] = None,
     dividend_yield: Optional[float] = None,
     r: float,
     valuation_date: date,
 ) -> Tuple[float, float]:
-    """Return *(adjusted_spot, effective_q)* according to the user's inputs.
+    """Return ``(adjusted_underlying, effective_q)`` according to the user's inputs.
 
     Rules
     -----
     1. **Discrete schedule only** → subtract PV → ``(S*, 0.0)``
-    2. **Continuous yield only**  → no spot change → ``(S, q)``
+    2. **Continuous yield only**  → no price change → ``(S, q)``
     3. **Both provided**          → *error* (ambiguous)
     4. **Neither provided**       → ``(S, 0.0)``
     """
@@ -49,37 +47,42 @@ def prepare_dividends(
         if not {"ex_date", "amount"}.issubset(dividend_schedule.columns):
             raise ValueError("schedule must contain 'ex_date' and 'amount' columns")
         pv = _present_value(dividend_schedule, r, valuation_date)
-        return spot - pv, 0.0
+        return underlying - pv, 0.0
 
     # Continuous yield path ----------------------------------------------
-    return spot, float(dividend_yield or 0.0)
+    return underlying, float(dividend_yield or 0.0)
 
 
-# ----------------------------------------------------------------------
-# Back-compat temporary alias (will be removed in a future major release)
-# ----------------------------------------------------------------------
-
-
-def adjust_spot_for_dividends(  # pragma: no cover – deprecated shim
-    spot: float,
-    schedule: Optional[pd.DataFrame],
+def implied_dividend_yield_from_forward(
+    underlying: float,
+    forward: float,
     r: float,
-    valuation_date: date,
-):
-    """Deprecated – use *prepare_dividends()* instead."""
-    import warnings
+    T_years: float,
+) -> float:
+    """Compute implied continuous dividend yield from forward.
 
-    warnings.warn(
-        "'adjust_spot_for_dividends' is deprecated; use 'prepare_dividends' which "
-        "also returns the effective q.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    adj_spot, _ = prepare_dividends(
-        spot,
-        dividend_schedule=schedule,
-        dividend_yield=None,
-        r=r,
-        valuation_date=valuation_date,
-    )
-    return adj_spot
+    q = r - ln(F / S) / T
+
+    Parameters
+    ----------
+    underlying : float
+        Current underlying price S
+    forward : float
+        Forward price F implied from put-call parity
+    r : float
+        Continuously compounded risk-free rate
+    T_years : float
+        Time to expiry in years
+
+    Returns
+    -------
+    float
+        Implied continuous dividend yield q
+    """
+    if underlying <= 0:
+        raise ValueError("Invalid underlying for implied yield calculation.")
+    if forward <= 0:
+        raise ValueError("Invalid forward for implied yield calculation.")
+    if T_years <= 0:
+        raise ValueError("Non-positive time to expiry.")
+    return float(r - np.log(forward / underlying) / T_years)
