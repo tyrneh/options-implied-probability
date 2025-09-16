@@ -88,13 +88,21 @@ class RNDResult:
         else:
             div_text = "none"
 
-        msg = f"Used underlying {underlying:.4f} (source: {price_src}); dividends: {div_text}"
+        msg = f"Underlying price {underlying:.4f} (source: {price_src})"
 
         F = self.meta.get("forward_price")
         if F is not None:
             try:
+                msg += f", implied forward price {float(F):.4f}"
+            except Exception:
+                pass
+
+        msg += f"; dividends: {div_text}"
+
+        if F is not None:
+            try:
                 q = self.implied_dividend_yield()
-                msg += f", implied annualised dividend yield of {q:.4%} (implied from put-call parity (via forward))"
+                msg += f", forward-implied annualised dividend yield of {q:.4%}"
             except Exception:
                 pass
 
