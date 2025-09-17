@@ -28,9 +28,9 @@ pip install oipd
 
 #### Usage
 
-<video src="examples/OIPDwalkthrough.mp4" autoplay loop muted playsinline controls></video>
+<img src="examples/OIPDwalkthrough.gif" alt="OIPD walkthrough" style="width:100%; max-width:1200px; height:auto; display:block;" />
 
-```python
+```pythongit statu
 from oipd import RND, MarketInputs
 from datetime import date
 
