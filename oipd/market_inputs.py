@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from typing import Optional, Literal, Dict, Any
+import warnings
+import numpy as np
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,10 @@ class MarketInputs:
     # Required fields first
     risk_free_rate: float
     valuation_date: date
+    # How the provided risk-free rate is quoted
+    # 'annualized' means simple annualized nominal rate on ACT/365 for the horizon
+    # 'continuous' means continuously compounded rate
+    risk_free_rate_mode: Literal["annualized", "continuous"] = "annualized"
     
     # Optional fields second
     days_to_expiry: Optional[int] = None
@@ -131,7 +137,6 @@ def resolve_market(
         If required parameters cannot be resolved
     """
     # 1) Resolve time specification with new logic
-    import warnings
     
     valuation_date = inputs.valuation_date
     if isinstance(valuation_date, datetime):
@@ -161,7 +166,6 @@ def resolve_market(
     elif inputs.days_to_expiry is not None:
         days_to_expiry = inputs.days_to_expiry
         # Calculate expiry_date from valuation_date + days_to_expiry
-        from datetime import timedelta
         expiry = valuation_date + timedelta(days=days_to_expiry)
     else:
         raise ValueError(
@@ -223,8 +227,19 @@ def resolve_market(
         "fill_mode": mode,
     }
     
+    # 4) Resolve and normalize risk-free rate to continuous compounding
+    #    The rest of the codebase expects a continuous rate used in exp(-r * T)
+    y = float(inputs.risk_free_rate)
+    if inputs.risk_free_rate_mode == "annualized":
+        T = days_to_expiry / 365.0
+        # Simple ACT/365 money-market style annualization → convert to continuous
+        # DF_simple = 1 / (1 + y * T)  ⇒  r_cont = -ln(DF_simple) / T = ln(1 + y*T)/T
+        r_cont = float(np.log1p(y * T) / T)
+    else:
+        r_cont = y
+
     return ResolvedMarket(
-        risk_free_rate=inputs.risk_free_rate,
+        risk_free_rate=r_cont,
         days_to_expiry=days_to_expiry,
         underlying_price=price,
         valuation_date=valuation_date,
@@ -232,5 +247,10 @@ def resolve_market(
         dividend_yield=yld,
         dividend_schedule=sched,
         provenance=prov,
-        source_meta=meta,
+        source_meta={
+            **meta,
+            "risk_free_rate_mode": inputs.risk_free_rate_mode,
+            "risk_free_rate_input": inputs.risk_free_rate,
+            "risk_free_rate_continuous": r_cont,
+        },
     )

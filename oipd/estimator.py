@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, Optional, Dict, Literal, cast, Any
 from datetime import datetime
+from contextlib import contextmanager
 
 import pandas as pd
 import numpy as np
@@ -487,9 +488,36 @@ def _estimate(
 class RND:
     """High-level, user-friendly estimator of the option-implied risk-neutral density (RND)."""
 
-    def __init__(self, model: Optional[ModelParams] = None):
+    def __init__(self, model: Optional[ModelParams] = None, *, verbose: bool = True):
         self.model = model or ModelParams()
         self._result: Optional[RNDResult] = None
+        self._verbose: bool = verbose
+
+    # ------------------------------------------------------------------
+    # Warning control
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    @contextmanager
+    def _suppress_oipd_warnings(suppress: bool):
+        """Context manager to optionally silence UserWarnings from this package.
+
+        When `suppress` is True, filters out UserWarning emitted from modules under
+        the `oipd` package so demos/notebooks are not cluttered. Errors are never
+        suppressed.
+        """
+        if not suppress:
+            # Do nothing – propagate warnings normally
+            yield
+            return
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                category=UserWarning,
+                module=r"oipd(\.|$)",
+            )
+            yield
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -537,8 +565,11 @@ class RND:
 
     def fit(self, source: DataSource, resolved_market: ResolvedMarket) -> "RND":
         """Estimate the RND from the given *DataSource* and resolved market parameters."""
-        options_data = source.load()
-        prices, pdf, cdf, meta = _estimate(options_data, resolved_market, self.model)
+        with self._suppress_oipd_warnings(suppress=not self._verbose):
+            options_data = source.load()
+            prices, pdf, cdf, meta = _estimate(
+                options_data, resolved_market, self.model
+            )
         self._result = RNDResult(
             prices=prices, pdf=pdf, cdf=cdf, market=resolved_market, meta=meta
         )
@@ -554,6 +585,7 @@ class RND:
         *,
         model: Optional[ModelParams] = None,
         column_mapping: Optional[Dict[str, str]] = None,
+        verbose: bool = True,
     ) -> RNDResult:
         """Load options data from CSV and estimate RND.
 
@@ -562,13 +594,14 @@ class RND:
         """
         # Read chain from CSV
         source = CSVSource(path, column_mapping=column_mapping)
-        chain = source.load()
+        with cls._suppress_oipd_warnings(suppress=not verbose):
+            chain = source.load()
 
-        # Resolve market parameters (strict mode - no vendor)
-        resolved = resolve_market(market, vendor=None, mode="strict")
+            # Resolve market parameters (strict mode - no vendor)
+            resolved = resolve_market(market, vendor=None, mode="strict")
 
-        # Run estimation
-        prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
+            # Run estimation
+            prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
 
         return RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
@@ -580,6 +613,7 @@ class RND:
         *,
         model: Optional[ModelParams] = None,
         column_mapping: Optional[Dict[str, str]] = None,
+        verbose: bool = True,
     ) -> RNDResult:
         """Load options data from DataFrame and estimate RND.
 
@@ -588,13 +622,14 @@ class RND:
         """
         # Process DataFrame
         source = DataFrameSource(df, column_mapping=column_mapping)
-        chain = source.load()
+        with cls._suppress_oipd_warnings(suppress=not verbose):
+            chain = source.load()
 
-        # Resolve market parameters (strict mode - no vendor)
-        resolved = resolve_market(market, vendor=None, mode="strict")
+            # Resolve market parameters (strict mode - no vendor)
+            resolved = resolve_market(market, vendor=None, mode="strict")
 
-        # Run estimation
-        prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
+            # Run estimation
+            prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
 
         return RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
@@ -636,7 +671,8 @@ class RND:
         model: Optional[ModelParams] = None,
         vendor: str = "yfinance",
         fill: FillMode = "missing",
-        echo: bool = True,
+        echo: Optional[bool] = None,
+        verbose: bool = True,
         cache_enabled: bool = True,
         cache_ttl_minutes: int = 15,
     ) -> RNDResult:
@@ -703,15 +739,16 @@ class RND:
         expiry = market.expiry_date.strftime("%Y-%m-%d")
 
         # Fetch chain and vendor snapshot
-        chain, snapshot = cls._fetch_vendor_snapshot(
-            ticker, expiry, vendor, cache_enabled, cache_ttl_minutes
-        )
+        with cls._suppress_oipd_warnings(suppress=not verbose):
+            chain, snapshot = cls._fetch_vendor_snapshot(
+                ticker, expiry, vendor, cache_enabled, cache_ttl_minutes
+            )
 
-        # Resolve market parameters by merging user inputs with vendor snapshot
-        resolved = resolve_market(market, snapshot, mode=fill)
+            # Resolve market parameters by merging user inputs with vendor snapshot
+            resolved = resolve_market(market, snapshot, mode=fill)
 
-        # Run estimation
-        prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
+            # Run estimation
+            prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
 
         # Add ticker and vendor info to metadata
         meta.update(
@@ -724,8 +761,11 @@ class RND:
 
         result = RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
+        # Determine whether to echo summary
+        echo_flag = verbose if echo is None else echo
+
         # Print summary if requested
-        if echo:
+        if echo_flag:
             print(result.summary())
 
         return result

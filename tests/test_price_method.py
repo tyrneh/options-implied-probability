@@ -96,6 +96,7 @@ class TestEndToEndPriceMethod:
             expiry_date=date(2024, 2, 1),
             underlying_price=100.0,
             risk_free_rate=0.05,
+            risk_free_rate_mode="continuous",
         )
 
     def test_rnd_from_dataframe_last_price(self, sample_options_data, market_inputs):
@@ -278,6 +279,7 @@ class TestRobustDataHandling:
             expiry_date=date(2024, 2, 1),
             underlying_price=100.0,
             risk_free_rate=0.05,
+            risk_free_rate_mode="continuous",
         )
         
         with warnings.catch_warnings(record=True) as w:
@@ -306,6 +308,7 @@ class TestRobustDataHandling:
             expiry_date=date(2024, 2, 1),
             underlying_price=100.0,
             risk_free_rate=0.05,
+            risk_free_rate_mode="continuous",
         )
         
         model = ModelParams(price_method="mid", pricing_engine="bs")

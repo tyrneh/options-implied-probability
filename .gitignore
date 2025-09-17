@@ -8,6 +8,7 @@ __pycache__/
 *.csv
 example_script.py
 .yfinance_cache/*
+.yfinance_cache/
 
 # C extensions
 *.so
@@ -155,6 +156,5 @@ dmypy.json
 # Archive 
 README_ARCHIVE.md
 example_new.py
-example.ipynb
 exampleOil.py
-
+examples/animation.ipynb

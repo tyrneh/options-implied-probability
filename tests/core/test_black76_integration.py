@@ -32,6 +32,7 @@ def test_black76_estimator_with_puts():
         expiry_date=date(2024, 1, 1) + timedelta(days=int(T * 365)),
         underlying_price=S,
         risk_free_rate=r,
+        risk_free_rate_mode="continuous",
     )
     result = RND.from_dataframe(df, market, model=ModelParams(pricing_engine="black76"))
     assert result.pdf is not None
@@ -44,6 +45,7 @@ def test_black76_requires_puts():
         expiry_date=date(2024, 1, 1) + timedelta(days=int(T * 365)),
         underlying_price=S,
         risk_free_rate=r,
+        risk_free_rate_mode="continuous",
     )
     with pytest.raises(ValueError):
         RND.from_dataframe(df, market, model=ModelParams(pricing_engine="black76"))

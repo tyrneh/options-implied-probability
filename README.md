@@ -35,7 +35,8 @@ from datetime import date
 market = MarketInputs(
     valuation_date=date.today(),      # the "as-of" date for the analysis
     expiry_date=date(2025, 12, 19),   # option expiry you care about
-    risk_free_rate=0.04,              # risk-free rate
+    risk_free_rate=0.04,              # risk-free rate (annualized by default)
+    # risk_free_rate_mode="continuous"  # set if your input is already continuous
 )
 
 # 2 - run estimator, auto fetching data from Yahoo Finance
@@ -44,7 +45,7 @@ est = RND.from_ticker("AAPL", market)
 # 3 ─ access results and plots
 est.prob_at_or_above(120)               # P(price >= $120)
 est.prob_below(100)                     # P(price < $100)
-est.plot()                              # plot PDF + CDF 
+est.plot()                              # plot probability and cumulative distribution functions 
 ```
 
 OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.

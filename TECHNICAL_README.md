@@ -50,7 +50,8 @@ print(expiry_dates[:3])  # ['2025-01-17', '2025-01-24', '2025-02-21']
 market = MarketInputs(
     valuation_date=date.today(),      # required: analysis date
     expiry_date=date(2025, 1, 17),
-    risk_free_rate=0.04
+    risk_free_rate=0.04,              # treated as annualized nominal by default
+    # risk_free_rate_mode="continuous"  # set this if your input is continuous
 )
 
 est = RND.from_ticker("AAPL", market)
@@ -73,6 +74,7 @@ Configuration object that defines the market environment and time horizon for th
 MarketInputs(
     risk_free_rate: float,          # Required
     valuation_date: date,           # Required 
+    risk_free_rate_mode: Literal["annualized", "continuous"] = "annualized",  # How r is quoted
 
     # Time horizon - provide ONE of these:
     days_to_expiry: int,            # Option 1: days until expiry  
@@ -158,6 +160,14 @@ When both calls and puts are available (indicated by `option_type` column), OIPD
 This preprocessing happens automatically when `option_type` column is detected and improves the accuracy of the risk-neutral density estimation.
 
 **Note:** For vendor data sources (like yfinance), the `option_type` column is created automatically when combining calls and puts - no column mapping needed for this field.
+
+### Note on risk-free rate conventions
+
+- Internally, OIPD uses continuous compounding (discounting with `exp(-r * T)`).
+- Control how your input rate is interpreted via `MarketInputs.risk_free_rate_mode`:
+  - `"annualized"` (default): treats `risk_free_rate` as a simple annualized yield on ACT/365 for the specific horizon T; converts to continuous using `r_cont = ln(1 + y*T)/T`.
+  - `"continuous"`: takes `risk_free_rate` as already continuous and uses it directly.
+- This aligns with common front-end Treasury quoting (annualized nominal). If your system already produces continuous rates, set `risk_free_rate_mode="continuous"`.
 
 Returns a fitted instance exposing
 
