@@ -231,14 +231,15 @@ print(est.summary())  # One-line summary of all sources
 
 ---
 
-## 6. Roadmap
+## 6. Current Roadmap
 
 Convenience features:
 - integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
 
-
+Algorithmic improvements:
+- implement no-arbitrage checks 
+- fit IV smile using SABR model
 - American-option de-Americanisation module
-- alternative volatility models (Heston, SABR)
 - full term-structure surface (`RNDTermSurface`)
 
 Pull requests welcome! Reach out on GitHub issues to discuss design choices.
