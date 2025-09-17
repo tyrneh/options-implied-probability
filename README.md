@@ -13,8 +13,8 @@ While markets don't predict the future with certainty, under the efficient marke
 
 Traditionally, extracting these “risk-neutral densities” required institutional knowledge and resources, limited to specialist quant-desks. OIPD makes this capability accessible to everyone — delivering an institutional-grade tool in a simple, production-ready Python package.
 
-<p align="center" style="margin-top: 50px;">
-  <img src="example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:32px;" />
+<p align="center" style="margin-top: 80px;">
+  <img src="example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
 </p>
 
 
@@ -27,6 +27,12 @@ pip install oipd
 ```
 
 #### Usage
+
+
+https://github.com/user-attachments/assets/33e9c0ec-808a-484b-80c1-a0c8942b53d0
+
+
+
 ```python
 from oipd import RND, MarketInputs
 from datetime import date
