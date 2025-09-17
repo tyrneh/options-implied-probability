@@ -52,6 +52,8 @@ est.plot()                              # plot probability and cumulative distri
 
 OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details.
 
+See [more examples](examples/example.ipynb) with provided options data. 
+
 
 # Use cases
 
