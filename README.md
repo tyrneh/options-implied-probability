@@ -28,10 +28,7 @@ pip install oipd
 
 #### Usage
 
-
-https://github.com/user-attachments/assets/33e9c0ec-808a-484b-80c1-a0c8942b53d0
-
-
+<video src="examples/OIPDwalkthrough.mp4" autoplay loop muted playsinline controls></video>
 
 ```python
 from oipd import RND, MarketInputs
