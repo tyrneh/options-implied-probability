@@ -209,6 +209,7 @@ Convenience features:
 Algorithmic improvements:
 - implement no-arbitrage checks 
 - fit IV smile using SABR model
+- infer forward price using a band of near-ATM option-pairs, rather than the one nearest pair
 - American-option de-Americanisation module
 - full term-structure surface (`RNDTermSurface`)
 
