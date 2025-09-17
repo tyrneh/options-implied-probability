@@ -30,8 +30,6 @@ pip install oipd
 
 ![OIPDwalkthrough](https://github.com/user-attachments/assets/2da5506d-a720-4f93-820b-23b368d074bb)
 
-<img src="examples/OIPDwalkthrough.gif" alt="OIPD walkthrough" style="width:100%; max-width:1200px; height:auto; display:block;" />
-
 ```pythongit statu
 from oipd import RND, MarketInputs
 from datetime import date
