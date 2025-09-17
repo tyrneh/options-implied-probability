@@ -29,9 +29,6 @@ pip install oipd
 #### Usage
 
 
-https://github.com/user-attachments/assets/74dc8ea7-45c9-45e6-b7fc-41b155a6e124
-
-
 ```python
 from oipd import RND, MarketInputs
 from datetime import date
