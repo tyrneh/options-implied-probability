@@ -37,35 +37,6 @@ The `RND` class is the high-level facade that users interact with. It has three 
 
 MarketInputs loads information on market data, while ModelParams specifies algorithm settings.
 
-**Workflow Examples**
-
-_From live data (auto-fetches price and, when needed, dividend data):_
-
-```python
-# First, discover available expiry dates
-expiry_dates = RND.list_expiry_dates("AAPL")
-print(expiry_dates[:3])  # ['2025-01-17', '2025-01-24', '2025-02-21']
-
-# Then use one of the available dates
-market = MarketInputs(
-    valuation_date=date.today(),      # required: analysis date
-    expiry_date=date(2025, 1, 17),
-    risk_free_rate=0.04,              # treated as annualized nominal by default
-    # risk_free_rate_mode="continuous"  # set this if your input is continuous
-)
-
-est = RND.from_ticker("AAPL", market)
-```
-
-**Smart Features**
-
-- **Auto-fetching**: `from_ticker()` retrieves current price and dividend data when required
-- **Flexible data sources**: Pluggable vendor system (currently yfinance; extensible)
-- **Built-in plotting**: PDF/CDF plots
-- **Probability calculations**: Easy P(price >= X) queries
-- **Column mapping**: Handles different header names automatically using the `column_mapping=` argument (for CSV and DataFrame modes only)
-
-
 ### 2.1 MarketInputs
 
 Configuration object that defines the market environment and time horizon for the RND estimation.
@@ -82,7 +53,10 @@ MarketInputs(
 
     # Market data - optional for from_ticker() mode, as they can be auto fetched:
     underlying_price: float,        # Current price (spot S or futures F) 
-    #   Dividends - provide ONE of these:
+
+    # Dividends 
+    #   Note: When both calls and puts data are available, OIPD infers forward-looking dividends information via put-call parity. 
+    #   The fields below are only used when put data is missing (e.g., calls-only datasets).
     dividend_yield: float,          # Option 1: Annual dividend yield (e.g., 0.02 for 2%)
     dividend_schedule: DataFrame,   # Option 2: Discrete dividend payments, requires 'ex_date' & 'amount' columns
 )
@@ -94,11 +68,10 @@ OPTIONAL configuration object that controls the algorithms used in the RND calcu
 
 ```python
 ModelParams(
-    solver             = "newton" | "brent",   # IV root-finder; defaults to newton
-    pricing_engine     = "black76" | "bs",     # default forward-based Black-76
-    price_method       = "last" | "mid",       # defaults to 'last'; can use mid-price calculated as `(bid + ask) / 2`
-    max_staleness_days = 3,                   # filter options older than N calendar days from valuation_date (default: 3)
-                                             # set to None to disable filtering
+    solver             = "newton" | "brent",   # IV root-finder; defaults to brent
+    pricing_engine     = "black76" | "bs",     # default forward-based Black-76. Use Black-Scholes only when puts data are unavailable
+    price_method       = "last" | "mid",       # defaults to 'mid'; mid-price calculated as `(bid + ask) / 2`
+    max_staleness_days = 1,                   # filter options older than N calendar days from valuation_date. Set to None to disable filtering
 )
 ```
 
@@ -142,7 +115,7 @@ strike  | last_price | option_type | bid  | ask  | last_trade_date
 column_mapping = {
     "Strike": "strike",
     "Last Price": "last_price", 
-    "Type": "option_type",        # Maps "Type" to "option_type"
+    "Type": "option_type",       
     "Bid": "bid",
     "Ask": "ask"
 }
@@ -196,21 +169,24 @@ For a complete reading of the financial theory, see [this paper](https://www.ban
 
 ---
 
-## 4. Algorithm Overview
+## 4. Algorithm Details
 
 The process of generating the PDFs and CDFs is as follows:
 
-1. For an underlying asset, options data along the full range of strike prices are read from a CSV file to create a DataFrame. This gives us a table of strike prices along with the last price[^1] each option sold for
-2. Using the chosen pricing model (Black-76 by default) we convert strike prices into implied volatilities (IV)[^2]. IV are solved using either Newton's Method or Brent's root-finding algorithm, as specified by the `solver_method` argument.
-3. Using B-spline, we fit a curve-of-best-fit onto the resulting IVs over the full range of strike prices[^3]. Thus, we have extracted a continuous model from discrete IV observations - this is called the volatility smile
-4. From the volatility smile, we use the same pricing model to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
-5. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^4]
-6. Once we have the PDF, we can calculate the CDF
+1. For an underlying asset, options data along the full range of strike prices are read from a source file to create a DataFrame. This gives us a table of strike prices along with the last or mid price[^1] each option sold for
+2. Apply put–call parity preprocessing: estimate the forward from near‑ATM call–put pairs
+3. Based on the forward price, restrict to OTM options. Keep calls above the forward and replace in‑the‑money calls with synthetic calls constructed from OTM puts via parity, to reduce noise from illiquid ITM quotes[^5].
+4. Using the chosen pricing model (Black‑76 as it works with forward prices) we convert strike prices into implied volatilities (IV)[^2]. IV are solved using either Newton's Method or Brent's root‑finding algorithm, as specified by the `solver_method` argument
+5. Using B‑spline, we fit a curve‑of‑best‑fit onto the resulting IVs over the full range of strike prices[^3]. Thus, we have extracted a continuous model from discrete IV observations — this is called the volatility smile
+6. From the volatility smile, we use the same pricing model to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
+7. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^4]
+8. Once we have the PDF, we can calculate the CDF
 
-[^1]: We chose to use last price instead of calculating the mid-price given the bid-ask spread. This is because Yahoo Finance, a common source for options chain data, often lacks bid-ask data. See for example [Apple options](https://finance.yahoo.com/quote/AAPL/options/)
+[^1]: Mid-price given the bid-ask spread is usually less noisy, as last price can reflect stale trades and do not reflect real-time information 
 [^2]: We convert from price-space to IV-space, and then back to price-space as described in step 4. See this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/) for a breakdown of why we do this double conversion
 [^3]: See [this paper](https://edoc.hu-berlin.de/bitstream/handle/18452/14708/zeng.pdf?sequence=1&isAllowed=y) for more details. In summary, options markets contains noise. Therefore, generating a volatility smile through simple interpolation will result in a noisy smile function. Then converting back to price-space will result in a noisy price curve. And finally when we numerically twice differentiate the price curve, noise will be amplified and the resulting PDF will be meaningless. Thus, we need either a parametric or non-parametric model to try to extract the true relationship between IV and strike price from the noisy observations. The paper suggests a 3rd order B-spline as a possible model choice
 [^4]: For a proof of this derivation, see this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/)
+[^5]: Parity-based OTM‑only preprocessing follows Aït‑Sahalia and Lo, ["Nonparametric Estimation of State‑Price Densities Implicit in Financial Asset Prices"](https://www.princeton.edu/~yacine/aslo.pdf).
 
 ---
 
@@ -234,14 +210,6 @@ MarketInputs (user) + VendorSnapshot (fetched) → ResolvedMarket (merged)
 3. **Provenance tracking** - The result knows where each value came from (user vs vendor)
 4. **Resolution modes** - Different data sources use different resolution strategies
 
-### Resolution Modes (Internal Behavior)
-
-Different data sources use different resolution strategies:
-
-- **`from_ticker()`**: Uses `"missing"` mode - auto-fetches current price and dividends from vendors when not provided by user
-- **`from_csv()` / `from_dataframe()`**: Uses `"strict"` mode - all market data must be provided by user, no auto-fetching
-- **`"vendor_only"`**: Internal mode that ignores user values (not currently exposed to users)
-
 ### Example: Accessing Auto-fetched Data
 
 ```python
@@ -255,7 +223,7 @@ market = MarketInputs(
 # Fetch and estimate
 est = RND.from_ticker("SPY", market)
 
-# ✅ CORRECT: Access fetched values through result
+# Access fetched values through result
 print(f"Current price: ${est.market.underlying_price:.2f}")
 print(f"Source: {est.market.provenance.price}")  # "vendor"
 print(est.summary())  # One-line summary of all sources
@@ -265,10 +233,11 @@ print(est.summary())  # One-line summary of all sources
 
 ## 6. Roadmap
 
-- incorporate dividends - DONE
-- integrate YFinance data fetching - DONE
-- American-option de-Americanisation module
+Convenience features:
 - integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
+
+
+- American-option de-Americanisation module
 - alternative volatility models (Heston, SABR)
 - full term-structure surface (`RNDTermSurface`)
 

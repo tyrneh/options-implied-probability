@@ -43,7 +43,7 @@ class ModelParams:
     solver: Literal["brent", "newton"] = "brent"
     american_to_european: bool = False  # placeholder for future functionality
     pricing_engine: Literal["black76", "bs"] = "black76"
-    price_method: Literal["last", "mid"] = "last"
+    price_method: Literal["last", "mid"] = "mid"
     max_staleness_days: Optional[int] = 1
 
 

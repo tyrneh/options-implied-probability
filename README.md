@@ -30,16 +30,15 @@ pip install oipd
 
 ![OIPDwalkthrough](https://github.com/user-attachments/assets/2da5506d-a720-4f93-820b-23b368d074bb)
 
-```pythongit statu
+```python
 from oipd import RND, MarketInputs
 from datetime import date
 
 # 1 ─ point to a ticker and provide market info
 market = MarketInputs(
     valuation_date=date.today(),      # the "as-of" date for the analysis
-    expiry_date=date(2025, 12, 19),   # option expiry you care about
-    risk_free_rate=0.04,              # risk-free rate (annualized by default)
-    # risk_free_rate_mode="continuous"  # set if your input is already continuous
+    expiry_date=date(2025, 12, 19),   # option expiry date you care about
+    risk_free_rate=0.04,              # annualized risk-free rate
 )
 
 # 2 - run estimator, auto fetching data from Yahoo Finance
