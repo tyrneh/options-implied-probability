@@ -14,6 +14,7 @@ This document complements the high-level `README.md`. Here you’ll find:
 | --------------------------------- | --------------------------- |
 | Full installation (with yfinance) | `pip install oipd`          |
 | Core maths only (no data vendors) | `pip install oipd[minimal]` |
+| Contributor install               | `pip install oipd[dev]`     |
 
 Requires at minimum **Python 3.10+**.
 

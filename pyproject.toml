@@ -22,7 +22,7 @@ classifiers = [
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Topic :: Office/Business :: Financial :: Investment",
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
     "Intended Audience :: Science/Research",
 ]
@@ -49,6 +49,15 @@ minimal = [
     "traitlets>=5.12.0",
 ]
 
+# Developer tools (formatting, linting, testing, build)
+dev = [
+    "black>=24.3.0",
+    "isort>=5.13.0",
+    "pytest>=8.0.0",
+    "mypy>=1.8.0",
+    "build>=1.0.0",
+]
+
 
 
 [project.urls]
@@ -57,6 +66,7 @@ minimal = [
 
 [tool.setuptools.packages.find]
 where = ["."]
+exclude = ["tests*"]
 
 [tool.black]
 line-length = 88
