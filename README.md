@@ -6,7 +6,7 @@
 
 # Overview
 
-OIPD reveals the market's collective expectations about the likelihood of an asset's future price, based on information contained in options data. 
+OIPD reveals the market's expectations about the probability of an asset reaching different prices at a future date, based on information contained in options data. 
 
 While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
 
