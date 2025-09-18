@@ -137,6 +137,8 @@ This illustrates how option prices contain information about the probabilities o
 For a simplified worked example, see this [excellent blog post](https://reasonabledeviations.com/2020/10/01/option-implied-pdfs/).
 For a complete reading of the financial theory, see [this paper](https://www.bankofengland.co.uk/-/media/boe/files/quarterly-bulletin/2000/recent-developments-in-extracting-information-from-options-markets.pdf?la=en&hash=8D29F2572E08B9F2B541C04102DE181C791DB870).
 
+However, it's important to note that risk-neutral probabilities (what OIPD calculates) are not the same as physical real-world probabilities. 
+
 ---
 
 ## 4. Algorithm Details
@@ -145,18 +147,19 @@ The process of generating the PDFs and CDFs is as follows:
 
 1. For an underlying asset, options data along the full range of strike prices are read from a source file to create a DataFrame. This gives us a table of strike prices along with the last or mid price[^1] each option sold for
 2. Apply put–call parity preprocessing: estimate the forward from near‑ATM call–put pairs
-3. Based on the forward price, restrict to OTM options. Keep calls above the forward and replace in‑the‑money calls with synthetic calls constructed from OTM puts via parity, to reduce noise from illiquid ITM quotes[^5].
-4. Using the chosen pricing model (Black‑76 as it works with forward prices) we convert strike prices into implied volatilities (IV)[^2]. IV are solved using either Newton's Method or Brent's root‑finding algorithm, as specified by the `solver_method` argument
-5. Using B‑spline, we fit a curve‑of‑best‑fit onto the resulting IVs over the full range of strike prices[^3]. Thus, we have extracted a continuous model from discrete IV observations — this is called the volatility smile
+3. Based on the forward price, restrict to OTM options. Keep calls above the forward and replace in‑the‑money calls with synthetic calls constructed from OTM puts via parity, to reduce noise from illiquid ITM quotes[^2].
+4. Using the chosen pricing model (Black‑76 as it works with forward prices[^3]) we convert strike prices into implied volatilities (IV)[^4]. IV are solved using either Newton's Method or Brent's root‑finding algorithm, as specified by the `solver_method` argument
+5. Using B‑spline, we fit a curve‑of‑best‑fit onto the resulting IVs over the full range of strike prices[^5]. Thus, we have extracted a continuous model from discrete IV observations — this is called the volatility smile
 6. From the volatility smile, we use the same pricing model to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
-7. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^4]
+7. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^6]
 8. Once we have the PDF, we can calculate the CDF
 
 [^1]: Mid-price given the bid-ask spread is usually less noisy, as last price can reflect stale trades and do not reflect real-time information 
-[^2]: We convert from price-space to IV-space, and then back to price-space as described in step 4. See this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/) for a breakdown of why we do this double conversion
-[^3]: See [this paper](https://edoc.hu-berlin.de/bitstream/handle/18452/14708/zeng.pdf?sequence=1&isAllowed=y) for more details. In summary, options markets contains noise. Therefore, generating a volatility smile through simple interpolation will result in a noisy smile function. Then converting back to price-space will result in a noisy price curve. And finally when we numerically twice differentiate the price curve, noise will be amplified and the resulting PDF will be meaningless. Thus, we need either a parametric or non-parametric model to try to extract the true relationship between IV and strike price from the noisy observations. The paper suggests a 3rd order B-spline as a possible model choice
-[^4]: For a proof of this derivation, see this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/)
-[^5]: Parity-based OTM‑only preprocessing follows Aït‑Sahalia and Lo, ["Nonparametric Estimation of State‑Price Densities Implicit in Financial Asset Prices"](https://www.princeton.edu/~yacine/aslo.pdf).
+[^2]: Parity-based OTM‑only preprocessing follows Aït‑Sahalia and Lo, ["Nonparametric Estimation of State‑Price Densities Implicit in Financial Asset Prices"](https://www.princeton.edu/~yacine/aslo.pdf)
+[^3]: Derivation of Black-76 is explained well by [this article](https://benjaminwhiteside.com/2021/01/15/black-76/)
+[^4]: We convert from price-space to IV-space, and then back to price-space in step 6. See this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/) for a breakdown of why we do this double conversion
+[^5]: See [this paper](https://edoc.hu-berlin.de/bitstream/handle/18452/14708/zeng.pdf?sequence=1&isAllowed=y) for more details. In summary, options markets contains noise. Therefore, generating a volatility smile through simple interpolation will result in a noisy smile function. Then converting back to price-space will result in a noisy price curve. And finally when we numerically twice differentiate the price curve, noise will be amplified and the resulting PDF will be meaningless. Thus, we need either a parametric or non-parametric model to try to extract the true relationship between IV and strike price from the noisy observations. The paper suggests a 3rd order B-spline as a possible model choice
+[^6]: For a proof of this derivation, see this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/)
 
 ---
 

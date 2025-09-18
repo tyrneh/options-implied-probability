@@ -71,14 +71,6 @@ See [more examples](examples/example.ipynb) with provided options data.
 - Quantify budget risk: As an airline, a portion of next year’s jet fuel demand is hedged; the rest floats. Use OIPD to estimate the probability of breaching your budget and the expected overspend (earnings-at-risk) on the unhedged slice.
 - Adjust hedging coverage when tails fatten: If OIPD shows higher price risk, add a small 5–10% hedged tranche using to pull P(breach)/EaR back within board guardrails
 
-# Key features
-1. Foundations in rigourous options-theory 
-    - Integrated put-call parity to (1) eliminate noisy data, and (2) infer forward-looking dividends information, no dividend guesswork required from user
-    - Black76 pricing engine in forward-space, compatible with equities, futures, and FX asset classes
-    - Thoughtfully designed architecture, pluggable pricing models and input parameters, and extensible for future pricing models
-2. Ease-of-use conveniences
-    - Integration with Yahoo Finance to auto-fetch options data based on a ticker name
-    - Integrated results and visualizations 
 
 # License
 
