@@ -56,12 +56,12 @@ See [more examples](examples/example.ipynb) with provided options data.
 
 # Use cases
 
-**Event-driven strategies: assess market's view about the likelihood of merger**
+**Event-driven strategies: assess market's belief about the likelihood of mergers**
 
 - Nippon Steel offered to acquire US Steel for $55 per share; in early 2025, US Steel was trading at $30 per share. Using OIPD, you find that the market believed US Steel had a ~20% probability of acquisition (price >= $55 by end of year)
 - If you believe that political backlash was overstated and the acquisition was likely to be approved, then you can quantify the a trade's expected payoff. Compare your subjective belief with the market-priced probability to determine expected value of buying stock or calls
 
-**Risk management: compute forward-looking VaR**
+**Risk management: compute forward-looking Value-at-Risk**
 
 - A 99% 12-month VaR of 3% is (i) backward-looking and (ii) assumes a parametric distribution, often unrealistic assumptions especially before catalysts
 - Ahead of earnings season, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% portfolio-blended VaR
