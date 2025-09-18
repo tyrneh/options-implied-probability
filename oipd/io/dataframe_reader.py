@@ -30,34 +30,21 @@ class DataFrameReader(AbstractReader):
     # Inherits _clean_data() from AbstractReader.
 
     def _transform_data(self, cleaned_data: DataFrame) -> DataFrame:
-        """Apply validation and transformation to the DataFrame.
+        """Apply DataFrame-specific transformations.
 
         Arguments:
-            cleaned_data: The cleaned DataFrame
+            cleaned_data: The validated DataFrame
 
         Returns:
             Transformed DataFrame
 
         Raises:
-            ValueError: If data contains invalid values
+            ValueError: If insufficient data points
+        
+        Note:
+            Common validation (NaN checks, negative prices, etc.) is handled 
+            by the base class _validate_data() method.
         """
-        # Check for negative prices
-        if (cleaned_data["last_price"] < 0).any():
-            raise ValueError("Options data contains negative prices")
-
-        # Check for zero or negative strikes
-        if (cleaned_data["strike"] <= 0).any():
-            raise ValueError("Options data contains non-positive strike prices")
-
-        # Check for NaN values in critical columns
-        critical_columns = ["strike", "last_price"]
-        for col in critical_columns:
-            if cleaned_data[col].isna().any():
-                raise ValueError(f"Options data contains NaN values in column '{col}'")
-
-        # Sort by strike price for consistency
-        cleaned_data = cleaned_data.sort_values("strike")
-
         # Ensure we have enough data points
         if len(cleaned_data) < 5:
             raise ValueError(

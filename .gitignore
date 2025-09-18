@@ -7,6 +7,8 @@ __pycache__/
 *.xlsx
 *.csv
 example_script.py
+.yfinance_cache/*
+.yfinance_cache/
 
 # C extensions
 *.so
@@ -116,6 +118,18 @@ env.bak/
 venv.bak/
 .new_venv
 
+# AI folders
+.kiro/
+CLAUDE.md
+.claude/
+.reviews/
+.reviews/*
+PRDs/*
+PRDs/
+.codex/
+.codex/*
+AGENTS.md
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -139,3 +153,11 @@ dmypy.json
 
 .DS_Store
 
+# Archive 
+README_ARCHIVE.md
+example_new.py
+exampleOil.py
+examples/animation.ipynb
+examples/OIPDwalkthrough.gif
+examples/OIPDwalkthrough.mp4
+examples/readme_image.py

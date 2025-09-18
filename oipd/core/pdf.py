@@ -1,12 +1,19 @@
 from typing import Dict, Tuple, Literal
 
 import numpy as np
+import warnings
 from pandas import concat, DataFrame
-from scipy.integrate import simps
+from scipy.integrate import simpson
 from scipy import interpolate
 from scipy.interpolate import interp1d
 from scipy.optimize import brentq
-from scipy.stats import norm, gaussian_kde
+
+from oipd.pricing import get_pricer
+from oipd.pricing.black_scholes import (
+    black_scholes_call_price as _bs_price,
+    black_scholes_call_vega as _bs_vega,
+)
+from oipd.pricing.black76 import black76_call_price as _b76_price
 
 
 class OIPDError(Exception):
@@ -27,59 +34,21 @@ class CalculationError(OIPDError):
     pass
 
 
-def fit_kde(pdf_point_arrays: tuple) -> tuple:
-    """
-    Fits a Kernel Density Estimation (KDE) to the given implied probability density function (PDF).
-
-    Args:
-        pdf_point_arrays (tuple): A tuple containing:
-            - A numpy array of price values
-            - A numpy array of PDF values
-
-    Returns:
-        tuple: (prices, fitted_pdf), where:
-            - prices: The original price array
-            - fitted_pdf: The KDE-fitted probability density values
-
-    Raises:
-        InvalidInputError: If input arrays are empty or have mismatched lengths
-    """
-    # Validate input
-    if not isinstance(pdf_point_arrays, tuple) or len(pdf_point_arrays) != 2:
-        raise InvalidInputError("pdf_point_arrays must be a tuple of two arrays")
-
-    # Unpack tuple
-    prices, pdf_values = pdf_point_arrays
-
-    if len(prices) == 0 or len(pdf_values) == 0:
-        raise InvalidInputError("Input arrays cannot be empty")
-
-    if len(prices) != len(pdf_values):
-        raise InvalidInputError(
-            f"Price and PDF arrays must have same length. Got {len(prices)} and {len(pdf_values)}"
-        )
-
-    # Normalize PDF to ensure it integrates to 1
-    pdf_values /= np.trapz(pdf_values, prices)  # Use trapezoidal rule for normalization
-
-    try:
-        # Fit KDE using price points weighted by the normalized PDF
-        kde = gaussian_kde(prices, weights=pdf_values)
-
-        # Generate KDE-fitted PDF values
-        fitted_pdf = kde.pdf(prices)
-    except Exception as e:
-        raise CalculationError(f"Failed to fit KDE: {str(e)}")
-
-    return (prices, fitted_pdf)
+"""
+Core routines for computing option-implied PDF/CDF and related helpers.
+"""
 
 
 def calculate_pdf(
     options_data: DataFrame,
-    current_price: float,
-    days_forward: int,
+    underlying_price: float,
+    days_to_expiry: int,
     risk_free_rate: float,
     solver_method: str,
+    pricing_engine: str,
+    dividend_yield: float | None,
+    price_method: str,
+    forward_price: float | None = None,
 ) -> Tuple[np.ndarray]:
     """The main execution path for the pdf module. Takes a `DataFrame` of
     options data as input and makes a series of function calls to
@@ -87,8 +56,9 @@ def calculate_pdf(
     Args:
         options_data: a DataFrame containing options price data with
             cols ['strike', 'last_price']
-        current_price: the current price of the security
-        days_forward: the number of days in the future to estimate the
+        underlying_price: current price of the instrument — cash spot S for
+            Black–Scholes or current futures price F for Black‑76
+        days_to_expiry: the number of days in the future to estimate the
             price probability density at
         risk_free_rate: annual risk free rate in nominal terms
 
@@ -107,11 +77,15 @@ def calculate_pdf(
     if options_data.empty:
         raise InvalidInputError("options_data cannot be empty")
 
-    if current_price <= 0:
-        raise InvalidInputError(f"current_price must be positive, got {current_price}")
+    if underlying_price <= 0:
+        raise InvalidInputError(
+            f"underlying_price must be positive, got {underlying_price}"
+        )
 
-    if days_forward <= 0:
-        raise InvalidInputError(f"days_forward must be positive, got {days_forward}")
+    if days_to_expiry <= 0:
+        raise InvalidInputError(
+            f"days_to_expiry must be positive, got {days_to_expiry}"
+        )
 
     if not -1 <= risk_free_rate <= 1:
         raise InvalidInputError(
@@ -123,27 +97,50 @@ def calculate_pdf(
             f"solver_method must be 'newton' or 'brent', got '{solver_method}'"
         )
 
+    if pricing_engine == "black76" and forward_price is None:
+        raise InvalidInputError(
+            "forward_price must be provided when using Black-76 pricing"
+        )
+
     # options_data, min_strike, max_strike = _extrapolate_call_prices(
-    #     options_data, current_price
+    #     options_data, underlying_price
     # )
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
 
-    options_data = _calculate_last_price(options_data)
+    # this step calculates the mid or last price depending on user argument
+    options_data = _calculate_price(options_data, price_method)
 
     if options_data.empty:
         raise CalculationError("No valid options data after price calculation")
 
+    effective_underlying = (
+        forward_price if pricing_engine == "black76" else underlying_price
+    )
     options_data = _calculate_IV(
-        options_data, current_price, days_forward, risk_free_rate, solver_method
+        options_data,
+        effective_underlying,
+        days_to_expiry,
+        risk_free_rate,
+        solver_method,
+        pricing_engine,
+        dividend_yield=dividend_yield,
     )
 
     if options_data.empty:
         raise CalculationError("Failed to calculate implied volatility for any options")
 
     denoised_iv = _fit_bspline_IV(options_data)
+    underlying_for_pricing = (
+        forward_price if pricing_engine == "black76" else underlying_price
+    )
     pdf = _create_pdf_point_arrays(
-        denoised_iv, current_price, days_forward, risk_free_rate
+        denoised_iv,
+        underlying_for_pricing,
+        days_to_expiry,
+        risk_free_rate,
+        dividend_yield,
+        pricing_engine,
     )
     return _crop_pdf(pdf, min_strike, max_strike)
 
@@ -183,7 +180,7 @@ def calculate_cdf(
     cdf = []
     n = len(x_array)
 
-    total_area = simps(y=pdf_array[0:n], x=x_array)
+    total_area = simpson(y=pdf_array[0:n], x=x_array)
     remaining_area = 1 - total_area
 
     for i in range(n):
@@ -191,7 +188,7 @@ def calculate_cdf(
             integral = 0.0 + remaining_area / 2
         else:
             integral = (
-                simps(y=pdf_array[i - 1 : i + 1], x=x_array[i - 1 : i + 1]) + cdf[-1]
+                simpson(y=pdf_array[i - 1 : i + 1], x=x_array[i - 1 : i + 1]) + cdf[-1]
             )
         cdf.append(integral)
 
@@ -219,7 +216,7 @@ def calculate_quartiles(
 
 
 def _extrapolate_call_prices(
-    options_data: DataFrame, current_price: float
+    options_data: DataFrame, underlying_price: float
 ) -> tuple[DataFrame, int, int]:
     """Extrapolate the price of the call options to strike prices outside
     the range of options_data. Extrapolation is done to zero and twice the
@@ -229,7 +226,7 @@ def _extrapolate_call_prices(
     Args:
         options_data: a DataFrame containing options price data with
             cols ['strike', 'last_price']
-        current_price: the current price of the security
+        underlying_price: the current price of the instrument
 
     Returns:
         the extended options_data DataFrame
@@ -237,7 +234,7 @@ def _extrapolate_call_prices(
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
     lower_extrapolation = DataFrame(
-        {"strike": p, "last_price": current_price - p} for p in range(0, min_strike)
+        {"strike": p, "last_price": underlying_price - p} for p in range(0, min_strike)
     )
     upper_extrapolation = DataFrame(
         {
@@ -253,66 +250,103 @@ def _extrapolate_call_prices(
     )
 
 
-def _calculate_last_price(options_data: DataFrame) -> DataFrame:
-    """Take the last-price of the options at each strike price.
+def _calculate_price(options_data: DataFrame, price_method: str) -> DataFrame:
+    """Select the appropriate price column based on the specified method.
 
     Args:
         options_data: a DataFrame containing options price data with
-            cols ['strike', 'last_price']
+            cols ['strike', 'last_price', 'mid'] (from put-call parity processing)
+        price_method: Method to calculate price - 'last' or 'mid'
 
     Returns:
-        the options_data DataFrame, with an additional column for mid-price
+        the options_data DataFrame, with a 'price' column containing the selected prices
     """
-    options_data["last_price"] = options_data["last_price"]
-    options_data = options_data[options_data.last_price >= 0]
+    options_data = options_data.copy()
+
+    if price_method == "mid":
+        if "mid" in options_data.columns:
+            options_data["price"] = options_data["mid"]
+        elif "bid" in options_data.columns and "ask" in options_data.columns:
+            mid = (options_data["bid"] + options_data["ask"]) / 2
+            mask = options_data["bid"].notna() & options_data["ask"].notna()
+            if mask.any():
+                options_data["price"] = np.where(mask, mid, options_data["last_price"])
+                if not mask.all():
+                    warnings.warn(
+                        "Using last_price for rows with missing bid/ask",
+                        UserWarning,
+                    )
+            else:
+                warnings.warn(
+                    "Requested price_method='mid' but bid/ask data not available. "
+                    "Falling back to price_method='last'",
+                    UserWarning,
+                )
+                options_data["price"] = options_data["last_price"]
+        else:
+            warnings.warn(
+                "Requested price_method='mid' but bid/ask data not available. "
+                "Falling back to price_method='last'",
+                UserWarning,
+            )
+            options_data["price"] = options_data["last_price"]
+    else:  # "last"
+        options_data["price"] = options_data["last_price"]
+
+    options_data = options_data[options_data["price"] > 0].copy()
     return options_data
 
 
 def _calculate_IV(
     options_data: DataFrame,
-    current_price: float,
-    days_forward: int,
+    underlying_price: float,
+    days_to_expiry: int,
     risk_free_rate: float,
     solver_method: Literal["newton", "brent"],
+    pricing_engine: str,
+    dividend_yield: float | None = None,
 ) -> DataFrame:
     """
-    Calculate the implied volatility (IV) of the options in options_data.
-
-    Args:
-        options_data (pd.DataFrame): A DataFrame containing option price data with
-            columns ['strike', 'last_price'].
-        current_price (float): The current price of the security.
-        days_forward (int): The number of days in the future to estimate the
-            price probability density at.
-        risk_free_rate (float, optional): Annual risk-free rate in nominal terms. Defaults to 0.
-        solver_method (Literal["newton", "brent"], optional):
-            The method used to solve for IV.
-            - "newton" (default) uses Newton-Raphson iteration.
-            - "brent" uses Brent's method (more stable).
-
-    Returns:
-        DataFrame: The options_data DataFrame with an additional column for implied volatility (IV).
+    Vectorised implied volatility solver.
     """
-    years_forward = days_forward / 365
+    years_to_expiry = days_to_expiry / 365
 
-    # Choose the IV solver method
-    if solver_method == "newton":
-        iv_solver = _bs_iv_newton_method
-    elif solver_method == "brent":
-        iv_solver = _bs_iv_brent_method
+    prices_arr = options_data["price"].values
+    strikes_arr = options_data["strike"].values
+
+    if pricing_engine == "black76":
+        iv_values = np.fromiter(
+            (
+                _black76_iv_brent_method(
+                    p, underlying_price, k, years_to_expiry, r=risk_free_rate
+                )
+                for p, k in zip(prices_arr, strikes_arr)
+            ),
+            dtype=float,
+        )
     else:
-        raise ValueError("Invalid solver_method. Choose either 'newton' or 'brent'.")
+        if solver_method == "newton":
+            iv_solver_scalar = _bs_iv_newton_method
+        elif solver_method == "brent":
+            iv_solver_scalar = _bs_iv_brent_method
+        else:
+            raise ValueError("Invalid solver_method. Choose either 'newton' or 'brent'.")
 
-    options_data["iv"] = options_data.apply(
-        lambda row: iv_solver(
-            row.last_price, current_price, row.strike, years_forward, r=risk_free_rate
-        ),
-        axis=1,
-    )
+        q = dividend_yield
+        iv_values = np.fromiter(
+            (
+                iv_solver_scalar(
+                    p, underlying_price, k, years_to_expiry, r=risk_free_rate, q=q
+                )
+                for p, k in zip(prices_arr, strikes_arr)
+            ),
+            dtype=float,
+        )
 
-    # Remove rows where IV could not be calculated
-    options_data = options_data.dropna()
-
+    options_data = options_data.copy()
+    options_data["iv"] = iv_values
+    # Drop rows where IV could not be calculated (NaN)
+    options_data = options_data.dropna(subset=["iv"])
     return options_data
 
 
@@ -321,6 +355,7 @@ def _fit_bspline_IV(options_data: DataFrame) -> DataFrame:
         From this smoothed IV function, generate (x,y) coordinates
         representing observations of the denoised IV
 
+    TODO: Update with the new put-call parity preprocessing (mid price accepted as well as last price)
     Args:
         options_data: a DataFrame containing options price data with
             cols ['strike', 'last_price', 'iv']
@@ -363,16 +398,82 @@ def _fit_bspline_IV(options_data: DataFrame) -> DataFrame:
     return (x_new, y_fit)
 
 
+def finite_diff_second_derivative(y: np.ndarray, x: np.ndarray) -> np.ndarray:
+    """
+    Calculate second derivative using 5-point stencil for improved numerical stability.
+
+    This replaces the unstable np.gradient approach with a more robust finite difference
+    method that's particularly important for deep out-of-the-money options where
+    the Breeden-Litzenberger formula becomes numerically challenging.
+
+    For interior points: f''(x) = [-f(x-2h) + 16f(x-h) - 30f(x) + 16f(x+h) - f(x+2h)] / (12h²)
+    For boundary points: Uses lower-order accurate formulas
+
+    Args:
+        y: Function values (option prices)
+        x: Grid points (strikes)
+
+    Returns:
+        Second derivative values at each grid point
+
+    Raises:
+        ValueError: If grid spacing is non-uniform or arrays have insufficient length
+    """
+    if len(x) != len(y):
+        raise ValueError(f"Arrays must have same length. Got x: {len(x)}, y: {len(y)}")
+
+    if len(x) < 5:
+        raise ValueError(f"Need at least 5 points for 5-point stencil. Got {len(x)}")
+
+    # Check for uniform grid spacing (required for finite differences)
+    h = np.diff(x)
+    if not np.allclose(h, h[0], rtol=1e-6):
+        # For non-uniform grids, fall back to np.gradient but warn user
+        import warnings
+
+        warnings.warn(
+            "Non-uniform grid detected. Using np.gradient fallback which may be less stable. "
+            "Consider interpolating to uniform grid first.",
+            UserWarning,
+        )
+        return np.gradient(np.gradient(y, x), x)
+
+    h = h[0]  # Grid spacing
+    d2y = np.zeros_like(y)
+
+    # Interior points using 5-point stencil (4th order accurate)
+    for i in range(2, len(y) - 2):
+        d2y[i] = (-y[i - 2] + 16 * y[i - 1] - 30 * y[i] + 16 * y[i + 1] - y[i + 2]) / (
+            12 * h**2
+        )
+
+    # Boundary points using forward/backward differences (2nd order accurate)
+    # Left boundary (first two points)
+    d2y[0] = (2 * y[0] - 5 * y[1] + 4 * y[2] - y[3]) / h**2
+    d2y[1] = (y[0] - 2 * y[1] + y[2]) / h**2
+
+    # Right boundary (last two points)
+    d2y[-2] = (y[-3] - 2 * y[-2] + y[-1]) / h**2
+    d2y[-1] = (2 * y[-1] - 5 * y[-2] + 4 * y[-3] - y[-4]) / h**2
+
+    return d2y
+
+
 def _create_pdf_point_arrays(
-    denoised_iv: tuple, current_price: float, days_forward: int, risk_free_rate: float
+    denoised_iv: tuple,
+    underlying_price: float,
+    days_to_expiry: int,
+    risk_free_rate: float,
+    dividend_yield: float | None,
+    pricing_engine: str,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Create two arrays containing x- and y-axis values representing a calculated
     price PDF
 
     Args:
         denoised_iv: (x,y) observations of the denoised IV
-        current_price: the current price of the security
-        days_forward: the number of days in the future to estimate the
+        underlying_price: the current price of the instrument
+        days_to_expiry: the number of days in the future to estimate the
             price probability density at
         risk_free_rate: the current annual risk free interest rate, nominal terms
 
@@ -385,14 +486,21 @@ def _create_pdf_point_arrays(
     y_IV = denoised_iv[1]
 
     # convert IV-space to price-space
-    # re-values call options using the BS formula, taking in as inputs S, domain, IV, and time to expiry
-    years_forward = days_forward / 365
-    interpolated = _call_value(current_price, x_IV, y_IV, years_forward, risk_free_rate)
-    first_derivative_discrete = np.gradient(interpolated, x_IV)
-    second_derivative_discrete = np.gradient(first_derivative_discrete, x_IV)
+    years_to_expiry = days_to_expiry / 365
+
+    # Use the selected pricing engine (defaults to BS)
+    price_fn = get_pricer(pricing_engine)
+    q = dividend_yield or 0.0
+    interpolated = price_fn(
+        underlying_price, x_IV, y_IV, years_to_expiry, risk_free_rate, q
+    )
+
+    # Use stable finite difference method instead of np.gradient for second derivatives
+    # This is critical for numerical stability, especially for deep OTM options
+    second_derivative_discrete = finite_diff_second_derivative(interpolated, x_IV)
 
     # apply coefficient to reflect the time value of money
-    pdf = np.exp(risk_free_rate * years_forward) * second_derivative_discrete
+    pdf = np.exp(risk_free_rate * years_to_expiry) * second_derivative_discrete
 
     # ensure non-negative pdf values (may occur for far OOM options)
     pdf = np.maximum(pdf, 0)  # Set all negative values to 0
@@ -412,7 +520,7 @@ def _crop_pdf(
     return pdf[0][l : r + 1], pdf[1][l : r + 1]
 
 
-def _bs_iv_brent_method(price, S, K, t, r):
+def _bs_iv_brent_method(price, S, K, t, r, q=0.0):
     """
     Computes the implied volatility (IV) of a European call option using Brent's method.
 
@@ -444,9 +552,26 @@ def _bs_iv_brent_method(price, S, K, t, r):
         return np.nan  # No volatility if time is zero or negative
 
     try:
-        return brentq(lambda iv: _call_value(S, K, iv, t, r) - price, 1e-6, 5.0)
+        return brentq(lambda iv: _bs_price(S, K, iv, t, r, q) - price, 1e-6, 5.0)
     except ValueError:
         return np.nan  # Return NaN if no solution is found
+
+
+def _black76_iv_brent_method(price, F, K, t, r):
+    """Implied volatility for Black-76 using Brent's method with bounds."""
+    if t <= 0:
+        return np.nan
+
+    df = np.exp(-r * t)
+    lower = df * max(F - K, 0.0)
+    upper = df * F
+    if price < lower or price > upper:
+        return np.nan
+
+    try:
+        return brentq(lambda iv: _b76_price(F, K, iv, t, r, 0.0) - price, 1e-6, 5.0)
+    except ValueError:
+        return np.nan
 
 
 def _bs_iv_newton_method(
@@ -455,8 +580,9 @@ def _bs_iv_newton_method(
     K: float,
     t: float,
     r: float,
+    q: float = 0.0,
     precision: float = 1e-4,
-    initial_guess: float = None,
+    initial_guess: float | None = None,
     max_iter: int = 1000,
     verbose: bool = False,
 ) -> float:
@@ -487,16 +613,15 @@ def _bs_iv_newton_method(
     iv = initial_guess
 
     for i in range(max_iter):
-        # Compute Black-Scholes model price and Vega
-        P = _call_value(S, K, iv, t, r)
+        # Compute model price and Vega
+        P = _bs_price(S, K, iv, t, r, q)
         diff = price - P
 
         # Check for convergence
         if abs(diff) < precision:
             return iv
 
-        # Compute Vega (gradient)
-        grad = _call_vega(S, K, iv, t, r)
+        grad = _bs_vega(S, K, iv, t, r, q)
 
         # Prevent division by near-zero Vega to avoid large jumps
         if abs(grad) < 1e-6:
@@ -517,19 +642,3 @@ def _bs_iv_newton_method(
         print(f"Did not converge after {max_iter} iterations")
 
     return np.nan  # Return NaN if the method fails to converge
-
-
-def _call_vega(S, K, sigma, t, r):
-    # TODO: refactor this function (style)
-    with np.errstate(divide="ignore"):
-        d1 = np.divide(1, sigma * np.sqrt(t)) * (np.log(S / K) + (r + sigma**2 / 2) * t)
-    return np.multiply(S, norm.pdf(d1)) * np.sqrt(t)
-
-
-def _call_value(S, K, sigma, t, r):
-    # TODO: refactor this function (style)
-    # use np.multiply and divide to handle divide-by-zero
-    with np.errstate(divide="ignore"):
-        d1 = np.divide(1, sigma * np.sqrt(t)) * (np.log(S / K) + (r + sigma**2 / 2) * t)
-        d2 = d1 - sigma * np.sqrt(t)
-    return np.multiply(norm.cdf(d1), S) - np.multiply(norm.cdf(d2), K * np.exp(-r * t))

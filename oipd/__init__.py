@@ -5,7 +5,6 @@ from oipd.core import (
     calculate_pdf,
     calculate_cdf,
     calculate_quartiles,
-    fit_kde,
     OIPDError,
     InvalidInputError,
     CalculationError,
@@ -13,14 +12,21 @@ from oipd.core import (
 
 from oipd.io import CSVReader, DataFrameReader, CSVReadError
 
-__version__ = "0.0.5"
+# Optional: explicitly re-export vendor-specific errors later if needed
+
+from oipd.estimator import RND, ModelParams, RNDResult
+from oipd.market_inputs import (
+    MarketInputs, VendorSnapshot, ResolvedMarket, 
+    FillMode, resolve_market
+)
+
+__version__ = "0.1.0"
 
 __all__ = [
     # Core functions
     "calculate_pdf",
     "calculate_cdf",
     "calculate_quartiles",
-    "fit_kde",
     # Exceptions
     "OIPDError",
     "InvalidInputError",
@@ -29,4 +35,12 @@ __all__ = [
     # Readers
     "CSVReader",
     "DataFrameReader",
+    # High-level API
+    "RND",
+    "MarketInputs",  # Immutable input class
+    "ResolvedMarket",  # Resolved parameters with provenance
+    "VendorSnapshot",  # Vendor data snapshot
+    "FillMode",  # Fill mode literal type
+    "ModelParams",
+    "RNDResult",
 ]
