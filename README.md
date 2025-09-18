@@ -75,4 +75,4 @@ See [more examples](examples/example.ipynb) with provided options data.
 
 Pull requests welcome! Reach out on GitHub issues to discuss design choices.
 
-Join the [Discord community](https://discord.gg/pWVrmQWk) to share ideas, discuss strategies, and get support. 
+Join the [Discord community](https://discord.gg/pWVrmQWk) to share ideas, discuss strategies, and get support. Message me with your feature requests, and let me know how you use this. 
