@@ -215,5 +215,3 @@ Algorithmic improvements:
 - infer forward price using a band of near-ATM option-pairs, rather than the one nearest pair
 - American-option de-Americanisation module
 - full term-structure surface (`RNDTermSurface`)
-
-Pull requests welcome! Reach out on GitHub issues to discuss design choices.
