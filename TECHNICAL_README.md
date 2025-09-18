@@ -138,7 +138,7 @@ This illustrates how option prices contain information about the probabilities o
 For a simplified worked example, see this [excellent blog post](https://reasonabledeviations.com/2020/10/01/option-implied-pdfs/).
 For a complete reading of the financial theory, see [this paper](https://www.bankofengland.co.uk/-/media/boe/files/quarterly-bulletin/2000/recent-developments-in-extracting-information-from-options-markets.pdf?la=en&hash=8D29F2572E08B9F2B541C04102DE181C791DB870).
 
-However, it's important to note that risk-neutral probabilities (what OIPD calculates) are not the same as physical real-world probabilities. 
+However, it's important to note that risk-neutral probabilities (what OIPD calculates) are not the same as physical real-world probabilities. See [article](https://www.soa.org/4ab88e/globalassets/assets/files/resources/research-report/2022/understanding-the-connection.pdf) for an intro reading. 
 
 ---
 
