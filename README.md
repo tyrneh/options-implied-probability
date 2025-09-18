@@ -56,19 +56,20 @@ See [more examples](examples/example.ipynb) with provided options data.
 
 # Use cases
 
-**Retail traders: XYZ**
+**Event-driven strategies: assess market's view about the likelihood of merger**
 
-- XYZ
+- Nippon Steel offered to acquire US Steel for $55 per share; in early 2025, US Steel was trading at $30 per share. Using OIPD, you find that the market believed US Steel had a ~20% probability of acquisition (price >= $55 by end of year)
+- If you believe that political backlash was overstated and the acquisition was likely to be approved, then you can quantify the a trade's expected payoff. Compare your subjective belief with the market-priced probability to determine expected value of buying stock or calls
 
-**Professional managers: Compute your portfolio's forward-looking tail risk ahead of turbulent earnings season**
+**Risk management: compute forward-looking VaR**
 
-- Historical view: A 99% 12-month VaR of 3% is backward-looking and assumes a parametric distribution–often unrealistic before catalysts
-- Market-implied view: Ahead of earnings and a central-bank meeting, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% portfolio-blended VaR
+- A 99% 12-month VaR of 3% is (i) backward-looking and (ii) assumes a parametric distribution, often unrealistic assumptions especially before catalysts
+- Ahead of earnings season, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% portfolio-blended VaR
 
-**Corporates: Decide the next commodity hedge tranche**
+**Treasury management: Decide the next commodity hedge tranche**
 
-- Quantify budget risk: As an airline, a portion of next year’s jet fuel demand is hedged; the rest floats. Use OIPD to estimate the probability of breaching your budget and the expected overspend (earnings-at-risk) on the unhedged slice.
-- Adjust hedging coverage when tails fatten: If OIPD shows higher price risk, add a small 5–10% hedged tranche using to pull P(breach)/EaR back within board guardrails
+- As an airline, a portion of next year’s jet fuel demand is hedged; the rest floats. Use OIPD to estimate the probability of breaching your budget and the expected overspend (earnings-at-risk) on the unhedged slice
+- If OIPD shows higher price risk, add a small 5–10% hedged tranche using to pull P(breach)/EaR back within board guardrails
 
 # Community
 
