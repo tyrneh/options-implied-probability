@@ -215,3 +215,6 @@ Algorithmic improvements:
 - infer forward price using a band of near-ATM option-pairs, rather than the one nearest pair
 - American-option de-Americanisation module
 - full term-structure surface (`RNDTermSurface`)
+- Research in conversion from risk-neutral to physical probabilities 
+
+The list describes potential features and research directions; it is neither exhaustive nor a prescribed implementation schedule.
