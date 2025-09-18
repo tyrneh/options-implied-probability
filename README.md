@@ -1,4 +1,4 @@
-![OIPD logo](.meta/images/OIPD%20Logo.png)
+![OIPD logo](https://github.com/tyrneh/options-implied-probability/blob/main/.meta/images/OIPD%20Logo.png)
 
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/oipd?logo=python&logoColor=white)](https://pypi.org/project/oipd/)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tyrneh/options-implied-probability/blob/main/examples/OIPD_colab_demo.ipynb)
@@ -14,7 +14,7 @@ While markets don't predict the future with certainty, under the efficient marke
 Traditionally, extracting these “risk-neutral densities” required institutional knowledge and resources, limited to specialist quant-desks. OIPD makes this capability accessible to everyone — delivering an institutional-grade tool in a simple, production-ready Python package.
 
 <p align="center" style="margin-top: 80px;">
-  <img src="example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
+  <img src="https://github.com/tyrneh/options-implied-probability/blob/main/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
 </p>
 
 
