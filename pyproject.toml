@@ -9,6 +9,8 @@ readme = "README.md"
 authors = [
   { name="Henry Tian", email="tyrneh@gmail.com" },
   { name="Jannic Holzer", email="jannic.holzer@gmail.com" },
+  { name="Chun Hei Hung", email="chunhei1848@gmail.com" },
+  { name="Melanie Chen", email="melaniechen28@gmail.com" },
 ]
 license = {text = "Apache License 2.0"}
 description = "Generate probability distributions on the future price of publicly traded securities using options data"
