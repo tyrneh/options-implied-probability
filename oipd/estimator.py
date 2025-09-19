@@ -44,7 +44,9 @@ class ModelParams:
     american_to_european: bool = False  # placeholder for future functionality
     pricing_engine: Literal["black76", "bs"] = "black76"
     price_method: Literal["last", "mid"] = "mid"
-    max_staleness_days: Optional[int] = 1
+    max_staleness_days: Optional[int] = (
+        3  # in calendar days; set to 3 by default to accomodate weekends
+    )
 
 
 @dataclass(frozen=True)
@@ -747,8 +749,19 @@ class RND:
             # Resolve market parameters by merging user inputs with vendor snapshot
             resolved = resolve_market(market, snapshot, mode=fill)
 
+            # Choose effective model: default to last price for yfinance
+            effective_model = (
+                model
+                if model is not None
+                else (
+                    ModelParams(price_method="last")
+                    if vendor == "yfinance"
+                    else ModelParams()
+                )
+            )
+
             # Run estimation
-            prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
+            prices, pdf, cdf, meta = _estimate(chain, resolved, effective_model)
 
         # Add ticker and vendor info to metadata
         meta.update(

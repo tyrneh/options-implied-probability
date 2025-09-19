@@ -72,9 +72,11 @@ ModelParams(
     solver             = "newton" | "brent",   # IV root-finder; defaults to brent
     pricing_engine     = "black76" | "bs",     # default forward-based Black-76. Use Black-Scholes only when puts data are unavailable
     price_method       = "last" | "mid",       # defaults to 'mid'; mid-price calculated as `(bid + ask) / 2`
-    max_staleness_days = 1,                   # filter options older than N calendar days from valuation_date. Set to None to disable filtering
+    max_staleness_days = 3,                   # filter options older than N calendar days from valuation_date. Defaults to 3 to accomodate weekends. Set to None to disable filtering
 )
 ```
+
+Note that mid prices are preferred over last, due to lower noise from stale quotes. However, Yahoo Finance often doesn't have bid/ask data, so the from_ticker() method for yfinance uses last prices by default. 
 
 ### 2.4 RND estimator
 
