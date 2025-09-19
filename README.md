@@ -77,3 +77,21 @@ See [more examples](examples/example.ipynb) with provided options data.
 Pull requests welcome! Reach out on GitHub issues to discuss design choices.
 
 Join the [Discord community](https://discord.gg/pWVrmQWk) to share ideas, discuss strategies, and get support. Message me with your feature requests, and let me know how you use this. 
+
+
+
+# Current Roadmap
+
+Convenience features:
+- integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
+
+Algorithmic improvements:
+- implement no-arbitrage checks 
+- fit IV smile using SABR model
+- infer forward price using a band of near-ATM option-pairs, rather than the one nearest pair
+- American-option de-Americanisation module
+- full term-structure surface (`RNDTermSurface`)
+- Research in conversion from risk-neutral to physical probabilities 
+
+The list describes potential features and research directions; it is neither exhaustive nor a prescribed implementation schedule.
+
