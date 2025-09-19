@@ -204,20 +204,3 @@ print(f"Current price: ${est.market.underlying_price:.2f}")
 print(f"Source: {est.market.provenance.price}")  # "vendor"
 print(est.summary())  # One-line summary of all sources
 ```
-
----
-
-## 6. Current Roadmap
-
-Convenience features:
-- integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
-
-Algorithmic improvements:
-- implement no-arbitrage checks 
-- fit IV smile using SABR model
-- infer forward price using a band of near-ATM option-pairs, rather than the one nearest pair
-- American-option de-Americanisation module
-- full term-structure surface (`RNDTermSurface`)
-- Research in conversion from risk-neutral to physical probabilities 
-
-The list describes potential features and research directions; it is neither exhaustive nor a prescribed implementation schedule.
