@@ -50,7 +50,9 @@ est.prob_below(100)                     # P(price < $100)
 est.plot()                              # plot probability and cumulative distribution functions 
 ```
 
-OIPD also supports manual CSV or DataFrame uploads. See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details, and the academic theory behind the technique. 
+OIPD also **supports manual CSV or DataFrame uploads**. 
+
+See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details, and the academic theory behind the technique. 
 
 See [more examples](examples/example.ipynb) with provided options data. 
 
