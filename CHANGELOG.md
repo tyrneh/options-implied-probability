@@ -5,14 +5,17 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2025-09-18
+## [Unreleased]
 ### Added
+- **Cryptocurrency Options Support**: Added Bybit vendor integration for crypto options (BTC, ETH, etc.)
+- New `crypto` installation option: `pip install oipd[crypto]`
+- Bybit API integration via `pybit` library
+- Crypto-specific examples and documentation
 - overhauled user API interface. Now, users interface using the RND() class, and input arguments using MarketInputs and ModelParams
     - integrated plotting functionality
     - integrated convenient functions to access results
 - handles dividend yield and schedule 
 - integrated yfinance support for automated options data pulling, and retrieval of dividend info
-- refactored folder structure - seperated RND from options-pricing functionality
 - integrated put-call parity -> finds market-implied forward price, and implied dividend yield, replaced ITM call options with OTM puts converted to synthetic calls to reduce noise
 - integrated Black-76 pricing model compatible with forwards
 - removed KDE and fit_kde() argument
