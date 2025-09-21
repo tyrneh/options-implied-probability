@@ -40,9 +40,9 @@ class DataFrameReader(AbstractReader):
 
         Raises:
             ValueError: If insufficient data points
-        
+
         Note:
-            Common validation (NaN checks, negative prices, etc.) is handled 
+            Common validation (NaN checks, negative prices, etc.) is handled
             by the base class _validate_data() method.
         """
         # Ensure we have enough data points

@@ -64,9 +64,9 @@ class CSVReader(AbstractReader):
 
         Returns:
             Transformed DataFrame
-        
+
         Note:
-            Common validation (NaN checks, negative prices, etc.) is handled 
+            Common validation (NaN checks, negative prices, etc.) is handled
             by the base class _validate_data() method.
         """
         # CSV-specific transformations can be added here if needed

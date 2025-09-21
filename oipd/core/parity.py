@@ -63,7 +63,9 @@ def infer_forward_from_atm(
                         "strike": row["strike"],
                         "call_price": row["call_price"],
                         "put_price": row["put_price"],
-                        "distance_from_underlying": abs(row["strike"] - underlying_price),
+                        "distance_from_underlying": abs(
+                            row["strike"] - underlying_price
+                        ),
                     }
                 )
 
@@ -489,7 +491,9 @@ def preprocess_with_parity(
 
     try:
         # Apply parity preprocessing
-        forward_price = infer_forward_from_atm(options_df, underlying_price, discount_factor)
+        forward_price = infer_forward_from_atm(
+            options_df, underlying_price, discount_factor
+        )
         cleaned_df = apply_put_call_parity(options_df, forward_price, discount_factor)
         return cleaned_df
 

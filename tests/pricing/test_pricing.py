@@ -55,7 +55,7 @@ def test_pdf_integrates_to_one():
     # Add required bid/ask columns for the new price_method functionality
     df["bid"] = prices * 0.95  # Mock bid slightly below last_price
     df["ask"] = prices * 1.05  # Mock ask slightly above last_price
-    
+
     pdf_x, pdf_y = calculate_pdf(
         df,
         underlying_price=S,

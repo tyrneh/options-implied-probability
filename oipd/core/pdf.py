@@ -330,7 +330,9 @@ def _calculate_IV(
         elif solver_method == "brent":
             iv_solver_scalar = _bs_iv_brent_method
         else:
-            raise ValueError("Invalid solver_method. Choose either 'newton' or 'brent'.")
+            raise ValueError(
+                "Invalid solver_method. Choose either 'newton' or 'brent'."
+            )
 
         q = dividend_yield
         iv_values = np.fromiter(

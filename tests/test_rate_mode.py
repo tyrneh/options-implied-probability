@@ -40,4 +40,3 @@ def test_risk_free_rate_mode_continuous_passthrough():
 
     resolved = resolve_market(market_in, vendor=None)
     assert abs(resolved.risk_free_rate - r_cont) < 1e-16
-
