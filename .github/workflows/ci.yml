@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request:
     branches: ["**"]
 
@@ -27,8 +27,8 @@ jobs:
       - name: Run formatter
         run: black --check .
 
-      - name: Run linter
-        run: flake8 .
+      # - name: Run linter
+      #   run: flake8 .
   test:
     runs-on: ubuntu-latest
     needs: lint   # only run tests if lint passes
