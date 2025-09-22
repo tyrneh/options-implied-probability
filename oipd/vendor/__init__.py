@@ -23,7 +23,9 @@ def register(name: str, dotted_path: str) -> None:
 def get_reader(name: str):
     """Return the Reader class for a given vendor name."""
     if name not in _REGISTRY:
-        raise ValueError(f"Unknown vendor '{name}'. Available: {list(_REGISTRY)}")
+        raise ValueError(
+            f"Unknown vendor '{name}'. Available: {list(_REGISTRY)}"
+        )
     module = import_module(_REGISTRY[name])
     # convention: module defines `Reader` class to instantiate
     return getattr(module, "Reader")

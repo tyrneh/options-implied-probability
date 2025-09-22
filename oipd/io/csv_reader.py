@@ -47,7 +47,9 @@ class CSVReader(AbstractReader):
                 f"Unable to decode CSV file (check encoding): {url}. Error: {str(e)}"
             )
         except Exception as e:
-            raise CSVReadError(f"Failed to read CSV file: {url}. Error: {str(e)}")
+            raise CSVReadError(
+                f"Failed to read CSV file: {url}. Error: {str(e)}"
+            )
 
         if df.empty:
             raise ValueError(f"CSV file contains no data: {url}")

@@ -55,7 +55,11 @@ class TestDetectParityOpportunity:
     def test_detect_requires_pair(self):
         """Parity detection requires at least one same-strike pair."""
         df = pd.DataFrame(
-            {"strike": [95, 100], "last_price": [2.5, 1.2], "option_type": ["C", "P"]}
+            {
+                "strike": [95, 100],
+                "last_price": [2.5, 1.2],
+                "option_type": ["C", "P"],
+            }
         )
 
         assert detect_parity_opportunity(df) is False
@@ -63,7 +67,11 @@ class TestDetectParityOpportunity:
     def test_detect_single_pair(self):
         """Detection should succeed with a single call-put pair."""
         df = pd.DataFrame(
-            {"strike": [100, 100], "last_price": [2.5, 1.2], "option_type": ["C", "P"]}
+            {
+                "strike": [100, 100],
+                "last_price": [2.5, 1.2],
+                "option_type": ["C", "P"],
+            }
         )
 
         assert detect_parity_opportunity(df) is True
@@ -92,9 +100,15 @@ class TestInferForwardFromATM:
             put_price = put_intrinsic + 1.0
 
             data.append(
-                {"strike": strike, "last_price": call_price, "option_type": "C"}
+                {
+                    "strike": strike,
+                    "last_price": call_price,
+                    "option_type": "C",
+                }
             )
-            data.append({"strike": strike, "last_price": put_price, "option_type": "P"})
+            data.append(
+                {"strike": strike, "last_price": put_price, "option_type": "P"}
+            )
 
         return pd.DataFrame(data)
 
@@ -139,7 +153,9 @@ class TestInferForwardFromATM:
             }
         )
 
-        with pytest.raises(ValueError, match="No strikes found with both call and put"):
+        with pytest.raises(
+            ValueError, match="No strikes found with both call and put"
+        ):
             infer_forward_from_atm(df, 100.0, 0.99)
 
 
@@ -219,7 +235,9 @@ class TestPreprocessWithParity:
 
     def test_preprocess_no_benefit_calls_only(self):
         """Test preprocessing with calls-only data (no benefit)."""
-        df = pd.DataFrame({"strike": [95, 100, 105], "last_price": [2.5, 1.8, 0.5]})
+        df = pd.DataFrame(
+            {"strike": [95, 100, 105], "last_price": [2.5, 1.8, 0.5]}
+        )
 
         spot_price = 100.0
         discount_factor = 0.99
@@ -232,7 +250,11 @@ class TestPreprocessWithParity:
     def test_preprocess_fallback_on_error(self, monkeypatch):
         """Test that preprocessing falls back gracefully on errors."""
         df = pd.DataFrame(
-            {"strike": [100, 100], "last_price": [2.0, 1.5], "option_type": ["C", "P"]}
+            {
+                "strike": [100, 100],
+                "last_price": [2.0, 1.5],
+                "option_type": ["C", "P"],
+            }
         )
 
         spot_price = 100.0
@@ -247,7 +269,8 @@ class TestPreprocessWithParity:
             result = preprocess_with_parity(df, spot_price, discount_factor)
 
             assert any(
-                "Put-call parity preprocessing failed" in str(msg.message) for msg in w
+                "Put-call parity preprocessing failed" in str(msg.message)
+                for msg in w
             )
 
         pd.testing.assert_frame_equal(result, df)
@@ -265,14 +288,24 @@ class TestIntegrationScenarios:
         data = []
         for strike in strikes:
             # Realistic call prices (decreasing with strike)
-            call_price = max(0.1, 15 - 0.15 * strike + np.random.uniform(-0.2, 0.2))
+            call_price = max(
+                0.1, 15 - 0.15 * strike + np.random.uniform(-0.2, 0.2)
+            )
             # Realistic put prices (increasing with strike)
-            put_price = max(0.1, 0.05 * strike - 2 + np.random.uniform(-0.2, 0.2))
+            put_price = max(
+                0.1, 0.05 * strike - 2 + np.random.uniform(-0.2, 0.2)
+            )
 
             data.append(
-                {"strike": strike, "last_price": call_price, "option_type": "C"}
+                {
+                    "strike": strike,
+                    "last_price": call_price,
+                    "option_type": "C",
+                }
             )
-            data.append({"strike": strike, "last_price": put_price, "option_type": "P"})
+            data.append(
+                {"strike": strike, "last_price": put_price, "option_type": "P"}
+            )
 
         df = pd.DataFrame(data)
 
@@ -297,9 +330,21 @@ class TestIntegrationScenarios:
         # Create data with some missing puts or calls
         df = pd.DataFrame(
             {
-                "strike": [95, 95, 100, 105, 105],  # Missing put at 100, call at 105
+                "strike": [
+                    95,
+                    95,
+                    100,
+                    105,
+                    105,
+                ],  # Missing put at 100, call at 105
                 "last_price": [6.0, 1.0, 2.5, 0.5, 4.5],
-                "option_type": ["C", "P", "C", "C", "P"],  # Note: 105 has both C and P
+                "option_type": [
+                    "C",
+                    "P",
+                    "C",
+                    "C",
+                    "P",
+                ],  # Note: 105 has both C and P
             }
         )
 
@@ -311,7 +356,10 @@ class TestIntegrationScenarios:
         # Should return rows only where usable prices exist
         assert len(result) == 2
         assert set(result["strike"]) == {95, 105}
-        assert result.loc[result["strike"] == 95, "source"].iloc[0] == "put_converted"
+        assert (
+            result.loc[result["strike"] == 95, "source"].iloc[0]
+            == "put_converted"
+        )
         assert result.loc[result["strike"] == 105, "source"].iloc[0] == "call"
 
 

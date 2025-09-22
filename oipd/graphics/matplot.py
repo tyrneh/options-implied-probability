@@ -63,7 +63,11 @@ def generate_pdf_figure(
     if current_price:
         label = f"{current_price:.2f}"
         line = ax.axvline(
-            x=current_price, color="green", linestyle=":", label=label, linewidth=0.75
+            x=current_price,
+            color="green",
+            linestyle=":",
+            label=label,
+            linewidth=0.75,
         )
         # calculate the offset so that it is centered in the current range
         bottom, top = ax.get_ylim()
@@ -135,7 +139,11 @@ def generate_cdf_figure(
     if current_price:
         label = f"{current_price:.2f}"
         line = ax.axvline(
-            x=current_price, color="green", linestyle=":", label=label, linewidth=0.75
+            x=current_price,
+            color="green",
+            linestyle=":",
+            label=label,
+            linewidth=0.75,
         )
         _label_line_no_warnings(line, x=current_price, yoffset=0.35)
     if quartiles:

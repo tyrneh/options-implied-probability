@@ -49,7 +49,10 @@ def infer_forward_from_atm(
     # Find call-put pairs using the same logic as apply_put_call_parity
     candidate_pairs = []
 
-    if "call_price" in options_df.columns and "put_price" in options_df.columns:
+    if (
+        "call_price" in options_df.columns
+        and "put_price" in options_df.columns
+    ):
         # Format 1: Already have call_price/put_price columns
         for _, row in options_df.iterrows():
             if (
@@ -69,7 +72,10 @@ def infer_forward_from_atm(
                     }
                 )
 
-    elif "last_price" in options_df.columns and "option_type" in options_df.columns:
+    elif (
+        "last_price" in options_df.columns
+        and "option_type" in options_df.columns
+    ):
         # Format 2: Need to find matching call-put pairs
         strikes = options_df["strike"].unique()
 
@@ -99,7 +105,9 @@ def infer_forward_from_atm(
                             "strike": strike,
                             "call_price": call_price,
                             "put_price": put_price,
-                            "distance_from_underlying": abs(strike - underlying_price),
+                            "distance_from_underlying": abs(
+                                strike - underlying_price
+                            ),
                         }
                     )
     else:
@@ -125,7 +133,9 @@ def infer_forward_from_atm(
             forward_price = k_atm + (call_price - put_price) / discount_factor
 
             # Bounds check: option prices should not violate intrinsic values
-            intrinsic_call = max(0.0, discount_factor * (forward_price - k_atm))
+            intrinsic_call = max(
+                0.0, discount_factor * (forward_price - k_atm)
+            )
             intrinsic_put = max(0.0, discount_factor * (k_atm - forward_price))
             if call_price < intrinsic_call or put_price < intrinsic_put:
                 continue
@@ -172,7 +182,10 @@ def apply_put_call_parity(
     results = []
 
     # Handle both input formats directly
-    if "call_price" in options_df.columns and "put_price" in options_df.columns:
+    if (
+        "call_price" in options_df.columns
+        and "put_price" in options_df.columns
+    ):
         # Format 1: Separate call_price/put_price columns
         for _, row in options_df.iterrows():
             strike = row["strike"]
@@ -180,17 +193,27 @@ def apply_put_call_parity(
             # For this format, we create synthetic call/put data from the row
             # Check if this row has call data
             call_price = row.get("call_price")
-            call_data = row if pd.notna(call_price) and call_price > 0 else None
+            call_data = (
+                row if pd.notna(call_price) and call_price > 0 else None
+            )
 
             # Check if this row has put data
             put_price = row.get("put_price")
             put_data = row if pd.notna(put_price) and put_price > 0 else None
 
             _process_strike_prices(
-                results, strike, call_data, put_data, forward_price, discount_factor
+                results,
+                strike,
+                call_data,
+                put_data,
+                forward_price,
+                discount_factor,
             )
 
-    elif "last_price" in options_df.columns and "option_type" in options_df.columns:
+    elif (
+        "last_price" in options_df.columns
+        and "option_type" in options_df.columns
+    ):
         # Format 2: option_type format - get prices by strike
         strikes = options_df["strike"].unique()
 
@@ -206,7 +229,12 @@ def apply_put_call_parity(
             put_row = put_data.iloc[0] if len(put_data) > 0 else None
 
             _process_strike_prices(
-                results, strike, call_row, put_row, forward_price, discount_factor
+                results,
+                strike,
+                call_row,
+                put_row,
+                forward_price,
+                discount_factor,
             )
     else:
         raise ValueError(
@@ -215,9 +243,13 @@ def apply_put_call_parity(
         )
 
     if not results:
-        raise ValueError("No valid option prices after put-call parity conversion")
+        raise ValueError(
+            "No valid option prices after put-call parity conversion"
+        )
 
-    result_df = pd.DataFrame(results).sort_values("strike").reset_index(drop=True)
+    result_df = (
+        pd.DataFrame(results).sort_values("strike").reset_index(drop=True)
+    )
     result_df["F_used"] = forward_price
     result_df["DF_used"] = discount_factor
 
@@ -302,19 +334,27 @@ def _process_strike_prices(
     if strike > forward_price:
         # OTM call region - use ONLY original calls (never convert puts)
         final_mid = call_mid if pd.notna(call_mid) and call_mid > 0 else np.nan
-        final_last = call_last if pd.notna(call_last) and call_last > 0 else np.nan
+        final_last = (
+            call_last if pd.notna(call_last) and call_last > 0 else np.nan
+        )
         source = "call"
         # Use call's volume for OTM strikes
-        volume = _extract_volume(call_data) if call_data is not None else np.nan
+        volume = (
+            _extract_volume(call_data) if call_data is not None else np.nan
+        )
     else:
         # ITM call region - use ONLY synthetic calls from puts (never use original ITM calls)
         final_mid = (
-            _convert_put_to_call(put_mid, strike, forward_price, discount_factor)
+            _convert_put_to_call(
+                put_mid, strike, forward_price, discount_factor
+            )
             if pd.notna(put_mid) and put_mid > 0
             else np.nan
         )
         final_last = (
-            _convert_put_to_call(put_last, strike, forward_price, discount_factor)
+            _convert_put_to_call(
+                put_last, strike, forward_price, discount_factor
+            )
             if pd.notna(put_last) and put_last > 0
             else np.nan
         )
@@ -345,7 +385,10 @@ def _process_strike_prices(
 
 
 def _convert_put_to_call(
-    put_price: float, strike: float, forward_price: float, discount_factor: float
+    put_price: float,
+    strike: float,
+    forward_price: float,
+    discount_factor: float,
 ) -> float:
     """
     Convert put price to synthetic call price using put-call parity.
@@ -401,7 +444,10 @@ def detect_parity_opportunity(options_df: pd.DataFrame) -> bool:
 
     try:
         # Check coverage using the same logic as other functions
-        if "call_price" in options_df.columns and "put_price" in options_df.columns:
+        if (
+            "call_price" in options_df.columns
+            and "put_price" in options_df.columns
+        ):
             # Format 1: Check for both calls and puts
             has_both_count = 0
             for _, row in options_df.iterrows():
@@ -414,7 +460,10 @@ def detect_parity_opportunity(options_df: pd.DataFrame) -> bool:
                     has_both_count += 1
             return has_both_count >= 1
 
-        elif "last_price" in options_df.columns and "option_type" in options_df.columns:
+        elif (
+            "last_price" in options_df.columns
+            and "option_type" in options_df.columns
+        ):
             # Format 2: Check for strikes with both calls and puts
             strikes = options_df["strike"].unique()
             has_both_count = 0
@@ -494,7 +543,9 @@ def preprocess_with_parity(
         forward_price = infer_forward_from_atm(
             options_df, underlying_price, discount_factor
         )
-        cleaned_df = apply_put_call_parity(options_df, forward_price, discount_factor)
+        cleaned_df = apply_put_call_parity(
+            options_df, forward_price, discount_factor
+        )
         return cleaned_df
 
     except Exception as e:
