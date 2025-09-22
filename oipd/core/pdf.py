@@ -128,9 +128,7 @@ def calculate_pdf(
     )
 
     if options_data.empty:
-        raise CalculationError(
-            "Failed to calculate implied volatility for any options"
-        )
+        raise CalculationError("Failed to calculate implied volatility for any options")
 
     denoised_iv = _fit_bspline_IV(options_data)
     underlying_for_pricing = (
@@ -169,9 +167,7 @@ def calculate_cdf(
         InvalidInputError: If input is invalid
     """
     if not isinstance(pdf_point_arrays, tuple) or len(pdf_point_arrays) != 2:
-        raise InvalidInputError(
-            "pdf_point_arrays must be a tuple of two arrays"
-        )
+        raise InvalidInputError("pdf_point_arrays must be a tuple of two arrays")
 
     x_array, pdf_array = pdf_point_arrays
 
@@ -192,8 +188,7 @@ def calculate_cdf(
             integral = 0.0 + remaining_area / 2
         else:
             integral = (
-                simpson(y=pdf_array[i - 1 : i + 1], x=x_array[i - 1 : i + 1])
-                + cdf[-1]
+                simpson(y=pdf_array[i - 1 : i + 1], x=x_array[i - 1 : i + 1]) + cdf[-1]
             )
         cdf.append(integral)
 
@@ -239,8 +234,7 @@ def _extrapolate_call_prices(
     min_strike = int(options_data.strike.min())
     max_strike = int(options_data.strike.max())
     lower_extrapolation = DataFrame(
-        {"strike": p, "last_price": underlying_price - p}
-        for p in range(0, min_strike)
+        {"strike": p, "last_price": underlying_price - p} for p in range(0, min_strike)
     )
     upper_extrapolation = DataFrame(
         {
@@ -276,9 +270,7 @@ def _calculate_price(options_data: DataFrame, price_method: str) -> DataFrame:
             mid = (options_data["bid"] + options_data["ask"]) / 2
             mask = options_data["bid"].notna() & options_data["ask"].notna()
             if mask.any():
-                options_data["price"] = np.where(
-                    mask, mid, options_data["last_price"]
-                )
+                options_data["price"] = np.where(mask, mid, options_data["last_price"])
                 if not mask.all():
                     warnings.warn(
                         "Using last_price for rows with missing bid/ask",
@@ -435,14 +427,10 @@ def finite_diff_second_derivative(y: np.ndarray, x: np.ndarray) -> np.ndarray:
         ValueError: If grid spacing is non-uniform or arrays have insufficient length
     """
     if len(x) != len(y):
-        raise ValueError(
-            f"Arrays must have same length. Got x: {len(x)}, y: {len(y)}"
-        )
+        raise ValueError(f"Arrays must have same length. Got x: {len(x)}, y: {len(y)}")
 
     if len(x) < 5:
-        raise ValueError(
-            f"Need at least 5 points for 5-point stencil. Got {len(x)}"
-        )
+        raise ValueError(f"Need at least 5 points for 5-point stencil. Got {len(x)}")
 
     # Check for uniform grid spacing (required for finite differences)
     h = np.diff(x)
@@ -462,9 +450,9 @@ def finite_diff_second_derivative(y: np.ndarray, x: np.ndarray) -> np.ndarray:
 
     # Interior points using 5-point stencil (4th order accurate)
     for i in range(2, len(y) - 2):
-        d2y[i] = (
-            -y[i - 2] + 16 * y[i - 1] - 30 * y[i] + 16 * y[i + 1] - y[i + 2]
-        ) / (12 * h**2)
+        d2y[i] = (-y[i - 2] + 16 * y[i - 1] - 30 * y[i] + 16 * y[i + 1] - y[i + 2]) / (
+            12 * h**2
+        )
 
     # Boundary points using forward/backward differences (2nd order accurate)
     # Left boundary (first two points)
@@ -516,9 +504,7 @@ def _create_pdf_point_arrays(
 
     # Use stable finite difference method instead of np.gradient for second derivatives
     # This is critical for numerical stability, especially for deep OTM options
-    second_derivative_discrete = finite_diff_second_derivative(
-        interpolated, x_IV
-    )
+    second_derivative_discrete = finite_diff_second_derivative(interpolated, x_IV)
 
     # apply coefficient to reflect the time value of money
     pdf = np.exp(risk_free_rate * years_to_expiry) * second_derivative_discrete
@@ -573,9 +559,7 @@ def _bs_iv_brent_method(price, S, K, t, r, q=0.0):
         return np.nan  # No volatility if time is zero or negative
 
     try:
-        return brentq(
-            lambda iv: _bs_price(S, K, iv, t, r, q) - price, 1e-6, 5.0
-        )
+        return brentq(lambda iv: _bs_price(S, K, iv, t, r, q) - price, 1e-6, 5.0)
     except ValueError:
         return np.nan  # Return NaN if no solution is found
 
@@ -592,9 +576,7 @@ def _black76_iv_brent_method(price, F, K, t, r):
         return np.nan
 
     try:
-        return brentq(
-            lambda iv: _b76_price(F, K, iv, t, r, 0.0) - price, 1e-6, 5.0
-        )
+        return brentq(lambda iv: _b76_price(F, K, iv, t, r, 0.0) - price, 1e-6, 5.0)
     except ValueError:
         return np.nan
 
@@ -651,9 +633,7 @@ def _bs_iv_newton_method(
         # Prevent division by near-zero Vega to avoid large jumps
         if abs(grad) < 1e-6:
             if verbose:
-                print(
-                    f"Iteration {i}: Vega too small (grad={grad:.6f}), stopping."
-                )
+                print(f"Iteration {i}: Vega too small (grad={grad:.6f}), stopping.")
             return np.nan
 
         # Newton-Raphson update
@@ -662,9 +642,7 @@ def _bs_iv_newton_method(
         # Prevent extreme IV values (e.g., IV > 500%)
         if iv < 1e-6 or iv > 5.0:
             if verbose:
-                print(
-                    f"Iteration {i}: IV out of bounds (iv={iv:.6f}), stopping."
-                )
+                print(f"Iteration {i}: IV out of bounds (iv={iv:.6f}), stopping.")
             return np.nan
 
     if verbose:

@@ -32,9 +32,7 @@ class MarketInputs:
     days_to_expiry: Optional[int] = None
     underlying_price: Optional[float] = None
     dividend_yield: Optional[float] = None
-    dividend_schedule: Optional[pd.DataFrame] = (
-        None  # columns: ex_date, amount
-    )
+    dividend_schedule: Optional[pd.DataFrame] = None  # columns: ex_date, amount
     expiry_date: Optional[date] = None
 
     # Convenience alias used in some UIs
@@ -97,9 +95,7 @@ class ResolvedMarket:
     dividend_yield: Optional[float]
     dividend_schedule: Optional[pd.DataFrame]
     provenance: Provenance
-    source_meta: Dict[
-        str, Any
-    ]  # e.g. {"vendor":"yfinance","asof": "..."} etc.
+    source_meta: Dict[str, Any]  # e.g. {"vendor":"yfinance","asof": "..."} etc.
 
     def summary(self) -> str:
         """Return a one-line summary of resolved parameters and their sources."""
@@ -215,9 +211,7 @@ def resolve_market(
         "underlying_price",
     )
     if price is None or price <= 0:
-        raise ValueError(
-            "No valid underlying_price available (user or vendor)"
-        )
+        raise ValueError("No valid underlying_price available (user or vendor)")
 
     # 3) Resolve dividends with precedence:
     # user schedule > user yield > vendor schedule > vendor yield > none

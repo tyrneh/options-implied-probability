@@ -119,30 +119,22 @@ class TestEndToEndPriceMethod:
             risk_free_rate_mode="continuous",
         )
 
-    def test_rnd_from_dataframe_last_price(
-        self, sample_options_data, market_inputs
-    ):
+    def test_rnd_from_dataframe_last_price(self, sample_options_data, market_inputs):
         """Test RND calculation using last price method."""
         model = ModelParams(price_method="last", pricing_engine="bs")
 
-        result = RND.from_dataframe(
-            sample_options_data, market_inputs, model=model
-        )
+        result = RND.from_dataframe(sample_options_data, market_inputs, model=model)
 
         # Should complete without error
         assert result.prices is not None
         assert result.pdf is not None
         assert result.cdf is not None
 
-    def test_rnd_from_dataframe_mid_price(
-        self, sample_options_data, market_inputs
-    ):
+    def test_rnd_from_dataframe_mid_price(self, sample_options_data, market_inputs):
         """Test RND calculation using mid price method."""
         model = ModelParams(price_method="mid", pricing_engine="bs")
 
-        result = RND.from_dataframe(
-            sample_options_data, market_inputs, model=model
-        )
+        result = RND.from_dataframe(sample_options_data, market_inputs, model=model)
 
         # Should complete without error
         assert result.prices is not None
@@ -284,15 +276,9 @@ class TestRobustDataHandling:
 
         # Check calculations
         assert result.iloc[0]["price"] == 12.5  # (12.0 + 13.0) / 2
-        assert (
-            result.iloc[1]["price"] == 8.2
-        )  # Fallback to last_price (bid missing)
-        assert (
-            result.iloc[2]["price"] == 5.1
-        )  # Fallback to last_price (ask missing)
-        assert (
-            result.iloc[3]["price"] == 3.1
-        )  # Fallback to last_price (bid missing)
+        assert result.iloc[1]["price"] == 8.2  # Fallback to last_price (bid missing)
+        assert result.iloc[2]["price"] == 5.1  # Fallback to last_price (ask missing)
+        assert result.iloc[3]["price"] == 3.1  # Fallback to last_price (bid missing)
         assert result.iloc[4]["price"] == 1.5  # (1.0 + 2.0) / 2
 
     def test_mid_price_with_no_bid_ask_data(self):
@@ -312,9 +298,8 @@ class TestRobustDataHandling:
 
             # Should warn about fallback to last method
             assert len(w) == 1
-            assert (
-                "Requested price_method='mid' but bid/ask data not available"
-                in str(w[0].message)
+            assert "Requested price_method='mid' but bid/ask data not available" in str(
+                w[0].message
             )
             assert "Falling back to price_method='last'" in str(w[0].message)
 
@@ -349,8 +334,7 @@ class TestRobustDataHandling:
 
             # Should warn about missing optional columns
             assert any(
-                "Optional columns not present" in str(warning.message)
-                for warning in w
+                "Optional columns not present" in str(warning.message) for warning in w
             )
 
         # Should complete successfully
@@ -384,6 +368,5 @@ class TestRobustDataHandling:
 
             warning_messages = [str(warning.message) for warning in w]
             assert any(
-                "Optional columns not present" in msg
-                for msg in warning_messages
+                "Optional columns not present" in msg for msg in warning_messages
             )

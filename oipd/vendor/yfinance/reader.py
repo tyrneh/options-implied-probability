@@ -32,9 +32,7 @@ class YFinanceError(Exception):
 
 
 class _YFinanceCache:
-    def __init__(
-        self, cache_dir: str = ".yfinance_cache", ttl_minutes: int = 15
-    ):
+    def __init__(self, cache_dir: str = ".yfinance_cache", ttl_minutes: int = 15):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
         self.ttl = timedelta(minutes=ttl_minutes)
@@ -42,9 +40,7 @@ class _YFinanceCache:
     def _path(self, ticker: str, expiry: str) -> Path:
         return self.cache_dir / f"{ticker}_{expiry}.pkl"
 
-    def get(
-        self, ticker: str, expiry: str
-    ) -> Optional[Tuple[pd.DataFrame, float]]:
+    def get(self, ticker: str, expiry: str) -> Optional[Tuple[pd.DataFrame, float]]:
         p = self._path(ticker, expiry)
         if not p.exists():
             return None
@@ -85,13 +81,9 @@ class _YFinanceCache:
 class Reader(AbstractReader):
     """Fetch call-option chains from *yfinance* and return a validated DataFrame."""
 
-    def __init__(
-        self, cache_enabled: bool = True, cache_ttl_minutes: int = 15
-    ):
+    def __init__(self, cache_enabled: bool = True, cache_ttl_minutes: int = 15):
         self._cache = (
-            _YFinanceCache(ttl_minutes=cache_ttl_minutes)
-            if cache_enabled
-            else None
+            _YFinanceCache(ttl_minutes=cache_ttl_minutes) if cache_enabled else None
         )
         self._yf = None
 
@@ -101,9 +93,7 @@ class Reader(AbstractReader):
             try:
                 import yfinance as yf
             except ImportError as exc:
-                raise ImportError(
-                    "Install with: pip install oipd[yfinance]"
-                ) from exc
+                raise ImportError("Install with: pip install oipd[yfinance]") from exc
             self._yf = yf
         return self._yf
 
@@ -111,9 +101,7 @@ class Reader(AbstractReader):
     def load(
         self,
     ) -> pd.DataFrame:  # pragma: no cover – Unused in this context
-        raise NotImplementedError(
-            "Use read(ticker_expiry, …) via DataSource wrapper"
-        )
+        raise NotImplementedError("Use read(ticker_expiry, …) via DataSource wrapper")
 
     # --- interface required by AbstractReader -------------------------------
     def _ingest_data(self, ticker_expiry: str) -> pd.DataFrame:  # noqa: D401
@@ -145,14 +133,10 @@ class Reader(AbstractReader):
         try:
             tk = yf.Ticker(ticker)
         except Exception as exc:
-            raise YFinanceError(
-                f"yfinance failed for ticker {ticker}: {exc}"
-            ) from exc
+            raise YFinanceError(f"yfinance failed for ticker {ticker}: {exc}") from exc
 
         # current price -------------------------------------------------------
-        price = tk.info.get("currentPrice") or tk.info.get(
-            "regularMarketPrice"
-        )
+        price = tk.info.get("currentPrice") or tk.info.get("regularMarketPrice")
         if price is None:
             hist = tk.history(period="1d")
             if hist.empty:
@@ -268,9 +252,9 @@ class Reader(AbstractReader):
 
         # Combine and sort by strike
         combined_df = pd.concat(combined_data, ignore_index=True)
-        combined_df = combined_df.sort_values(
-            ["strike", "option_type"]
-        ).reset_index(drop=True)
+        combined_df = combined_df.sort_values(["strike", "option_type"]).reset_index(
+            drop=True
+        )
 
         return combined_df
 
@@ -294,9 +278,7 @@ class Reader(AbstractReader):
         try:
             return list(yf.Ticker(ticker).options)
         except Exception as exc:
-            raise YFinanceError(
-                f"Failed to list expiries for {ticker}: {exc}"
-            ) from exc
+            raise YFinanceError(f"Failed to list expiries for {ticker}: {exc}") from exc
 
 
 __all__ = ["Reader", "YFinanceError"]

@@ -36,9 +36,7 @@ class AbstractReader(ABC):
         elif input_data == "":
             raise ValueError("Input filepath is empty")
         elif input_data is None:
-            raise ValueError(
-                "Either an input filepath or DataFrame must be specified"
-            )
+            raise ValueError("Either an input filepath or DataFrame must be specified")
 
         if isinstance(input_data, str):
             input_data = self._ingest_data(input_data)
@@ -58,9 +56,7 @@ class AbstractReader(ABC):
         Arguments:
             url: the url to retrieve the raw data from
         """
-        raise NotImplementedError(
-            "`_ingest_data` method has not been implemented"
-        )
+        raise NotImplementedError("`_ingest_data` method has not been implemented")
 
     def _clean_data(self, raw_data: DataFrame) -> DataFrame:
         """Default cleaning implementation.
@@ -86,9 +82,7 @@ class AbstractReader(ABC):
         # Check for required columns only
         missing_required = required_columns - set(raw_data.columns)
         if missing_required:
-            raise ValueError(
-                f"Data is missing required columns: {missing_required}"
-            )
+            raise ValueError(f"Data is missing required columns: {missing_required}")
 
         # Check which optional columns are present
         present_optional = optional_columns & set(raw_data.columns)
@@ -114,9 +108,9 @@ class AbstractReader(ABC):
                 if "option_type" not in raw_data.columns:
                     # Initialize with NaN, then fill where suffix exists
                     raw_data["option_type"] = np.nan
-                    raw_data.loc[has_suffix, "option_type"] = (
-                        strike_suffix.loc[has_suffix]
-                    )
+                    raw_data.loc[has_suffix, "option_type"] = strike_suffix.loc[
+                        has_suffix
+                    ]
                 else:
                     # Normalize existing option_type for comparison
                     normalized_option_type = (
@@ -141,9 +135,9 @@ class AbstractReader(ABC):
                         | (normalized_option_type == "NAN")
                     )
                     if needs_fill.any():
-                        raw_data.loc[needs_fill, "option_type"] = (
-                            strike_suffix.loc[needs_fill]
-                        )
+                        raw_data.loc[needs_fill, "option_type"] = strike_suffix.loc[
+                            needs_fill
+                        ]
 
                 # Remove trailing C/P from strike strings
                 strike_as_string = strike_as_string.where(
@@ -172,9 +166,7 @@ class AbstractReader(ABC):
 
         # Normalize option_type column to use consistent "C"/"P" format
         if "option_type" in raw_data.columns:
-            raw_data["option_type"] = (
-                raw_data["option_type"].astype(str).str.upper()
-            )
+            raw_data["option_type"] = raw_data["option_type"].astype(str).str.upper()
             raw_data["option_type"] = raw_data["option_type"].replace(
                 {"CALL": "C", "PUT": "P"}
             )
@@ -200,28 +192,19 @@ class AbstractReader(ABC):
         """
         # Check for NaN values in strike column (required)
         if cleaned_data["strike"].isna().any():
-            raise ValueError(
-                "Options data contains NaN values in strike column"
-            )
+            raise ValueError("Options data contains NaN values in strike column")
 
         # Check for zero or negative strikes
         if (cleaned_data["strike"] <= 0).any():
-            raise ValueError(
-                "Options data contains non-positive strike prices"
-            )
+            raise ValueError("Options data contains non-positive strike prices")
 
         # Check for negative prices (only for valid numeric values)
         # NaN and non-numeric values are allowed and will be filtered downstream
         if "last_price" in cleaned_data.columns:
             # Convert to numeric, treating non-numeric values as NaN
-            numeric_prices = pd.to_numeric(
-                cleaned_data["last_price"], errors="coerce"
-            )
+            numeric_prices = pd.to_numeric(cleaned_data["last_price"], errors="coerce")
             valid_prices = numeric_prices.notna()
-            if (
-                valid_prices.any()
-                and (numeric_prices.loc[valid_prices] < 0).any()
-            ):
+            if valid_prices.any() and (numeric_prices.loc[valid_prices] < 0).any():
                 raise ValueError("Options data contains negative prices")
 
         # Sort by strike price for consistency
@@ -237,6 +220,4 @@ class AbstractReader(ABC):
         Arguments:
             cleaned_data: the raw ingested data in a DataFrame
         """
-        raise NotImplementedError(
-            "_transform_data method has not been implemented"
-        )
+        raise NotImplementedError("_transform_data method has not been implemented")

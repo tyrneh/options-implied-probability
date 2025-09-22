@@ -58,16 +58,12 @@ class TestFiniteDifferenceStability:
         )
 
         # This should not crash or produce extreme oscillations (the original issue)
-        d2y_deep_otm = finite_diff_second_derivative(
-            deep_otm_prices, deep_otm_strikes
-        )
+        d2y_deep_otm = finite_diff_second_derivative(deep_otm_prices, deep_otm_strikes)
 
         assert np.all(
             np.isfinite(d2y_deep_otm)
         ), "Should handle deep OTM without crashing"
-        assert (
-            np.max(np.abs(d2y_deep_otm)) < 1e3
-        ), "Should not produce extreme values"
+        assert np.max(np.abs(d2y_deep_otm)) < 1e3, "Should not produce extreme values"
 
         # Test 3: Verify method produces reasonable results for option-like functions
         # Use a function that mimics real option price behavior
@@ -84,9 +80,7 @@ class TestFiniteDifferenceStability:
         )
 
         # Should produce finite, reasonable values
-        assert np.all(
-            np.isfinite(d2y_realistic)
-        ), "Should handle realistic option data"
+        assert np.all(np.isfinite(d2y_realistic)), "Should handle realistic option data"
         assert np.all(
             np.abs(d2y_realistic) < 10
         ), "Should produce reasonable magnitudes for option data"
@@ -112,12 +106,8 @@ class TestFiniteDifferenceStability:
         d2y_old = np.gradient(np.gradient(option_prices, strikes), strikes)
 
         # Test that both methods complete without crashing
-        assert np.all(
-            np.isfinite(d2y_new)
-        ), "New method should produce finite results"
-        assert np.all(
-            np.isfinite(d2y_old)
-        ), "Old method should produce finite results"
+        assert np.all(np.isfinite(d2y_new)), "New method should produce finite results"
+        assert np.all(np.isfinite(d2y_old)), "Old method should produce finite results"
 
         # Test that our method produces reasonable magnitudes
         assert np.all(
@@ -144,15 +134,11 @@ class TestFiniteDifferenceStability:
 
         # Test mismatched array lengths
         with pytest.raises(ValueError, match="Arrays must have same length"):
-            finite_diff_second_derivative(
-                np.array([1, 2]), np.array([1, 2, 3])
-            )
+            finite_diff_second_derivative(np.array([1, 2]), np.array([1, 2, 3]))
 
         # Test insufficient points
         with pytest.raises(ValueError, match="Need at least 5 points"):
-            finite_diff_second_derivative(
-                np.array([1, 2, 3]), np.array([1, 2, 3])
-            )
+            finite_diff_second_derivative(np.array([1, 2, 3]), np.array([1, 2, 3]))
 
     def test_finite_diff_non_uniform_grid_fallback(self):
         """Test fallback to np.gradient for non-uniform grids."""
@@ -201,16 +187,12 @@ class TestFiniteDifferenceStability:
 
         # For a valid risk-neutral density, second derivative should be mostly positive
         # (though it can be negative in practice due to data issues)
-        assert np.all(
-            np.isfinite(d2C_dK2)
-        ), "Second derivatives must be finite"
+        assert np.all(np.isfinite(d2C_dK2)), "Second derivatives must be finite"
 
         # The sum should be reasonable (not all zeros, not extremely large)
         total_density = np.sum(np.maximum(0, d2C_dK2))  # Only positive parts
         assert total_density > 0, "Should have some positive density"
-        assert (
-            total_density < 1e10
-        ), "Total density should be reasonable magnitude"
+        assert total_density < 1e10, "Total density should be reasonable magnitude"
 
 
 class TestIntegrationWithPDFCalculation:
@@ -260,18 +242,14 @@ class TestIntegrationWithPDFCalculation:
             # Basic sanity checks
             assert len(pdf_x) > 0, "PDF should have data points"
             assert len(pdf_y) > 0, "PDF should have data points"
-            assert len(pdf_x) == len(
-                pdf_y
-            ), "PDF arrays should have same length"
+            assert len(pdf_x) == len(pdf_y), "PDF arrays should have same length"
             assert np.all(np.isfinite(pdf_x)), "PDF x values should be finite"
             assert np.all(np.isfinite(pdf_y)), "PDF y values should be finite"
             assert np.all(pdf_y >= 0), "PDF values should be non-negative"
 
             # PDF should roughly integrate to 1 (allowing for cropping/normalization)
             area = np.trapz(pdf_y, pdf_x)
-            assert (
-                0.1 < area < 10
-            ), f"PDF area should be reasonable, got {area}"
+            assert 0.1 < area < 10, f"PDF area should be reasonable, got {area}"
 
         except Exception as e:
             pytest.fail(
@@ -323,25 +301,15 @@ class TestIntegrationWithPDFCalculation:
             )
 
             # Check for numerical stability
-            assert not np.any(
-                np.isnan(pdf_y)
-            ), "PDF should not contain NaN values"
-            assert not np.any(
-                np.isinf(pdf_y)
-            ), "PDF should not contain infinite values"
-            assert (
-                np.max(pdf_y) < 1e6
-            ), "PDF should not have extremely large values"
+            assert not np.any(np.isnan(pdf_y)), "PDF should not contain NaN values"
+            assert not np.any(np.isinf(pdf_y)), "PDF should not contain infinite values"
+            assert np.max(pdf_y) < 1e6, "PDF should not have extremely large values"
 
             # Should have reasonable smoothness (not excessive oscillations)
             # Check that adjacent PDF values don't differ by more than 100x
             pdf_ratios = pdf_y[1:] / np.maximum(pdf_y[:-1], 1e-10)
-            assert np.all(
-                pdf_ratios < 100
-            ), "PDF should not have extreme oscillations"
-            assert np.all(
-                pdf_ratios > 0.01
-            ), "PDF should not have extreme oscillations"
+            assert np.all(pdf_ratios < 100), "PDF should not have extreme oscillations"
+            assert np.all(pdf_ratios > 0.01), "PDF should not have extreme oscillations"
 
         except Exception as e:
             pytest.fail(f"Numerical stability test failed: {e}")

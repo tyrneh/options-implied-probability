@@ -121,9 +121,7 @@ def plot_rnd(
                 **plot_kwargs,
             )
         ax1.set_xlabel("Price at expiry", fontsize=11)
-        ax1.set_ylabel(
-            "Density", fontsize=11, color="#333333"
-        )  # Black y-axis title
+        ax1.set_ylabel("Density", fontsize=11, color="#333333")  # Black y-axis title
         ax1.tick_params(axis="y", labelcolor=pdf_color)
         # Ensure PDF y-axis starts at 0
         ax1.set_ylim(bottom=0)
@@ -174,9 +172,7 @@ def plot_rnd(
                 for text in legend.get_texts():
                     text.set_color("#333333")
             else:
-                ax1.legend(
-                    lines1 + lines2, labels1 + labels2, loc="upper left"
-                )
+                ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
         else:
             # CDF only - no legend for individual plot
             ax1.plot(
@@ -248,8 +244,7 @@ def plot_rnd(
 
             ax1.text(
                 current_price
-                + (prices.max() - prices.min())
-                * 0.02,  # Slight offset to the right
+                + (prices.max() - prices.min()) * 0.02,  # Slight offset to the right
                 y_text_pos,
                 price_text,
                 color=spot_price_color,
@@ -392,9 +387,7 @@ def _style_publication_axes(ax):
     ax.set_axisbelow(True)
 
     # Tick styling
-    ax.tick_params(
-        axis="both", which="major", labelsize=10, colors="#666666", length=0
-    )
+    ax.tick_params(axis="both", which="major", labelsize=10, colors="#666666", length=0)
 
     # Add subtle padding
     ax.margins(x=0.02, y=0.02)

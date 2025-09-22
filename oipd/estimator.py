@@ -67,9 +67,7 @@ class RNDResult:
     # ------------------------------------------------------------------
     def to_frame(self) -> pd.DataFrame:
         """Return results as a tidy DataFrame."""
-        return pd.DataFrame(
-            {"Price": self.prices, "PDF": self.pdf, "CDF": self.cdf}
-        )
+        return pd.DataFrame({"Price": self.prices, "PDF": self.pdf, "CDF": self.cdf})
 
     def to_csv(self, path: str, **kwargs) -> None:
         """Persist results to csv on disk."""
@@ -85,14 +83,9 @@ class RNDResult:
         r = self.market.risk_free_rate
 
         # Dividends wording with explicit yield when available
-        if (
-            div_src == "vendor_yield"
-            and self.market.dividend_yield is not None
-        ):
+        if div_src == "vendor_yield" and self.market.dividend_yield is not None:
             div_text = f"vendor yield of {self.market.dividend_yield:.4%}"
-        elif (
-            div_src == "user_yield" and self.market.dividend_yield is not None
-        ):
+        elif div_src == "user_yield" and self.market.dividend_yield is not None:
             div_text = f"user yield of {self.market.dividend_yield:.4%}"
         elif div_src == "vendor_schedule":
             div_text = "vendor schedule"
@@ -115,9 +108,7 @@ class RNDResult:
         if F is not None:
             try:
                 q = self.implied_dividend_yield()
-                msg += (
-                    f", forward-implied annualised dividend yield of {q:.4%}"
-                )
+                msg += f", forward-implied annualised dividend yield of {q:.4%}"
             except Exception:
                 pass
 
@@ -199,9 +190,7 @@ class RNDResult:
             )
         S = float(self.market.underlying_price)
         if S <= 0:
-            raise ValueError(
-                "Invalid underlying price for implied yield calculation."
-            )
+            raise ValueError("Invalid underlying price for implied yield calculation.")
         T = float(self.market.days_to_expiry) / 365.0
         if T <= 0:
             raise ValueError("Non-positive time to expiry.")
@@ -291,17 +280,13 @@ class DataSource(Protocol):
 class CSVSource:
     """Load options data from an on-disk CSV file."""
 
-    def __init__(
-        self, path: str, column_mapping: Optional[Dict[str, str]] = None
-    ):
+    def __init__(self, path: str, column_mapping: Optional[Dict[str, str]] = None):
         self._path = path
         self._column_mapping = column_mapping or {}
         self._reader = CSVReader()
 
     def load(self) -> pd.DataFrame:
-        return self._reader.read(
-            self._path, column_mapping=self._column_mapping
-        )
+        return self._reader.read(self._path, column_mapping=self._column_mapping)
 
 
 class DataFrameSource:
@@ -351,9 +336,7 @@ class TickerSource:
     def load(self) -> pd.DataFrame:
         """Load options data and extract current price"""
         ticker_expiry = f"{self._ticker}:{self._expiry}"
-        df = self._reader.read(
-            ticker_expiry, column_mapping=self._column_mapping
-        )
+        df = self._reader.read(ticker_expiry, column_mapping=self._column_mapping)
 
         # Extract current/underlying price from DataFrame metadata
         self._underlying_price = df.attrs.get("underlying_price")
@@ -408,13 +391,9 @@ def _estimate(
 
     # Apply put-call parity preprocessing if beneficial
     discount_factor = np.exp(
-        -resolved_market.risk_free_rate
-        * resolved_market.days_to_expiry
-        / 365.0
+        -resolved_market.risk_free_rate * resolved_market.days_to_expiry / 365.0
     )
-    options_data = preprocess_with_parity(
-        options_data, spot_eff, discount_factor
-    )
+    options_data = preprocess_with_parity(options_data, spot_eff, discount_factor)
 
     # Capture parity-inferred forward if available (applies to both engines)
     if "F_used" in options_data.columns:
@@ -488,14 +467,10 @@ def _estimate(
     except (InvalidInputError, CalculationError):
         raise  # preserve stack & message
     except Exception as exc:
-        raise CalculationError(
-            f"Unexpected error during PDF calculation: {exc}"
-        )
+        raise CalculationError(f"Unexpected error during PDF calculation: {exc}")
 
     # 2. Convert PDF → CDF
-    price_array, pdf_array = cast(
-        tuple[np.ndarray, np.ndarray], pdf_point_arrays
-    )
+    price_array, pdf_array = cast(tuple[np.ndarray, np.ndarray], pdf_point_arrays)
     try:
         _, cdf_array = calculate_cdf(
             cast(tuple[np.ndarray, np.ndarray], pdf_point_arrays)
@@ -521,9 +496,7 @@ def _estimate(
 class RND:
     """High-level, user-friendly estimator of the option-implied risk-neutral density (RND)."""
 
-    def __init__(
-        self, model: Optional[ModelParams] = None, *, verbose: bool = True
-    ):
+    def __init__(self, model: Optional[ModelParams] = None, *, verbose: bool = True):
         self.model = model or ModelParams()
         self._result: Optional[RNDResult] = None
         self._verbose: bool = verbose
@@ -598,9 +571,7 @@ class RND:
 
         return chain, snapshot
 
-    def fit(
-        self, source: DataSource, resolved_market: ResolvedMarket
-    ) -> "RND":
+    def fit(self, source: DataSource, resolved_market: ResolvedMarket) -> "RND":
         """Estimate the RND from the given *DataSource* and resolved market parameters."""
         with self._suppress_oipd_warnings(suppress=not self._verbose):
             options_data = source.load()
@@ -638,13 +609,9 @@ class RND:
             resolved = resolve_market(market, vendor=None, mode="strict")
 
             # Run estimation
-            prices, pdf, cdf, meta = _estimate(
-                chain, resolved, model or ModelParams()
-            )
+            prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
 
-        return RNDResult(
-            prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta
-        )
+        return RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
     @classmethod
     def from_dataframe(
@@ -670,18 +637,12 @@ class RND:
             resolved = resolve_market(market, vendor=None, mode="strict")
 
             # Run estimation
-            prices, pdf, cdf, meta = _estimate(
-                chain, resolved, model or ModelParams()
-            )
+            prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
 
-        return RNDResult(
-            prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta
-        )
+        return RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
     @classmethod
-    def list_expiry_dates(
-        cls, ticker: str, vendor: str = "yfinance"
-    ) -> list[str]:
+    def list_expiry_dates(cls, ticker: str, vendor: str = "yfinance") -> list[str]:
         """
         List available expiry dates for a given ticker.
 
@@ -704,9 +665,7 @@ class RND:
         ['2025-01-17', '2025-01-24', '2025-02-21', ...]
         """
         if vendor not in ("yfinance"):
-            raise NotImplementedError(
-                f"Vendor '{vendor}' is not supported yet."
-            )
+            raise NotImplementedError(f"Vendor '{vendor}' is not supported yet.")
 
         reader_cls = get_reader(vendor)
         return reader_cls.list_expiry_dates(ticker)
@@ -808,9 +767,7 @@ class RND:
             )
 
             # Run estimation
-            prices, pdf, cdf, meta = _estimate(
-                chain, resolved, effective_model
-            )
+            prices, pdf, cdf, meta = _estimate(chain, resolved, effective_model)
 
         # Add ticker and vendor info to metadata
         meta.update(
@@ -821,9 +778,7 @@ class RND:
             }
         )
 
-        result = RNDResult(
-            prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta
-        )
+        result = RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
         # Determine whether to echo summary
         echo_flag = verbose if echo is None else echo
@@ -841,9 +796,7 @@ class RND:
     @property
     def result(self) -> RNDResult:
         if self._result is None:
-            raise ValueError(
-                "You must call `fit` first before accessing results."
-            )
+            raise ValueError("You must call `fit` first before accessing results.")
         return self._result
 
     # ------------------------------------------------------------------

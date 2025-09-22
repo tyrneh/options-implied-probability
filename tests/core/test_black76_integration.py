@@ -34,9 +34,7 @@ def test_black76_estimator_with_puts():
         risk_free_rate=r,
         risk_free_rate_mode="continuous",
     )
-    result = RND.from_dataframe(
-        df, market, model=ModelParams(pricing_engine="black76")
-    )
+    result = RND.from_dataframe(df, market, model=ModelParams(pricing_engine="black76"))
     assert result.pdf is not None
 
 
@@ -50,6 +48,4 @@ def test_black76_requires_puts():
         risk_free_rate_mode="continuous",
     )
     with pytest.raises(ValueError):
-        RND.from_dataframe(
-            df, market, model=ModelParams(pricing_engine="black76")
-        )
+        RND.from_dataframe(df, market, model=ModelParams(pricing_engine="black76"))

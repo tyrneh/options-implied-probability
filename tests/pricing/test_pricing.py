@@ -68,9 +68,7 @@ def test_pdf_integrates_to_one():
     )
 
     area = np.trapz(pdf_y, pdf_x)
-    assert (
-        abs(area - 1.0) < 1e-2
-    )  # Relaxed tolerance for numerical integration
+    assert abs(area - 1.0) < 1e-2  # Relaxed tolerance for numerical integration
 
 
 def test_discrete_vs_continuous_equivalence():
