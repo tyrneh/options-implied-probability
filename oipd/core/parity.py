@@ -63,7 +63,9 @@ def infer_forward_from_atm(
                         "strike": row["strike"],
                         "call_price": row["call_price"],
                         "put_price": row["put_price"],
-                        "distance_from_underlying": abs(row["strike"] - underlying_price),
+                        "distance_from_underlying": abs(
+                            row["strike"] - underlying_price
+                        ),
                     }
                 )
 
@@ -185,7 +187,12 @@ def apply_put_call_parity(
             put_data = row if pd.notna(put_price) and put_price > 0 else None
 
             _process_strike_prices(
-                results, strike, call_data, put_data, forward_price, discount_factor
+                results,
+                strike,
+                call_data,
+                put_data,
+                forward_price,
+                discount_factor,
             )
 
     elif "last_price" in options_df.columns and "option_type" in options_df.columns:
@@ -204,7 +211,12 @@ def apply_put_call_parity(
             put_row = put_data.iloc[0] if len(put_data) > 0 else None
 
             _process_strike_prices(
-                results, strike, call_row, put_row, forward_price, discount_factor
+                results,
+                strike,
+                call_row,
+                put_row,
+                forward_price,
+                discount_factor,
             )
     else:
         raise ValueError(
@@ -343,7 +355,10 @@ def _process_strike_prices(
 
 
 def _convert_put_to_call(
-    put_price: float, strike: float, forward_price: float, discount_factor: float
+    put_price: float,
+    strike: float,
+    forward_price: float,
+    discount_factor: float,
 ) -> float:
     """
     Convert put price to synthetic call price using put-call parity.
@@ -489,7 +504,9 @@ def preprocess_with_parity(
 
     try:
         # Apply parity preprocessing
-        forward_price = infer_forward_from_atm(options_df, underlying_price, discount_factor)
+        forward_price = infer_forward_from_atm(
+            options_df, underlying_price, discount_factor
+        )
         cleaned_df = apply_put_call_parity(options_df, forward_price, discount_factor)
         return cleaned_df
 

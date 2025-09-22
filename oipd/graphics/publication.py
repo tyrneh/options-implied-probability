@@ -176,7 +176,12 @@ def plot_rnd(
         else:
             # CDF only - no legend for individual plot
             ax1.plot(
-                prices, cdf, color=cdf_color, linewidth=1.5, alpha=0.9, **plot_kwargs
+                prices,
+                cdf,
+                color=cdf_color,
+                linewidth=1.5,
+                alpha=0.9,
+                **plot_kwargs,
             )
             ax1.set_xlabel("Price at expiry", fontsize=11)
             ax1.set_ylabel(

@@ -18,7 +18,10 @@ from oipd.core import (
 from oipd.core.parity import preprocess_with_parity
 from oipd.io import CSVReader, DataFrameReader
 from oipd.vendor import get_reader
-from oipd.pricing.utils import prepare_dividends, implied_dividend_yield_from_forward
+from oipd.pricing.utils import (
+    prepare_dividends,
+    implied_dividend_yield_from_forward,
+)
 from oipd.market_inputs import (
     MarketInputs,
     VendorSnapshot,
@@ -320,7 +323,8 @@ class TickerSource:
         # Most readers accept cache flags; if not, Python will ignore unexpected kwargs.
         try:
             self._reader = reader_cls(
-                cache_enabled=cache_enabled, cache_ttl_minutes=cache_ttl_minutes
+                cache_enabled=cache_enabled,
+                cache_ttl_minutes=cache_ttl_minutes,
             )
         except TypeError:
             self._reader = reader_cls()
@@ -363,7 +367,9 @@ class TickerSource:
 
 
 def _estimate(
-    options_data: pd.DataFrame, resolved_market: ResolvedMarket, model: ModelParams
+    options_data: pd.DataFrame,
+    resolved_market: ResolvedMarket,
+    model: ModelParams,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Run the core RND estimation given fully validated input data."""
 

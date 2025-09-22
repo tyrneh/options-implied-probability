@@ -90,7 +90,8 @@ class AbstractReader(ABC):
 
         if missing_optional:
             warnings.warn(
-                f"Optional columns not present: {missing_optional}.", UserWarning
+                f"Optional columns not present: {missing_optional}.",
+                UserWarning,
             )
 
         # Create a copy to avoid modifying the original data

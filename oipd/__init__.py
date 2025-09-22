@@ -16,8 +16,11 @@ from oipd.io import CSVReader, DataFrameReader, CSVReadError
 
 from oipd.estimator import RND, ModelParams, RNDResult
 from oipd.market_inputs import (
-    MarketInputs, VendorSnapshot, ResolvedMarket, 
-    FillMode, resolve_market
+    MarketInputs,
+    VendorSnapshot,
+    ResolvedMarket,
+    FillMode,
+    resolve_market,
 )
 
 __version__ = "0.1.0"

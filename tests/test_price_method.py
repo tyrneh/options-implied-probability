@@ -90,7 +90,13 @@ class TestEndToEndPriceMethod:
         return pd.DataFrame(
             {
                 "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
-                "last_price": [12.5, 8.2, 5.1, 3.1, 1.6],  # Different from mid-price
+                "last_price": [
+                    12.5,
+                    8.2,
+                    5.1,
+                    3.1,
+                    1.6,
+                ],  # Different from mid-price
                 "bid": [11.0, 7.0, 4.0, 2.0, 1.0],
                 "ask": [
                     13.0,
