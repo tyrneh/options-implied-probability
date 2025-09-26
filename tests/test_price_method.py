@@ -6,7 +6,8 @@ from datetime import date
 
 from oipd.estimator import RND, ModelParams
 from oipd.market_inputs import MarketInputs
-from oipd.core.pdf import _calculate_price, CalculationError
+from oipd.core.prep import select_price_column
+from oipd.core.errors import CalculationError
 from oipd.io.csv_reader import CSVReader
 from oipd.io.dataframe_reader import DataFrameReader
 
@@ -26,7 +27,7 @@ class TestPriceMethodCalculation:
             }
         )
 
-        result = _calculate_price(options_data, "last")
+        result = select_price_column(options_data, "last")
 
         # Should use last_price values
         expected_prices = [12.0, 8.0, 5.0, 3.0, 1.5]
@@ -43,7 +44,7 @@ class TestPriceMethodCalculation:
             }
         )
 
-        result = _calculate_price(options_data, "mid")
+        result = select_price_column(options_data, "mid")
 
         # Should use (bid + ask) / 2
         expected_prices = [12.0, 8.0, 5.0, 3.0, 1.5]
@@ -60,7 +61,7 @@ class TestPriceMethodCalculation:
             }
         )
 
-        result = _calculate_price(options_data, "last")
+        result = select_price_column(options_data, "last")
 
         # Should exclude the row with negative price
         assert len(result) == 4
@@ -267,7 +268,7 @@ class TestRobustDataHandling:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = _calculate_price(df, "mid")
+            result = select_price_column(df, "mid")
 
             # Should warn about fallback
             assert len(w) == 1
@@ -294,7 +295,7 @@ class TestRobustDataHandling:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            result = _calculate_price(df, "mid")
+            result = select_price_column(df, "mid")
 
             # Should warn about fallback to last method
             assert len(w) == 1

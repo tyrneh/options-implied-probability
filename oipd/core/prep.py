@@ -6,8 +6,9 @@ import numpy as np
 import pandas as pd
 import warnings
 
+from oipd.core.errors import CalculationError
+from oipd.core.iv import compute_iv as _compute_iv
 from oipd.core.parity import preprocess_with_parity
-from oipd.core.pdf import _calculate_price, _calculate_IV
 from oipd.market_inputs import ResolvedMarket
 
 
@@ -64,9 +65,53 @@ def filter_stale_options(
 def select_price_column(
     options_data: pd.DataFrame, price_method: Literal["last", "mid"]
 ) -> pd.DataFrame:
-    """Convenience wrapper around internal price selection."""
+    """Select the appropriate option price column based on user preference."""
 
-    return _calculate_price(options_data, price_method)
+    data = options_data.copy()
+
+    if price_method == "mid":
+        if "mid" in data.columns:
+            data["price"] = data["mid"]
+        elif "bid" in data.columns and "ask" in data.columns:
+            mid = (data["bid"] + data["ask"]) / 2
+            mask = data["bid"].notna() & data["ask"].notna()
+            if mask.any():
+                data["price"] = np.where(mask, mid, data["last_price"])
+                if not mask.all():
+                    warnings.warn(
+                        "Using last_price for rows with missing bid/ask",
+                        UserWarning,
+                    )
+            else:
+                warnings.warn(
+                    "Requested price_method='mid' but bid/ask data not available. "
+                    "Falling back to price_method='last'",
+                    UserWarning,
+                )
+                data["price"] = data["last_price"]
+        else:
+            raise CalculationError(
+                "Requested price_method='mid' but bid/ask data not available. "
+                "Provide bid/ask columns or a precomputed mid price."
+            )
+    else:
+        data["price"] = data["last_price"]
+
+    if "price" not in data.columns:
+        raise CalculationError("Failed to determine option price column")
+
+    if data["price"].isna().any() and "last_price" in data.columns:
+        missing_mask = data["price"].isna()
+        if missing_mask.any():
+            data.loc[missing_mask, "price"] = data.loc[missing_mask, "last_price"]
+            if missing_mask.any():
+                warnings.warn(
+                    "Filled missing mid prices with last_price due to unavailable bid/ask",
+                    UserWarning,
+                )
+
+    data = data[data["price"] > 0].copy()
+    return data
 
 
 def compute_iv(
@@ -84,13 +129,13 @@ def compute_iv(
             "Effective underlying/forward price is required for IV extraction"
         )
 
-    return _calculate_IV(
+    return _compute_iv(
         options_data_priced,
         underlying,
-        resolved_market.days_to_expiry,
-        resolved_market.risk_free_rate,
-        solver,
-        pricing_engine,
+        days_to_expiry=resolved_market.days_to_expiry,
+        risk_free_rate=resolved_market.risk_free_rate,
+        solver_method=solver,
+        pricing_engine=pricing_engine,
         dividend_yield=dividend_yield,
     )
 

@@ -7,7 +7,7 @@ from pandas import DataFrame
 from scipy import interpolate
 from scipy.optimize import minimize
 
-from oipd.core.pdf import CalculationError, InvalidInputError
+from oipd.core.errors import CalculationError, InvalidInputError
 
 
 def fit_bspline_smile(options_data: DataFrame) -> Tuple[np.ndarray, np.ndarray]:

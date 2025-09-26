@@ -7,7 +7,56 @@ This test file validates the fix for Issue 1.1: Numerical Instability in Second 
 import numpy as np
 import pytest
 
-from oipd.core.pdf import finite_diff_second_derivative
+from oipd.core.density import (
+    finite_diff_second_derivative,
+    pdf_from_price_curve,
+    price_curve_from_iv,
+)
+from oipd.core.prep import select_price_column
+from oipd.core.iv import compute_iv, smooth_iv
+
+
+def _compute_pdf_pipeline(
+    options_data,
+    *,
+    underlying_price: float,
+    days_to_expiry: int,
+    risk_free_rate: float,
+    price_method: str = "last",
+    pricing_engine: str = "bs",
+    dividend_yield: float | None = None,
+):
+    priced = select_price_column(options_data, price_method)
+    iv_df = compute_iv(
+        priced,
+        underlying_price,
+        days_to_expiry=days_to_expiry,
+        risk_free_rate=risk_free_rate,
+        solver_method="brent",
+        pricing_engine=pricing_engine,
+        dividend_yield=dividend_yield,
+    )
+    vol_curve = smooth_iv(
+        "bspline",
+        iv_df["strike"].to_numpy(),
+        iv_df["iv"].to_numpy(),
+    )
+    strikes_grid, call_prices = price_curve_from_iv(
+        vol_curve,
+        underlying_price,
+        days_to_expiry=days_to_expiry,
+        risk_free_rate=risk_free_rate,
+        pricing_engine=pricing_engine,
+        dividend_yield=dividend_yield,
+    )
+    return pdf_from_price_curve(
+        strikes_grid,
+        call_prices,
+        risk_free_rate=risk_free_rate,
+        days_to_expiry=days_to_expiry,
+        min_strike=float(priced["strike"].min()),
+        max_strike=float(priced["strike"].max()),
+    )
 
 
 class TestFiniteDifferenceStability:
@@ -205,7 +254,6 @@ class TestIntegrationWithPDFCalculation:
         pytest.importorskip("pandas")
 
         import pandas as pd
-        from oipd.core.pdf import calculate_pdf
 
         # Create synthetic European option data
         spot = 100.0
@@ -228,15 +276,14 @@ class TestIntegrationWithPDFCalculation:
 
         # Calculate PDF
         try:
-            pdf_x, pdf_y = calculate_pdf(
-                options_data=options_data,
+            pdf_x, pdf_y = _compute_pdf_pipeline(
+                options_data,
                 underlying_price=spot,
                 days_to_expiry=30,
                 risk_free_rate=0.05,
-                solver_method="brent",
+                price_method="last",
                 pricing_engine="bs",
                 dividend_yield=0.0,
-                price_method="last",
             )
 
             # Basic sanity checks
@@ -287,17 +334,14 @@ class TestIntegrationWithPDFCalculation:
 
         # This should not crash or produce extreme values
         try:
-            from oipd.core.pdf import calculate_pdf
-
-            pdf_x, pdf_y = calculate_pdf(
-                options_data=options_data,
+            pdf_x, pdf_y = _compute_pdf_pipeline(
+                options_data,
                 underlying_price=spot,
                 days_to_expiry=45,
                 risk_free_rate=0.04,
-                solver_method="brent",
+                price_method="last",
                 pricing_engine="bs",
                 dividend_yield=0.01,
-                price_method="last",
             )
 
             # Check for numerical stability
