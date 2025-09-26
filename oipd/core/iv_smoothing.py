@@ -91,7 +91,9 @@ def get_smoother(name: str) -> Callable[..., VolCurve]:
     try:
         return _SMOOTHERS[name]
     except KeyError as exc:  # pragma: no cover - guard path
-        raise ValueError(f"Unknown IV smoother '{name}'. Available: {available_smoothers()}") from exc
+        raise ValueError(
+            f"Unknown IV smoother '{name}'. Available: {available_smoothers()}"
+        ) from exc
 
 
 def smooth_iv(
@@ -114,4 +116,3 @@ def smooth_iv(
 
 
 __all__ = ["VolCurve", "available_smoothers", "get_smoother", "smooth_iv"]
-

@@ -34,7 +34,9 @@ def compute_iv(
     """
 
     if underlying_price is None:
-        raise ValueError("Effective underlying/forward price is required for IV extraction")
+        raise ValueError(
+            "Effective underlying/forward price is required for IV extraction"
+        )
 
     years_to_expiry = days_to_expiry / 365.0
     prices_arr = options_data["price"].to_numpy(dtype=float)
@@ -56,7 +58,9 @@ def compute_iv(
         elif solver_method == "brent":
             solver = bs_iv_brent_method
         else:  # pragma: no cover - guarded by caller
-            raise ValueError("Invalid solver_method. Choose either 'newton' or 'brent'.")
+            raise ValueError(
+                "Invalid solver_method. Choose either 'newton' or 'brent'."
+            )
 
         q = dividend_yield or 0.0
         iv_values = np.fromiter(
@@ -115,7 +119,9 @@ def bs_iv_brent_method(
         return np.nan
 
 
-def black76_iv_brent_method(price: float, F: float, K: float, t: float, r: float) -> float:
+def black76_iv_brent_method(
+    price: float, F: float, K: float, t: float, r: float
+) -> float:
     """Compute the Black-76 implied volatility using Brent's method."""
 
     if t <= 0:
@@ -183,4 +189,3 @@ __all__ = [
     "bs_iv_newton_method",
     "black76_iv_brent_method",
 ]
-

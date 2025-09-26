@@ -22,4 +22,3 @@ class CalculationError(OIPDError):
 
 
 __all__ = ["OIPDError", "InvalidInputError", "CalculationError"]
-

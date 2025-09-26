@@ -169,7 +169,9 @@ class AbstractReader(ABC):
             if existing is None:
                 raw_data.attrs["_oipd_missing_optional_columns"] = set(missing_optional)
             else:
-                raw_data.attrs["_oipd_missing_optional_columns"].update(missing_optional)
+                raw_data.attrs["_oipd_missing_optional_columns"].update(
+                    missing_optional
+                )
 
         # Normalize option_type column to use consistent "C"/"P" format
         if "option_type" in raw_data.columns:

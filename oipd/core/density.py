@@ -63,7 +63,9 @@ def price_curve_from_iv(
         if hasattr(vol_curve, "grid"):
             strike_grid = getattr(vol_curve, "grid")[0]
         else:
-            raise InvalidInputError("strike_grid must be provided when smoother grid is unavailable")
+            raise InvalidInputError(
+                "strike_grid must be provided when smoother grid is unavailable"
+            )
 
     strikes = np.asarray(strike_grid, dtype=float)
     if strikes.ndim != 1:
@@ -160,4 +162,3 @@ __all__ = [
     "calculate_cdf_from_pdf",
     "calculate_quartiles",
 ]
-

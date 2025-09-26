@@ -45,4 +45,3 @@ __all__ = [
     "filter_stale_options",
     "select_price_column",
 ]
-

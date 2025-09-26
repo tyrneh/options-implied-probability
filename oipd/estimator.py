@@ -392,14 +392,21 @@ def _estimate(
     val_date = resolved_market.valuation_date
 
     if model.price_method == "mid" and model.price_method_explicit:
-        missing_optional = options_data.attrs.get("_oipd_missing_optional_columns", set())
+        missing_optional = options_data.attrs.get(
+            "_oipd_missing_optional_columns", set()
+        )
         has_mid_col = "mid" in options_data.columns
         has_bid_ask_cols = {"bid", "ask"}.issubset(options_data.columns)
-        has_option_type = "option_type" in options_data.columns and not options_data[
-            "option_type"
-        ].isna().all()
+        has_option_type = (
+            "option_type" in options_data.columns
+            and not options_data["option_type"].isna().all()
+        )
         bid_ask_missing_originally = {"bid", "ask"}.issubset(missing_optional)
-        if not (has_mid_col or has_option_type or (has_bid_ask_cols and not bid_ask_missing_originally)):
+        if not (
+            has_mid_col
+            or has_option_type
+            or (has_bid_ask_cols and not bid_ask_missing_originally)
+        ):
             raise CalculationError(
                 "Requested price_method='mid' but input data lacks bid/ask, mid, or option_type columns."
             )
