@@ -49,8 +49,8 @@ def filter_stale_options(
         return options_data
 
     options_data = options_data.copy()
-    last_trade_dates = last_trade_datetimes.dt.date
-    days_old = pd.Series((valuation_date - last_trade_dates).days)
+    valuation_ts = pd.Timestamp(valuation_date)
+    days_old = (valuation_ts - last_trade_datetimes.dt.normalize()).dt.days
     fresh_mask = days_old <= max_staleness_days
     stale_count = (~fresh_mask).sum()
     if stale_count > 0 and emit_warning:
