@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, Optional, Dict, Literal, cast, Any
+from typing import Protocol, Optional, Dict, Literal, Any
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -9,13 +9,19 @@ import pandas as pd
 import numpy as np
 import warnings
 
-from oipd.core import (
-    calculate_pdf,
-    calculate_cdf,
-    InvalidInputError,
-    CalculationError,
+from oipd.core.errors import InvalidInputError, CalculationError
+from oipd.core.prep import (
+    apply_put_call_parity,
+    filter_stale_options,
+    select_price_column,
+    compute_iv,
 )
-from oipd.core.parity import preprocess_with_parity
+from oipd.core.iv import smooth_iv
+from oipd.core.density import (
+    price_curve_from_iv,
+    pdf_from_price_curve,
+    calculate_cdf_from_pdf,
+)
 from oipd.io import CSVReader, DataFrameReader
 from oipd.vendor import get_reader
 from oipd.pricing.utils import (
@@ -46,10 +52,20 @@ class ModelParams:
     solver: Literal["brent", "newton"] = "brent"
     american_to_european: bool = False  # placeholder for future functionality
     pricing_engine: Literal["black76", "bs"] = "black76"
-    price_method: Literal["last", "mid"] = "mid"
+    price_method: Optional[Literal["last", "mid"]] = None
     max_staleness_days: Optional[int] = (
         3  # in calendar days; set to 3 by default to accomodate weekends
     )
+    smoother: Literal["bspline"] = "bspline"
+    smoother_params: Dict[str, Any] = field(default_factory=dict)
+    price_method_explicit: bool = field(init=False, default=False)
+
+    def __post_init__(self):
+        if self.price_method is None:
+            self.price_method = "mid"
+            self.price_method_explicit = False
+        else:
+            self.price_method_explicit = True
 
 
 @dataclass(frozen=True)
@@ -375,6 +391,26 @@ def _estimate(
 
     val_date = resolved_market.valuation_date
 
+    if model.price_method == "mid" and model.price_method_explicit:
+        missing_optional = options_data.attrs.get(
+            "_oipd_missing_optional_columns", set()
+        )
+        has_mid_col = "mid" in options_data.columns
+        has_bid_ask_cols = {"bid", "ask"}.issubset(options_data.columns)
+        has_option_type = (
+            "option_type" in options_data.columns
+            and not options_data["option_type"].isna().all()
+        )
+        bid_ask_missing_originally = {"bid", "ask"}.issubset(missing_optional)
+        if not (
+            has_mid_col
+            or has_option_type
+            or (has_bid_ask_cols and not bid_ask_missing_originally)
+        ):
+            raise CalculationError(
+                "Requested price_method='mid' but input data lacks bid/ask, mid, or option_type columns."
+            )
+
     if model.pricing_engine == "bs":
         spot_eff, q_eff = prepare_dividends(
             underlying=resolved_market.underlying_price,
@@ -383,27 +419,16 @@ def _estimate(
             r=resolved_market.risk_free_rate,
             valuation_date=val_date,
         )
-        forward_price = None
     else:
         spot_eff = resolved_market.underlying_price
         q_eff = None
-        forward_price = None
 
-    # Apply put-call parity preprocessing if beneficial
-    discount_factor = np.exp(
-        -resolved_market.risk_free_rate * resolved_market.days_to_expiry / 365.0
+    processed, forward_price = apply_put_call_parity(
+        options_data, spot_eff, resolved_market
     )
-    options_data = preprocess_with_parity(options_data, spot_eff, discount_factor)
-
-    # Capture parity-inferred forward if available (applies to both engines)
-    if "F_used" in options_data.columns:
-        try:
-            forward_price = float(options_data["F_used"].iloc[0])
-        except Exception:
-            pass
 
     if model.pricing_engine == "black76":
-        if "F_used" not in options_data.columns:
+        if forward_price is None:
             warnings.warn(
                 "Black-76 requires a parity-implied forward but put quotes are missing. "
                 "Rerun with ModelParams(pricing_engine='bs') and provide dividend_yield or dividend_schedule.",
@@ -412,79 +437,75 @@ def _estimate(
             raise ValueError(
                 "Put options missing: switch to Black-Scholes with explicit dividend inputs"
             )
-        forward_price = float(options_data["F_used"].iloc[0])
+        effective_underlying = forward_price
+    else:
+        effective_underlying = spot_eff
 
-    # Filter stale data if configured and last_trade_date column is present
-    if (
-        model.max_staleness_days is not None
-        and "last_trade_date" in options_data.columns
-    ):
+    filtered = filter_stale_options(
+        processed,
+        resolved_market.valuation_date,
+        model.max_staleness_days,
+        emit_warning=True,
+    )
 
-        # Check if the column has valid date data
-        last_trade_datetimes = pd.to_datetime(options_data["last_trade_date"])
+    priced = select_price_column(filtered, model.price_method)
+    if priced.empty:
+        raise CalculationError("No valid options data after price selection")
 
-        # Skip filtering if column has NaT values (common in CSV files without date data)
-        if last_trade_datetimes.isna().any():
-            # Column exists but has missing values - skip filtering
-            pass
-        else:
-            # Calculate days since trade relative to valuation_date
-            options_data = options_data.copy()  # Don't modify original
-            last_trade_dates = last_trade_datetimes.dt.date
+    iv_ready = compute_iv(
+        priced,
+        effective_underlying,
+        resolved_market,
+        model.solver,
+        model.pricing_engine,
+        q_eff,
+    )
 
-            # Calculate days difference manually
-            days_old = []
-            for trade_date in last_trade_dates:
-                days_diff = (resolved_market.valuation_date - trade_date).days
-                days_old.append(days_diff)
-            days_old = pd.Series(days_old)
-
-            # Filter out stale data
-            fresh_mask = days_old <= model.max_staleness_days
-            stale_count = (~fresh_mask).sum()
-
-            if stale_count > 0:
-                warnings.warn(
-                    f"Filtered {stale_count} strikes older than {model.max_staleness_days} days "
-                    f"(most recent: {days_old.min()} days old, oldest: {days_old.max()} days old)",
-                    UserWarning,
-                )
-                options_data = options_data[fresh_mask].reset_index(drop=True)
-
-    # 1. Calculate PDF
     try:
-        pdf_point_arrays = calculate_pdf(
-            options_data,
-            spot_eff,
-            resolved_market.days_to_expiry,
-            resolved_market.risk_free_rate,
-            model.solver,
-            model.pricing_engine,
-            q_eff,
-            model.price_method,
-            forward_price=forward_price,
-        )
-    except (InvalidInputError, CalculationError):
-        raise  # preserve stack & message
-    except Exception as exc:
-        raise CalculationError(f"Unexpected error during PDF calculation: {exc}")
-
-    # 2. Convert PDF → CDF
-    price_array, pdf_array = cast(tuple[np.ndarray, np.ndarray], pdf_point_arrays)
-    try:
-        _, cdf_array = calculate_cdf(
-            cast(tuple[np.ndarray, np.ndarray], pdf_point_arrays)
+        vol_curve = smooth_iv(
+            model.smoother,
+            iv_ready["strike"].to_numpy(),
+            iv_ready["iv"].to_numpy(),
+            **model.smoother_params,
         )
     except Exception as exc:
-        raise CalculationError(f"Failed to compute CDF: {exc}")
+        raise CalculationError(
+            f"Failed to smooth implied volatility data: {exc}"
+        ) from exc
 
-    meta = {"model_params": model}
-    # If we inferred a forward via parity, record it for downstream consumers
+    strike_grid, call_prices = price_curve_from_iv(
+        vol_curve,
+        effective_underlying,
+        days_to_expiry=resolved_market.days_to_expiry,
+        risk_free_rate=resolved_market.risk_free_rate,
+        pricing_engine=model.pricing_engine,
+        dividend_yield=q_eff,
+    )
+
+    min_strike = float(priced["strike"].min())
+    max_strike = float(priced["strike"].max())
+
+    price_array, pdf_array = pdf_from_price_curve(
+        strike_grid,
+        call_prices,
+        risk_free_rate=resolved_market.risk_free_rate,
+        days_to_expiry=resolved_market.days_to_expiry,
+        min_strike=min_strike,
+        max_strike=max_strike,
+    )
+
+    try:
+        _, cdf_array = calculate_cdf_from_pdf(price_array, pdf_array)
+    except Exception as exc:
+        raise CalculationError(f"Failed to compute CDF: {exc}") from exc
+
+    meta: Dict[str, Any] = {"model_params": model}
     if forward_price is not None:
         try:
             meta["forward_price"] = float(forward_price)
         except Exception:
             pass
+    meta["smoother"] = model.smoother
     return price_array, pdf_array, cdf_array, meta
 
 
