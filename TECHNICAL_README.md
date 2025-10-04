@@ -10,11 +10,12 @@ This document complements the high-level `README.md`. Here you’ll find:
 
 ## 1. Installation flavours
 
-| Use-case                          | Command                     |
-| --------------------------------- | --------------------------- |
-| Full installation (with yfinance) | `pip install oipd`          |
-| Core maths only (no data vendors) | `pip install oipd[minimal]` |
-| Contributor install               | `pip install oipd[dev]`     |
+| Use-case                            | Command                     |
+| ----------------------------------- | --------------------------- |
+| Full installation (all vendors)    | `pip install oipd`          |
+| Core maths only (no data vendors)  | `pip install oipd[minimal]` |
+| Crypto markets only (Bybit)        | `pip install oipd[crypto]`  |
+| Contributor install                 | `pip install oipd[dev]`     |
 
 Requires at minimum **Python 3.10+**.
 
@@ -32,7 +33,8 @@ The `RND` class is the high-level facade that users interact with. It has three 
 
 1. **CSV files**: `RND.from_csv(path, market)`
 2. **DataFrames**: `RND.from_dataframe(df, market)`
-3. **Live data**: `RND.from_ticker("AAPL", market)` 
+3. **Live data**: `RND.from_ticker("AAPL", market)` for equity options (Yahoo Finance)
+4. **Crypto options**: `RND.from_ticker("BTC", market, vendor="bybit")` for cryptocurrency options
 
 `RND` takes the mandatory MarketInputs parameter, and an optional ModelParams parameter. 
 
@@ -85,8 +87,22 @@ Main class that fits risk-neutral density models from options data and provides 
 ```python
 RND.from_csv(path, market, model, column_mapping={"YourHeader": "oipd_field"})  # Maps CSV headers to OIPD fields
 RND.from_dataframe(df, market, model, column_mapping={"YourHeader": "oipd_field"})  # Maps DataFrame columns to OIPD fields
-RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # (auto-fetches from vendors, only YFinance currently integrated)
+RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # Equity options via Yahoo Finance
+RND.from_ticker("BTC", market, vendor="bybit", ...)      # Crypto options via Bybit API
 ```
+
+### 2.5 Supported Data Vendors
+
+| Vendor    | Market Type      | Supported Assets     | Installation          |
+|-----------|------------------|----------------------|----------------------|
+| yfinance  | Equity Options   | US stocks, ETFs      | Default              |
+| bybit     | Crypto Options   | BTC, ETH, SOL, etc.  | Requires `pybit`     |
+
+**Crypto Options Notes:**
+- Cryptocurrency options don't have dividends (dividend_yield defaults to 0)
+- Uses spot price from crypto exchanges as underlying price
+- Risk-free rate should reflect the funding cost in crypto markets
+- Expiry dates follow exchange-specific formats (Bybit: "30DEC22")
 
 #### Expected Data Format
 

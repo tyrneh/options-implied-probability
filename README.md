@@ -47,7 +47,15 @@ est = RND.from_ticker("AAPL", market)
 # 3 ─ access results and plots
 est.prob_at_or_above(120)               # P(price >= $120)
 est.prob_below(100)                     # P(price < $100)
-est.plot()                              # plot probability and cumulative distribution functions 
+est.plot()                              # plot probability and cumulative distribution functions
+
+# For cryptocurrency options (Bybit)
+crypto_market = MarketInputs(
+    valuation_date=date.today(),
+    expiry_date=date(2025, 12, 26),
+    risk_free_rate=0.04,
+)
+crypto_est = RND.from_ticker("BTC", crypto_market, vendor="bybit") 
 ```
 
 OIPD also **supports manual CSV or DataFrame uploads**. 
@@ -85,7 +93,8 @@ Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, disc
 # Current Roadmap
 
 Convenience features:
-- integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
+- ✅ integrate crypto options data fetching (Bybit implemented)
+- integrate additional data vendors (Alpaca, Deribit) for more coverage
 
 Algorithmic improvements:
 - implement no-arbitrage checks 

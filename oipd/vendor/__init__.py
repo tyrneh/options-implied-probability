@@ -33,3 +33,4 @@ def get_reader(name: str):
 # Pre-register built-in vendors
 # ------------------------------------------------------------------
 register("yfinance", "oipd.vendor.yfinance.reader")
+register("bybit", "oipd.vendor.bybit.reader")
