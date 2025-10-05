@@ -16,7 +16,7 @@ from oipd.core.prep import (
     select_price_column,
     compute_iv,
 )
-from oipd.core.iv import smooth_iv
+from oipd.core.surface_fitting import SurfaceConfig, fit_surface
 from oipd.core.density import (
     price_curve_from_iv,
     pdf_from_price_curve,
@@ -56,8 +56,7 @@ class ModelParams:
     max_staleness_days: Optional[int] = (
         3  # in calendar days; set to 3 by default to accomodate weekends
     )
-    smoother: Literal["bspline"] = "bspline"
-    smoother_params: Dict[str, Any] = field(default_factory=dict)
+    surface_fit: SurfaceConfig = field(default_factory=SurfaceConfig)
     price_method_explicit: bool = field(init=False, default=False)
 
     def __post_init__(self):
@@ -66,6 +65,16 @@ class ModelParams:
             self.price_method_explicit = False
         else:
             self.price_method_explicit = True
+
+        if not isinstance(self.surface_fit, SurfaceConfig):
+            if isinstance(self.surface_fit, str):
+                self.surface_fit = SurfaceConfig(name=self.surface_fit)
+            elif isinstance(self.surface_fit, dict):
+                self.surface_fit = SurfaceConfig(**self.surface_fit)
+            else:
+                raise TypeError(
+                    "surface_fit must be a SurfaceConfig, str, or dict of kwargs"
+                )
 
 
 @dataclass(frozen=True)
@@ -423,10 +432,12 @@ def _estimate(
         spot_eff = resolved_market.underlying_price
         q_eff = None
 
+    # Get rid of ITM calls and replace with synthetic calls from OTM puts
     processed, forward_price = apply_put_call_parity(
         options_data, spot_eff, resolved_market
     )
 
+    # get implied forward price
     if model.pricing_engine == "black76":
         if forward_price is None:
             warnings.warn(
@@ -441,6 +452,7 @@ def _estimate(
     else:
         effective_underlying = spot_eff
 
+    # filter stale data
     filtered = filter_stale_options(
         processed,
         resolved_market.valuation_date,
@@ -448,10 +460,12 @@ def _estimate(
         emit_warning=True,
     )
 
+    # select price column - mid or last
     priced = select_price_column(filtered, model.price_method)
     if priced.empty:
         raise CalculationError("No valid options data after price selection")
 
+    # compute implied volatility according to the IV model
     iv_ready = compute_iv(
         priced,
         effective_underlying,
@@ -461,12 +475,25 @@ def _estimate(
         q_eff,
     )
 
+    # fit the volatility surface
     try:
-        vol_curve = smooth_iv(
-            model.smoother,
-            iv_ready["strike"].to_numpy(),
-            iv_ready["iv"].to_numpy(),
-            **model.smoother_params,
+        strikes_arr = iv_ready["strike"].to_numpy()
+        iv_arr = iv_ready["iv"].to_numpy()
+
+        fit_kwargs: Dict[str, Any] = {}
+        if model.surface_fit.name == "svi":
+            fit_kwargs.update(
+                {
+                    "forward": effective_underlying,
+                    "maturity_years": resolved_market.days_to_expiry / 365.0,
+                }
+            )
+
+        vol_curve = fit_surface(
+            model.surface_fit,
+            strikes=strikes_arr,
+            iv=iv_arr,
+            **fit_kwargs,
         )
     except Exception as exc:
         raise CalculationError(
@@ -499,13 +526,13 @@ def _estimate(
     except Exception as exc:
         raise CalculationError(f"Failed to compute CDF: {exc}") from exc
 
-    meta: Dict[str, Any] = {"model_params": model}
+    meta: Dict[str, Any] = {"model_params": model, "vol_curve": vol_curve}
     if forward_price is not None:
         try:
             meta["forward_price"] = float(forward_price)
         except Exception:
             pass
-    meta["smoother"] = model.smoother
+    meta["surface_fit"] = model.surface_fit.name
     return price_array, pdf_array, cdf_array, meta
 
 

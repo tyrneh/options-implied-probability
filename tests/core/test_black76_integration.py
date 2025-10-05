@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 from datetime import date, timedelta
 
+from oipd.core.surface_fitting import SurfaceConfig
 from oipd.estimator import RND, ModelParams
 from oipd.market_inputs import MarketInputs
 from oipd.pricing.black_scholes import black_scholes_call_price
@@ -34,7 +35,14 @@ def test_black76_estimator_with_puts():
         risk_free_rate=r,
         risk_free_rate_mode="continuous",
     )
-    result = RND.from_dataframe(df, market, model=ModelParams(pricing_engine="black76"))
+    result = RND.from_dataframe(
+        df,
+        market,
+        model=ModelParams(
+            pricing_engine="black76",
+            surface_fit=SurfaceConfig(name="bspline"),
+        ),
+    )
     assert result.pdf is not None
 
 

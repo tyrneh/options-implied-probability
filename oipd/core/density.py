@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 from scipy.optimize import brentq
 
 from oipd.core.errors import InvalidInputError
-from oipd.core.iv_smoothing import VolCurve
+from oipd.core.surface_fitting import VolCurve
 from oipd.pricing import get_pricer
 
 

@@ -13,7 +13,7 @@ from oipd.core.iv import (
     compute_iv,
     smooth_iv,
 )
-from oipd.core.iv_smoothing import available_smoothers
+from oipd.core.surface_fitting import available_surface_fits, fit_surface, SurfaceConfig
 from oipd.core.parity import (
     apply_put_call_parity,
     detect_parity_opportunity,
@@ -37,7 +37,9 @@ __all__ = [
     "black76_iv_brent_method",
     "compute_iv",
     "smooth_iv",
-    "available_smoothers",
+    "fit_surface",
+    "available_surface_fits",
+    "SurfaceConfig",
     "preprocess_with_parity",
     "infer_forward_from_atm",
     "apply_put_call_parity",
