@@ -2,8 +2,6 @@
 """Generate probability distributions for future stock prices using options data."""
 
 from oipd.core import (
-    calculate_pdf,
-    calculate_cdf,
     calculate_quartiles,
     OIPDError,
     InvalidInputError,
@@ -27,8 +25,6 @@ __version__ = "0.1.0"
 
 __all__ = [
     # Core functions
-    "calculate_pdf",
-    "calculate_cdf",
     "calculate_quartiles",
     # Exceptions
     "OIPDError",

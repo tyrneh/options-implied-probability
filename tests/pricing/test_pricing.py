@@ -4,12 +4,15 @@ from datetime import date, timedelta
 
 from oipd.pricing.black_scholes import black_scholes_call_price
 from oipd.pricing.black76 import black76_call_price
-from oipd.core.pdf import (
-    calculate_pdf,
-    _bs_iv_brent_method,
-    _bs_iv_newton_method,
-    _black76_iv_brent_method,
+from oipd.core.iv import (
+    compute_iv,
+    bs_iv_brent_method,
+    bs_iv_newton_method,
+    black76_iv_brent_method,
+    smooth_iv,
 )
+from oipd.core.prep import select_price_column
+from oipd.core.density import price_curve_from_iv, pdf_from_price_curve
 
 
 def test_european_price_with_yield():
@@ -33,8 +36,8 @@ def test_iv_solvers_recover_sigma():
     q = 0.03
     price = black_scholes_call_price(S, K, true_sigma, T, r, q)
 
-    brent = _bs_iv_brent_method(price, S, K, T, r, q)
-    newton = _bs_iv_newton_method(price, S, K, T, r, q)
+    brent = bs_iv_brent_method(price, S, K, T, r, q=q)
+    newton = bs_iv_newton_method(price, S, K, T, r, q=q)
 
     for est in (brent, newton):
         assert abs(est - true_sigma) < 1e-4
@@ -56,15 +59,39 @@ def test_pdf_integrates_to_one():
     df["bid"] = prices * 0.95  # Mock bid slightly below last_price
     df["ask"] = prices * 1.05  # Mock ask slightly above last_price
 
-    pdf_x, pdf_y = calculate_pdf(
-        df,
-        underlying_price=S,
+    priced = select_price_column(df, "last")
+    iv_df = compute_iv(
+        priced,
+        S,
         days_to_expiry=int(T * 365),
         risk_free_rate=r,
         solver_method="brent",
         pricing_engine="bs",
         dividend_yield=q,
-        price_method="last",
+    )
+
+    vol_curve = smooth_iv(
+        "bspline",
+        iv_df["strike"].to_numpy(),
+        iv_df["iv"].to_numpy(),
+    )
+
+    strikes_grid, call_prices = price_curve_from_iv(
+        vol_curve,
+        S,
+        days_to_expiry=int(T * 365),
+        risk_free_rate=r,
+        pricing_engine="bs",
+        dividend_yield=q,
+    )
+
+    pdf_x, pdf_y = pdf_from_price_curve(
+        strikes_grid,
+        call_prices,
+        risk_free_rate=r,
+        days_to_expiry=int(T * 365),
+        min_strike=float(priced["strike"].min()),
+        max_strike=float(priced["strike"].max()),
     )
 
     area = np.trapz(pdf_y, pdf_x)
@@ -107,7 +134,7 @@ def test_black76_round_trip():
     T = 0.5
     r = 0.01
     price = black76_call_price(F, K, sigma, T, r)
-    est = _black76_iv_brent_method(price, F, K, T, r)
+    est = black76_iv_brent_method(price, F, K, T, r)
     assert abs(est - sigma) < 1e-4
 
 
