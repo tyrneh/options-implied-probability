@@ -3,12 +3,14 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
+import numpy as np
+import pytest
 import pandas as pd
 from datetime import date
 
 from oipd.estimator import RND, ModelParams
 from oipd.market_inputs import MarketInputs
+from oipd.core.errors import CalculationError
 
 
 def _build_sample_chain() -> pd.DataFrame:
@@ -59,7 +61,7 @@ def test_iv_smile_default_grid():
     smile = result.iv_smile()
 
     assert isinstance(smile, pd.DataFrame)
-    assert list(smile.columns) == ["strike", "fitted_iv", "bid_iv", "ask_iv"]
+    assert list(smile.columns) == ["strike", "fitted_iv", "bid_iv", "ask_iv", "last_iv"]
     assert (smile["fitted_iv"] > 0).all()
     assert smile["bid_iv"].notna().all()
     assert smile["ask_iv"].notna().all()
@@ -78,7 +80,7 @@ def test_iv_smile_custom_strikes():
     smile = result.iv_smile(strikes)
 
     assert list(smile["strike"]) == strikes
-    assert list(smile.columns) == ["strike", "fitted_iv", "bid_iv", "ask_iv"]
+    assert list(smile.columns) == ["strike", "fitted_iv", "bid_iv", "ask_iv", "last_iv"]
 
 
 def test_plot_iv_smile_includes_line_and_observed_points():
@@ -95,10 +97,8 @@ def test_plot_iv_smile_includes_line_and_observed_points():
 
     line_labels = [line.get_label() for line in ax.lines]
     assert "Fitted IV" in line_labels
-    range_collections = [
-        coll for coll in ax.collections if isinstance(coll, LineCollection)
-    ]
-    assert any(coll.get_label() == "Bid/Ask IV range" for coll in range_collections)
+    labels = [coll.get_label() for coll in ax.collections]
+    assert any(label == "Bid/Ask IV range" for label in labels)
 
     plt.close(fig)
 
@@ -117,8 +117,56 @@ def test_plot_iv_smile_can_hide_observed_points():
 
     line_labels = [line.get_label() for line in ax.lines]
     assert "Fitted IV" in line_labels
-    assert all(
-        not isinstance(coll, LineCollection) for coll in ax.collections
+    assert not ax.collections
+
+    plt.close(fig)
+
+
+def test_plot_iv_smile_with_last_price_only():
+    """Plot should fall back to last-price IV markers when bid/ask unavailable."""
+    chain = _build_sample_chain().drop(columns=["bid", "ask"])
+    market = _build_market_inputs()
+
+    result = RND.from_dataframe(
+        chain, market, model=ModelParams(price_method="last", pricing_engine="bs")
     )
+
+    fig = result.plot(kind="iv_smile")
+    ax = fig.axes[0]
+
+    labels = [coll.get_label() for coll in ax.collections]
+    assert "Observed IV" in labels
+
+    plt.close(fig)
+
+
+def test_svi_fallback_to_bspline(monkeypatch):
+    """Ensure SVI failures emit a warning and fall back to B-spline."""
+    chain = _build_sample_chain()
+    market = _build_market_inputs()
+
+    def fake_fit_surface(method, *, strikes, iv, options=None, **kwargs):
+        if method == "svi":
+            raise CalculationError("SVI failure")
+
+        def curve(eval_strikes):
+            eval_array = np.asarray(eval_strikes, dtype=float)
+            return np.full_like(eval_array, 0.2, dtype=float)
+
+        grid_x = np.asarray(strikes, dtype=float)
+        grid_y = np.full_like(grid_x, 0.2, dtype=float)
+        curve.grid = (grid_x, grid_y)  # type: ignore[attr-defined]
+        return curve
+
+    monkeypatch.setattr("oipd.estimator.fit_surface", fake_fit_surface)
+
+    with pytest.warns(UserWarning, match="SVI calibration failed"):
+        result = RND.from_dataframe(
+            chain,
+            market,
+            model=ModelParams(price_method="last", pricing_engine="bs", surface_method="svi"),
+        )
+
+    assert result.meta["surface_fit"] == "bspline"
 
     plt.close(fig)

@@ -390,6 +390,7 @@ class RNDResult:
         )
 
         observed_bid = self.meta.get("observed_iv_bid")
+        observed_last = self.meta.get("observed_iv_last")
         if isinstance(observed_bid, pd.DataFrame) and not observed_bid.empty:
             observed_bid = observed_bid.copy()
             observed_bid["strike"] = observed_bid["strike"].astype(float)
@@ -413,13 +414,34 @@ class RNDResult:
             )
             smile_df = smile_df.merge(ask_subset, on="strike", how="left")
 
+        if (
+            ("bid_iv" not in smile_df.columns or smile_df["bid_iv"].isna().all())
+            and ("ask_iv" not in smile_df.columns or smile_df["ask_iv"].isna().all())
+            and isinstance(observed_last, pd.DataFrame)
+            and not observed_last.empty
+        ):
+            last_subset = (
+                observed_last.copy()
+                .astype({"strike": float})
+                .loc[:, ["strike", "iv"]]
+                .dropna()
+                .rename(columns={"iv": "last_iv"})
+            )
+            smile_df = smile_df.merge(last_subset, on="strike", how="left")
+            if "last_iv" not in smile_df.columns:
+                smile_df["last_iv"] = np.nan
+        else:
+            smile_df["last_iv"] = np.nan
+
         if "bid_iv" not in smile_df.columns:
             smile_df["bid_iv"] = np.nan
         if "ask_iv" not in smile_df.columns:
             smile_df["ask_iv"] = np.nan
+        if "last_iv" not in smile_df.columns:
+            smile_df["last_iv"] = np.nan
 
         # Ensure column ordering
-        return smile_df.loc[:, ["strike", "fitted_iv", "bid_iv", "ask_iv"]]
+        return smile_df.loc[:, ["strike", "fitted_iv", "bid_iv", "ask_iv", "last_iv"]]
 
     def _plot_iv_smile(
         self,
@@ -508,6 +530,7 @@ class RNDResult:
             cap_ratio = range_kwargs.pop("cap_ratio", 0.2)
             observed_bid = self.meta.get("observed_iv_bid")
             observed_ask = self.meta.get("observed_iv_ask")
+            observed_last = self.meta.get("observed_iv_last")
             if (
                 isinstance(observed_bid, pd.DataFrame)
                 and isinstance(observed_ask, pd.DataFrame)
@@ -570,6 +593,30 @@ class RNDResult:
                     linewidth=linewidth,
                     alpha=range_alpha,
                 )
+
+            if (
+                (not isinstance(observed_bid, pd.DataFrame) or observed_bid.empty)
+                and (not isinstance(observed_ask, pd.DataFrame) or observed_ask.empty)
+                and isinstance(observed_last, pd.DataFrame)
+                and not observed_last.empty
+            ):
+                last_df = observed_last.copy()
+                last_df["strike"] = last_df["strike"].astype(float)
+                valid_last = last_df.dropna(subset=["iv"])
+                if not valid_last.empty:
+                    marker_kwargs = dict(scatter_kwargs or {})
+                    marker_kwargs.setdefault(
+                        "color", "#C62828" if style == "publication" else "tab:red"
+                    )
+                    marker_kwargs.setdefault("alpha", 0.9)
+                    marker_kwargs.setdefault("marker", "o")
+                    marker_kwargs.setdefault("s", 20)
+                    marker_kwargs.setdefault("label", "Observed IV")
+                    ax.scatter(
+                        valid_last["strike"],
+                        valid_last["iv"],
+                        **marker_kwargs,
+                    )
 
         ax.set_xlabel("Strike", fontsize=11)
         ax.set_ylabel("Implied Volatility", fontsize=11)
@@ -848,22 +895,21 @@ def _estimate(
     )
 
     # Smooth the implied vol smile so we can evaluate it anywhere we need
+    # Capture the strike and IV columns as plain arrays for the fitting helper
+    strike_array = options_with_calculated_iv["strike"].to_numpy()
+    implied_volatility_array = options_with_calculated_iv["iv"].to_numpy()
+
+    surface_fit_kwargs: Dict[str, Any] = {}
+    if model.surface_method == "svi":
+        # SVI needs the forward level and time to expiry to calibrate properly
+        surface_fit_kwargs.update(
+            {
+                "forward": underlying_price,
+                "maturity_years": resolved_market.days_to_expiry / 365.0,
+            }
+        )
+
     try:
-        # Capture the strike and IV columns as plain arrays for the fitting helper
-        strike_array = options_with_calculated_iv["strike"].to_numpy()
-        implied_volatility_array = options_with_calculated_iv["iv"].to_numpy()
-
-        surface_fit_kwargs: Dict[str, Any] = {}
-        if model.surface_method == "svi":
-            # SVI needs the forward level and time to expiry to calibrate properly
-            surface_fit_kwargs.update(
-                {
-                    "forward": underlying_price,
-                    "maturity_years": resolved_market.days_to_expiry / 365.0,
-                }
-            )
-
-        # Callable that returns fitted IV when you give it strike levels
         fitted_volatility_curve = fit_surface(
             model.surface_method,
             strikes=strike_array,
@@ -871,10 +917,24 @@ def _estimate(
             options=model.surface_options,
             **surface_fit_kwargs,
         )
+        surface_method_used = model.surface_method
     except Exception as exc:
-        raise CalculationError(
-            f"Failed to smooth implied volatility data: {exc}"
-        ) from exc
+        if model.surface_method == "svi":
+            warnings.warn(
+                f"SVI calibration failed ({exc}); falling back to B-spline smoothing.",
+                UserWarning,
+            )
+            fitted_volatility_curve = fit_surface(
+                "bspline",
+                strikes=strike_array,
+                iv=implied_volatility_array,
+                options={},
+            )
+            surface_method_used = "bspline"
+        else:
+            raise CalculationError(
+                f"Failed to smooth implied volatility data: {exc}"
+            ) from exc
 
     observed_iv_data = options_with_calculated_iv.copy()
 
@@ -909,6 +969,7 @@ def _estimate(
 
     observed_bid_iv = _compute_observed_iv(options_with_selected_price, "bid")
     observed_ask_iv = _compute_observed_iv(options_with_selected_price, "ask")
+    observed_last_iv = _compute_observed_iv(options_with_selected_price, "last_price")
 
     # Price calls on a dense strike grid using the smoothed volatility curve
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
@@ -950,12 +1011,14 @@ def _estimate(
         result_metadata["observed_iv_bid"] = observed_bid_iv
     if observed_ask_iv is not None:
         result_metadata["observed_iv_ask"] = observed_ask_iv
+    if observed_last_iv is not None:
+        result_metadata["observed_iv_last"] = observed_last_iv
     if parity_implied_forward_price is not None:
         try:
             result_metadata["forward_price"] = float(parity_implied_forward_price)
         except Exception:
             pass
-    result_metadata["surface_fit"] = model.surface_method
+    result_metadata["surface_fit"] = surface_method_used
     return pdf_strike_values, pdf_values, cdf_values, result_metadata
 
 
