@@ -164,7 +164,9 @@ def test_svi_fallback_to_bspline(monkeypatch):
         result = RND.from_dataframe(
             chain,
             market,
-            model=ModelParams(price_method="last", pricing_engine="bs", surface_method="svi"),
+            model=ModelParams(
+                price_method="last", pricing_engine="bs", surface_method="svi"
+            ),
         )
 
     assert result.meta["surface_fit"] == "bspline"

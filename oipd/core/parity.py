@@ -276,7 +276,11 @@ def _extract_bid(option_row) -> float:
         return np.nan
 
     try:
-        if "bid" in option_row and pd.notna(option_row["bid"]) and option_row["bid"] > 0:
+        if (
+            "bid" in option_row
+            and pd.notna(option_row["bid"])
+            and option_row["bid"] > 0
+        ):
             return float(option_row["bid"])
     except Exception:
         pass
@@ -289,7 +293,11 @@ def _extract_ask(option_row) -> float:
         return np.nan
 
     try:
-        if "ask" in option_row and pd.notna(option_row["ask"]) and option_row["ask"] > 0:
+        if (
+            "ask" in option_row
+            and pd.notna(option_row["ask"])
+            and option_row["ask"] > 0
+        ):
             return float(option_row["ask"])
     except Exception:
         pass

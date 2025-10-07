@@ -634,8 +634,14 @@ class RNDResult:
             ax.set_ylim(ylim)
 
         forward_price = self.meta.get("forward_price")
-        spot_price = float(self.market.underlying_price) if self.market.underlying_price is not None else None
-        reference_price = float(forward_price) if forward_price is not None else spot_price
+        spot_price = (
+            float(self.market.underlying_price)
+            if self.market.underlying_price is not None
+            else None
+        )
+        reference_price = (
+            float(forward_price) if forward_price is not None else spot_price
+        )
 
         if show_current_price and reference_price is not None:
             ax.axvline(
