@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, Optional, Dict, Literal, Any
+from typing import Protocol, Optional, Dict, Literal, Any, Mapping
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -16,7 +16,7 @@ from oipd.core.prep import (
     select_price_column,
     compute_iv,
 )
-from oipd.core.iv import smooth_iv
+from oipd.core.surface_fitting import AVAILABLE_SURFACE_FITS, fit_surface
 from oipd.core.density import (
     price_curve_from_iv,
     pdf_from_price_curve,
@@ -56,8 +56,8 @@ class ModelParams:
     max_staleness_days: Optional[int] = (
         3  # in calendar days; set to 3 by default to accomodate weekends
     )
-    smoother: Literal["bspline"] = "bspline"
-    smoother_params: Dict[str, Any] = field(default_factory=dict)
+    surface_method: Literal["svi", "bspline"] = "svi"
+    surface_options: Mapping[str, Any] | None = None
     price_method_explicit: bool = field(init=False, default=False)
 
     def __post_init__(self):
@@ -66,6 +66,18 @@ class ModelParams:
             self.price_method_explicit = False
         else:
             self.price_method_explicit = True
+
+        if self.surface_method not in AVAILABLE_SURFACE_FITS:
+            raise ValueError(
+                f"surface_method must be one of {AVAILABLE_SURFACE_FITS}, got {self.surface_method}"
+            )
+
+        if self.surface_options is None:
+            self.surface_options = {}
+        elif isinstance(self.surface_options, Mapping):
+            self.surface_options = dict(self.surface_options)
+        else:
+            raise TypeError("surface_options must be a mapping or None")
 
 
 @dataclass(frozen=True)
@@ -389,46 +401,51 @@ def _estimate(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Run the core RND estimation given fully validated input data."""
 
-    val_date = resolved_market.valuation_date
+    # Note when the market snapshot was taken so all filters line up with it
+    valuation_date = resolved_market.valuation_date
 
+    # Ensure we actually have the data needed to price with mid quotes if requested
     if model.price_method == "mid" and model.price_method_explicit:
-        missing_optional = options_data.attrs.get(
+        missing_optional_columns = options_data.attrs.get(
             "_oipd_missing_optional_columns", set()
         )
-        has_mid_col = "mid" in options_data.columns
-        has_bid_ask_cols = {"bid", "ask"}.issubset(options_data.columns)
-        has_option_type = (
+        has_mid_column = "mid" in options_data.columns
+        has_bid_ask_columns = {"bid", "ask"}.issubset(options_data.columns)
+        has_option_type_column = (
             "option_type" in options_data.columns
             and not options_data["option_type"].isna().all()
         )
-        bid_ask_missing_originally = {"bid", "ask"}.issubset(missing_optional)
+        bid_ask_missing_in_source = {"bid", "ask"}.issubset(missing_optional_columns)
         if not (
-            has_mid_col
-            or has_option_type
-            or (has_bid_ask_cols and not bid_ask_missing_originally)
+            has_mid_column
+            or has_option_type_column
+            or (has_bid_ask_columns and not bid_ask_missing_in_source)
         ):
             raise CalculationError(
                 "Requested price_method='mid' but input data lacks bid/ask, mid, or option_type columns."
             )
 
+    # Work out the effective spot and dividend inputs required by the chosen engine
     if model.pricing_engine == "bs":
-        spot_eff, q_eff = prepare_dividends(
+        effective_spot_price, effective_dividend_yield = prepare_dividends(
             underlying=resolved_market.underlying_price,
             dividend_schedule=resolved_market.dividend_schedule,
             dividend_yield=resolved_market.dividend_yield,
             r=resolved_market.risk_free_rate,
-            valuation_date=val_date,
+            valuation_date=valuation_date,
         )
     else:
-        spot_eff = resolved_market.underlying_price
-        q_eff = None
+        effective_spot_price = resolved_market.underlying_price
+        effective_dividend_yield = None
 
-    processed, forward_price = apply_put_call_parity(
-        options_data, spot_eff, resolved_market
+    # Get rid of ITM calls and replace with synthetic calls from OTM puts
+    parity_adjusted_options, parity_implied_forward_price = apply_put_call_parity(
+        options_data, effective_spot_price, resolved_market
     )
 
+    # get implied forward price
     if model.pricing_engine == "black76":
-        if forward_price is None:
+        if parity_implied_forward_price is None:
             warnings.warn(
                 "Black-76 requires a parity-implied forward but put quotes are missing. "
                 "Rerun with ModelParams(pricing_engine='bs') and provide dividend_yield or dividend_schedule.",
@@ -437,76 +454,106 @@ def _estimate(
             raise ValueError(
                 "Put options missing: switch to Black-Scholes with explicit dividend inputs"
             )
-        effective_underlying = forward_price
+        underlying_price = parity_implied_forward_price
     else:
-        effective_underlying = spot_eff
+        underlying_price = effective_spot_price
 
-    filtered = filter_stale_options(
-        processed,
-        resolved_market.valuation_date,
+    # Remove quotes that are too old relative to the valuation date
+    staleness_filtered_options = filter_stale_options(
+        parity_adjusted_options,
+        valuation_date,
         model.max_staleness_days,
         emit_warning=True,
     )
 
-    priced = select_price_column(filtered, model.price_method)
-    if priced.empty:
+    # Pick which observed price column we will treat as the option premium
+    options_with_selected_price = select_price_column(
+        staleness_filtered_options, model.price_method
+    )
+    if options_with_selected_price.empty:
         raise CalculationError("No valid options data after price selection")
 
-    iv_ready = compute_iv(
-        priced,
-        effective_underlying,
+    # Back out implied volatilities from those option prices
+    options_with_calculated_iv = compute_iv(
+        options_with_selected_price,
+        underlying_price,
         resolved_market,
         model.solver,
         model.pricing_engine,
-        q_eff,
+        effective_dividend_yield,
     )
 
+    # Smooth the implied vol smile so we can evaluate it anywhere we need
     try:
-        vol_curve = smooth_iv(
-            model.smoother,
-            iv_ready["strike"].to_numpy(),
-            iv_ready["iv"].to_numpy(),
-            **model.smoother_params,
+        # Capture the strike and IV columns as plain arrays for the fitting helper
+        strike_array = options_with_calculated_iv["strike"].to_numpy()
+        implied_volatility_array = options_with_calculated_iv["iv"].to_numpy()
+
+        surface_fit_kwargs: Dict[str, Any] = {}
+        if model.surface_method == "svi":
+            # SVI needs the forward level and time to expiry to calibrate properly
+            surface_fit_kwargs.update(
+                {
+                    "forward": underlying_price,
+                    "maturity_years": resolved_market.days_to_expiry / 365.0,
+                }
+            )
+
+        # Callable that returns fitted IV when you give it strike levels
+        fitted_volatility_curve = fit_surface(
+            model.surface_method,
+            strikes=strike_array,
+            iv=implied_volatility_array,
+            options=model.surface_options,
+            **surface_fit_kwargs,
         )
     except Exception as exc:
         raise CalculationError(
             f"Failed to smooth implied volatility data: {exc}"
         ) from exc
 
-    strike_grid, call_prices = price_curve_from_iv(
-        vol_curve,
-        effective_underlying,
+    # Price calls on a dense strike grid using the smoothed volatility curve
+    pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
+        fitted_volatility_curve,
+        underlying_price,
         days_to_expiry=resolved_market.days_to_expiry,
         risk_free_rate=resolved_market.risk_free_rate,
         pricing_engine=model.pricing_engine,
-        dividend_yield=q_eff,
+        dividend_yield=effective_dividend_yield,
     )
 
-    min_strike = float(priced["strike"].min())
-    max_strike = float(priced["strike"].max())
+    # Remember the strike bounds observed in the original data for later trimming
+    observed_min_strike = float(options_with_selected_price["strike"].min())
+    observed_max_strike = float(options_with_selected_price["strike"].max())
 
-    price_array, pdf_array = pdf_from_price_curve(
-        strike_grid,
-        call_prices,
+    # Apply Breeden-Litzenberger to turn call prices into the risk-neutral PDF
+    pdf_strike_values, pdf_values = pdf_from_price_curve(
+        pricing_strike_grid,
+        pricing_call_prices,
         risk_free_rate=resolved_market.risk_free_rate,
         days_to_expiry=resolved_market.days_to_expiry,
-        min_strike=min_strike,
-        max_strike=max_strike,
+        min_strike=observed_min_strike,
+        max_strike=observed_max_strike,
     )
 
     try:
-        _, cdf_array = calculate_cdf_from_pdf(price_array, pdf_array)
+        # Numerically integrate the PDF to obtain the matching CDF
+        _, cdf_values = calculate_cdf_from_pdf(pdf_strike_values, pdf_values)
     except Exception as exc:
         raise CalculationError(f"Failed to compute CDF: {exc}") from exc
 
-    meta: Dict[str, Any] = {"model_params": model}
-    if forward_price is not None:
+    # Assemble metadata that callers might want for diagnostics
+    result_metadata: Dict[str, Any] = {
+        "model_params": model,
+        "vol_curve": fitted_volatility_curve,
+    }
+    if parity_implied_forward_price is not None:
         try:
-            meta["forward_price"] = float(forward_price)
+            result_metadata["forward_price"] = float(parity_implied_forward_price)
         except Exception:
             pass
-    meta["smoother"] = model.smoother
-    return price_array, pdf_array, cdf_array, meta
+    result_metadata["surface_fit"] = model.surface_method
+    return pdf_strike_values, pdf_values, cdf_values, result_metadata
 
 
 # ---------------------------------------------------------------------------

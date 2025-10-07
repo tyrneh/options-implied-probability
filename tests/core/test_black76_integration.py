@@ -34,7 +34,14 @@ def test_black76_estimator_with_puts():
         risk_free_rate=r,
         risk_free_rate_mode="continuous",
     )
-    result = RND.from_dataframe(df, market, model=ModelParams(pricing_engine="black76"))
+    result = RND.from_dataframe(
+        df,
+        market,
+        model=ModelParams(
+            pricing_engine="black76",
+            surface_method="bspline",
+        ),
+    )
     assert result.pdf is not None
 
 

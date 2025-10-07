@@ -9,7 +9,7 @@ import pandas as pd
 from scipy.optimize import brentq
 
 from oipd.core.errors import CalculationError
-from oipd.core.iv_smoothing import VolCurve, smooth_iv as _smooth_iv
+from oipd.core.surface_fitting import VolCurve, fit_surface
 from oipd.pricing.black76 import black76_call_price as _b76_price
 from oipd.pricing.black_scholes import (
     black_scholes_call_price as _bs_price,
@@ -96,7 +96,7 @@ def smooth_iv(
 ) -> VolCurve:
     """Delegate to the configured IV smoothing method."""
 
-    return _smooth_iv(method, strikes, iv, **kwargs)
+    return fit_surface(method, strikes=strikes, iv=iv, **kwargs)
 
 
 def bs_iv_brent_method(
