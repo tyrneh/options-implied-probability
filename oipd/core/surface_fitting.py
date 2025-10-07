@@ -29,7 +29,12 @@ DEFAULT_BSPLINE_OPTIONS: dict[str, Any] = {
 
 
 def available_surface_fits() -> tuple[str, ...]:
-    """Return the supported surface fitting methods."""
+    """List the supported volatility surface fitting methods.
+
+    Returns:
+        A tuple containing the canonical names of all supported surface fit
+        implementations in the order they should be displayed to users.
+    """
 
     return AVAILABLE_SURFACE_FITS
 
@@ -44,7 +49,26 @@ def fit_surface(
     options: Mapping[str, Any] | None = None,
     **overrides: Any,
 ) -> VolCurve:
-    """Fit an implied-volatility smile using the requested method."""
+    """Fit an implied-volatility smile using the requested method.
+
+    Args:
+        method: Name of the surface fitting approach to use.
+        strikes: Observed strikes expressed in absolute terms.
+        iv: Implied volatilities corresponding to ``strikes``.
+        forward: Forward price for the underlying asset when SVI is requested.
+        maturity_years: Time to expiry in years for SVI calibration.
+        options: Optional configuration object for the chosen method.
+        **overrides: Keyword-only overrides applied on top of ``options``.
+
+    Returns:
+        A callable that produces implied volatility values when evaluated at
+        arbitrary strike inputs.
+
+    Raises:
+        ValueError: If the method is unknown, if the strike and volatility
+            arrays have mismatched shapes, or if arguments specific to SVI are
+            supplied for other methods.
+    """
 
     method_name = method.lower()
     if method_name not in AVAILABLE_SURFACE_FITS:
@@ -81,6 +105,15 @@ def fit_surface(
 
 
 def _build_svi_options(overrides: Mapping[str, Any] | None) -> Dict[str, Any]:
+    """Construct the configuration dictionary for SVI calibration.
+
+    Args:
+        overrides: Mapping of user-supplied configuration overrides.
+
+    Returns:
+        A mutable copy of the default SVI options with ``overrides`` applied.
+    """
+
     if overrides is None:
         return dict(DEFAULT_SVI_OPTIONS)
     return merge_svi_options(overrides)
@@ -94,6 +127,24 @@ def _fit_svi(
     maturity_years: float | None,
     **config_overrides: Any,
 ) -> VolCurve:
+    """Calibrate an SVI smile and return an evaluator over strike space.
+
+    Args:
+        strikes: Observed strike values for the maturity of interest.
+        iv: Implied volatilities aligned with ``strikes``.
+        forward: Forward price corresponding to the maturity.
+        maturity_years: Time to expiry in years used for calibration.
+        **config_overrides: Keyword overrides for SVI calibration settings.
+
+    Returns:
+        A callable that evaluates the calibrated SVI smile at arbitrary
+        strike levels.
+
+    Raises:
+        ValueError: If the forward or maturity inputs are missing or invalid.
+        CalculationError: If SVI calibration fails to converge.
+    """
+
     if forward is None or forward <= 0:
         raise ValueError("forward must be a positive number for SVI fitting")
     if maturity_years is None or maturity_years <= 0:
@@ -115,6 +166,15 @@ def _fit_svi(
     fitted_iv = from_total_variance(fitted_total_variance, maturity_years)
 
     def vol_curve(eval_strikes: Iterable[float] | np.ndarray) -> np.ndarray:
+        """Evaluate the calibrated SVI smile at the provided strike inputs.
+
+        Args:
+            eval_strikes: Strikes at which to compute implied volatility.
+
+        Returns:
+            Implied volatilities implied by the calibrated SVI smile.
+        """
+
         eval_array = np.asarray(eval_strikes, dtype=float)
         eval_k = log_moneyness(eval_array, forward)
         total_var_eval = svi_total_variance(eval_k, params)
@@ -142,6 +202,23 @@ def _fit_bspline(
     degree: int = 3,
     dx: float = 0.1,
 ) -> VolCurve:
+    """Fit a smoothing B-spline through an implied-volatility smile.
+
+    Args:
+        strikes: Observed strike values for the maturity of interest.
+        iv: Implied volatilities aligned with ``strikes``.
+        smoothing_factor: Smoothing factor passed to ``scipy.splrep``.
+        degree: Degree of the B-spline basis.
+        dx: Target spacing for the stored evaluation grid.
+
+    Returns:
+        A callable that evaluates the fitted B-spline at arbitrary strikes.
+
+    Raises:
+        CalculationError: If too few strikes are provided or if SciPy fails to
+            produce a spline representation.
+    """
+
     if strikes.size < 4:
         raise CalculationError(
             "Insufficient data for B-spline fitting: need at least 4 points"
@@ -161,6 +238,15 @@ def _fit_bspline(
     grid_y = spline(grid_x)
 
     def vol_curve(eval_strikes: Iterable[float] | np.ndarray) -> np.ndarray:
+        """Evaluate the fitted B-spline at the requested strike locations.
+
+        Args:
+            eval_strikes: Strikes at which to interpolate implied volatility.
+
+        Returns:
+            Implied volatilities interpolated from the fitted spline.
+        """
+
         eval_array = np.asarray(eval_strikes, dtype=float)
         return spline(eval_array)
 

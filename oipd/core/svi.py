@@ -7,7 +7,6 @@ single-expiry SVI model following Gatheral & Jacquier (2012).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite
 from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
 
 import numpy as np
@@ -52,7 +51,18 @@ class SVIParameters:
 
 
 def log_moneyness(strikes: np.ndarray | Iterable[float], forward: float) -> np.ndarray:
-    """Return log-moneyness k = ln(K / F)."""
+    """Convert strike quotes into log-moneyness relative to the forward.
+
+    Args:
+        strikes: Strike prices quoted in absolute terms.
+        forward: Forward price for the underlying asset.
+
+    Returns:
+        An array containing log-moneyness values ``k = ln(K / F)``.
+
+    Raises:
+        ValueError: If the forward or any strike is non-positive.
+    """
 
     if forward <= 0:
         raise ValueError("Forward must be positive for log-moneyness conversion")
@@ -63,7 +73,18 @@ def log_moneyness(strikes: np.ndarray | Iterable[float], forward: float) -> np.n
 
 
 def to_total_variance(iv: np.ndarray | Iterable[float], maturity_years: float) -> np.ndarray:
-    """Convert implied volatilities to total variance w = sigma^2 * T."""
+    """Convert implied volatility quotes to total variance values.
+
+    Args:
+        iv: Implied volatility observations.
+        maturity_years: Time to expiry in year fractions.
+
+    Returns:
+        Total variance values computed as ``sigma^2 * T``.
+
+    Raises:
+        ValueError: If ``maturity_years`` is not strictly positive.
+    """
 
     if maturity_years <= 0.0:
         raise ValueError("Maturity in years must be positive")
@@ -72,8 +93,23 @@ def to_total_variance(iv: np.ndarray | Iterable[float], maturity_years: float) -
     return total_var
 
 
-def from_total_variance(total_variance: np.ndarray | Iterable[float], maturity_years: float) -> np.ndarray:
-    """Convert total variance back to implied volatilities."""
+def from_total_variance(
+    total_variance: np.ndarray | Iterable[float], maturity_years: float
+) -> np.ndarray:
+    """Convert total variance observations back into implied volatilities.
+
+    Args:
+        total_variance: Total variance values, typically produced by
+            :func:`to_total_variance`.
+        maturity_years: Time to expiry in year fractions.
+
+    Returns:
+        Implied volatilities derived from ``total_variance``.
+
+    Raises:
+        ValueError: If ``maturity_years`` is not strictly positive or if any
+            total variance entry is negative.
+    """
 
     if maturity_years <= 0.0:
         raise ValueError("Maturity in years must be positive")
@@ -83,8 +119,18 @@ def from_total_variance(total_variance: np.ndarray | Iterable[float], maturity_y
     return np.sqrt(tv_arr / maturity_years)
 
 
-def svi_total_variance(k: np.ndarray | Iterable[float], params: SVIParameters) -> np.ndarray:
-    """Evaluate raw SVI total variance at the given log-moneyness values."""
+def svi_total_variance(
+    k: np.ndarray | Iterable[float], params: SVIParameters
+) -> np.ndarray:
+    """Evaluate raw SVI total variance at the given log-moneyness values.
+
+    Args:
+        k: Log-moneyness coordinates where the smile is evaluated.
+        params: Calibrated SVI parameters.
+
+    Returns:
+        Total variance values implied by the supplied SVI parameters.
+    """
 
     k_arr = np.asarray(k, dtype=float)
     diff = k_arr - params.m
@@ -92,8 +138,18 @@ def svi_total_variance(k: np.ndarray | Iterable[float], params: SVIParameters) -
     return params.a + params.b * (params.rho * diff + root)
 
 
-def svi_first_derivative(k: np.ndarray | Iterable[float], params: SVIParameters) -> np.ndarray:
-    """First derivative of total variance with respect to log-moneyness."""
+def svi_first_derivative(
+    k: np.ndarray | Iterable[float], params: SVIParameters
+) -> np.ndarray:
+    """Compute the first derivative of total variance with respect to k.
+
+    Args:
+        k: Log-moneyness coordinates for the evaluation.
+        params: Calibrated SVI parameters.
+
+    Returns:
+        First derivative of the SVI total variance curve.
+    """
 
     k_arr = np.asarray(k, dtype=float)
     diff = k_arr - params.m
@@ -101,8 +157,18 @@ def svi_first_derivative(k: np.ndarray | Iterable[float], params: SVIParameters)
     return params.b * (params.rho + diff / denom)
 
 
-def svi_second_derivative(k: np.ndarray | Iterable[float], params: SVIParameters) -> np.ndarray:
-    """Second derivative of total variance with respect to log-moneyness."""
+def svi_second_derivative(
+    k: np.ndarray | Iterable[float], params: SVIParameters
+) -> np.ndarray:
+    """Compute the second derivative of total variance with respect to k.
+
+    Args:
+        k: Log-moneyness coordinates for the evaluation.
+        params: Calibrated SVI parameters.
+
+    Returns:
+        Second derivative of the SVI total variance curve.
+    """
 
     k_arr = np.asarray(k, dtype=float)
     diff = k_arr - params.m
@@ -111,9 +177,16 @@ def svi_second_derivative(k: np.ndarray | Iterable[float], params: SVIParameters
 
 
 def g_function(k: np.ndarray | Iterable[float], params: SVIParameters) -> np.ndarray:
-    """Gatheral–Jacquier butterfly condition diagnostic ``g(k)``.
+    """Evaluate the Gatheral–Jacquier butterfly condition diagnostic ``g(k)``.
 
-    The density is non-negative iff ``g(k) >= 0`` for all k.
+    The density is non-negative iff ``g(k) >= 0`` for all values of ``k``.
+
+    Args:
+        k: Log-moneyness coordinates for the diagnostic evaluation.
+        params: Calibrated SVI parameters.
+
+    Returns:
+        Diagnostic values capturing the no-arbitrage butterfly constraint.
     """
 
     k_arr = np.asarray(k, dtype=float)
@@ -132,7 +205,16 @@ def g_function(k: np.ndarray | Iterable[float], params: SVIParameters) -> np.nda
 
 
 def min_g_on_grid(params: SVIParameters, k_grid: np.ndarray | Iterable[float]) -> float:
-    """Return the minimum ``g(k)`` over the supplied grid."""
+    """Return the minimum value of ``g(k)`` over the supplied grid.
+
+    Args:
+        params: Calibrated SVI parameters used for evaluation.
+        k_grid: Log-moneyness coordinates forming the diagnostic grid.
+
+    Returns:
+        The minimum finite value of ``g(k)`` over ``k_grid`` or ``nan`` if no
+        finite diagnostic values are available.
+    """
 
     values = g_function(k_grid, params)
     finite_vals = values[np.isfinite(values)]
@@ -142,20 +224,44 @@ def min_g_on_grid(params: SVIParameters, k_grid: np.ndarray | Iterable[float]) -
 
 
 def svi_minimum_location(params: SVIParameters) -> float:
-    """Location ``k*`` where total variance attains its minimum."""
+    """Return the log-moneyness where total variance is minimised.
+
+    Args:
+        params: Calibrated SVI parameters.
+
+    Returns:
+        The location ``k*`` where the SVI total variance reaches its minimum.
+    """
 
     sqrt_term = np.sqrt(1 - params.rho**2)
     return params.m - params.rho * params.sigma / sqrt_term
 
 
 def svi_minimum_variance(params: SVIParameters) -> float:
-    """Minimum total variance achieved by the SVI smile."""
+    """Return the minimum total variance achieved by the SVI smile.
+
+    Args:
+        params: Calibrated SVI parameters.
+
+    Returns:
+        The minimum total variance value implied by the SVI smile.
+    """
 
     sqrt_term = np.sqrt(1 - params.rho**2)
     return params.a + params.b * params.sigma * sqrt_term
 
 
 def _initial_guess(k: np.ndarray, total_variance: np.ndarray) -> np.ndarray:
+    """Generate a heuristic starting point for SVI calibration.
+
+    Args:
+        k: Log-moneyness grid for the observations.
+        total_variance: Observed total variance values aligned with ``k``.
+
+    Returns:
+        A NumPy array containing the initial parameter vector ``(a, b, rho, m,
+        sigma)`` used by the optimiser.
+    """
     idx_min = int(np.argmin(total_variance))
     a0 = float(max(1e-6, total_variance[idx_min]))
     m0 = float(k[idx_min])
@@ -166,12 +272,34 @@ def _initial_guess(k: np.ndarray, total_variance: np.ndarray) -> np.ndarray:
 
 
 def svi_options(**overrides: Any) -> Dict[str, float]:
-    """Return a copy of the default SVI options with overrides applied."""
+    """Return SVI calibration options with the provided overrides applied.
+
+    Args:
+        **overrides: Keyword arguments overriding default option values.
+
+    Returns:
+        A dictionary containing the merged calibration options.
+
+    Raises:
+        TypeError: If an unknown option key is supplied.
+    """
 
     return merge_svi_options(overrides)
 
 
 def merge_svi_options(overrides: Mapping[str, Any] | None) -> Dict[str, float]:
+    """Merge default SVI options with user-provided overrides.
+
+    Args:
+        overrides: Mapping whose keys correspond to recognised SVI options.
+
+    Returns:
+        A dictionary containing the merged calibration options.
+
+    Raises:
+        TypeError: If ``overrides`` contains keys that are not recognised.
+    """
+
     if overrides is None:
         return dict(DEFAULT_SVI_OPTIONS)
 
@@ -185,6 +313,16 @@ def merge_svi_options(overrides: Mapping[str, Any] | None) -> Dict[str, float]:
 
 
 def _build_bounds(k: np.ndarray, config: Mapping[str, float]) -> Sequence[Tuple[float, float]]:
+    """Construct parameter bounds for the SVI optimisation routine.
+
+    Args:
+        k: Log-moneyness grid for the smile being calibrated.
+        config: Configuration dictionary controlling the optimiser bounds.
+
+    Returns:
+        A sequence of ``(lower, upper)`` bounds for each SVI parameter.
+    """
+
     span = max(1.0, float(np.max(k) - np.min(k)))
     m_lo = float(np.min(k) - span)
     m_hi = float(np.max(k) + span)
@@ -198,6 +336,15 @@ def _build_bounds(k: np.ndarray, config: Mapping[str, float]) -> Sequence[Tuple[
 
 
 def _penalty_terms(params_vec: np.ndarray, config: Mapping[str, float]) -> float:
+    """Compute regularisation penalties for the optimisation objective.
+
+    Args:
+        params_vec: Candidate SVI parameter vector ``(a, b, rho, m, sigma)``.
+        config: Configuration dictionary containing penalty multipliers.
+
+    Returns:
+        Scalar penalty value added to the least-squares objective.
+    """
     a, b, rho, _, sigma = params_vec
     if b < 0 or sigma <= 0 or abs(rho) >= 1:
         return 1e6
@@ -213,7 +360,22 @@ def calibrate_svi_parameters(
     maturity_years: float,
     config: Mapping[str, float] | None,
 ) -> Tuple[SVIParameters, Dict[str, Any]]:
-    """Calibrate raw SVI parameters to observed total variance data."""
+    """Calibrate raw SVI parameters to observed total variance data.
+
+    Args:
+        k: Log-moneyness grid corresponding to the observed smile.
+        total_variance: Observed total variance values on ``k``.
+        maturity_years: Time to expiry in year fractions.
+        config: Optional configuration dictionary overriding defaults.
+
+    Returns:
+        A tuple containing the calibrated :class:`SVIParameters` and a
+        diagnostics dictionary summarising the optimisation.
+
+    Raises:
+        ValueError: If the inputs fail validation checks.
+        CalculationError: If the optimisation fails or violates constraints.
+    """
 
     options = merge_svi_options(config)
 
@@ -228,6 +390,15 @@ def calibrate_svi_parameters(
     bounds = _build_bounds(k, options)
 
     def objective(vec: np.ndarray) -> float:
+        """Evaluate the penalised least-squares objective for calibration.
+
+        Args:
+            vec: Candidate SVI parameter vector.
+
+        Returns:
+            Scalar objective value combining residuals and regularisation.
+        """
+
         params = SVIParameters(*vec)
         model = svi_total_variance(k, params)
         residual = model - total_variance

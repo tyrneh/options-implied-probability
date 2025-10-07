@@ -401,8 +401,10 @@ def _estimate(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Run the core RND estimation given fully validated input data."""
 
+    # Note when the market snapshot was taken so all filters line up with it
     val_date = resolved_market.valuation_date
 
+    # Ensure we actually have the data needed to price with mid quotes if requested
     if model.price_method == "mid" and model.price_method_explicit:
         missing_optional = options_data.attrs.get(
             "_oipd_missing_optional_columns", set()
@@ -423,6 +425,7 @@ def _estimate(
                 "Requested price_method='mid' but input data lacks bid/ask, mid, or option_type columns."
             )
 
+    # Work out the effective spot and dividend inputs required by the chosen engine
     if model.pricing_engine == "bs":
         spot_eff, q_eff = prepare_dividends(
             underlying=resolved_market.underlying_price,
@@ -455,7 +458,7 @@ def _estimate(
     else:
         effective_underlying = spot_eff
 
-    # filter stale data
+    # Remove quotes that are too old relative to the valuation date
     filtered = filter_stale_options(
         processed,
         resolved_market.valuation_date,
@@ -463,12 +466,12 @@ def _estimate(
         emit_warning=True,
     )
 
-    # select price column - mid or last
+    # Pick which observed price column we will treat as the option premium
     priced = select_price_column(filtered, model.price_method)
     if priced.empty:
         raise CalculationError("No valid options data after price selection")
 
-    # compute implied volatility according to the IV model
+    # Back out implied volatilities from those option prices
     iv_ready = compute_iv(
         priced,
         effective_underlying,
@@ -478,13 +481,15 @@ def _estimate(
         q_eff,
     )
 
-    # fit the volatility surface
+    # Smooth the implied vol smile so we can evaluate it anywhere we need
     try:
+        # Capture the strike and IV columns as plain arrays for the fitting helper
         strikes_arr = iv_ready["strike"].to_numpy()
         iv_arr = iv_ready["iv"].to_numpy()
 
         fit_kwargs: Dict[str, Any] = {}
         if model.surface_method == "svi":
+            # SVI needs the forward level and time to expiry to calibrate properly
             fit_kwargs.update(
                 {
                     "forward": effective_underlying,
@@ -504,6 +509,7 @@ def _estimate(
             f"Failed to smooth implied volatility data: {exc}"
         ) from exc
 
+    # Price calls on a dense strike grid using the smoothed volatility curve
     strike_grid, call_prices = price_curve_from_iv(
         vol_curve,
         effective_underlying,
@@ -513,9 +519,11 @@ def _estimate(
         dividend_yield=q_eff,
     )
 
+    # Remember the strike bounds observed in the original data for later trimming
     min_strike = float(priced["strike"].min())
     max_strike = float(priced["strike"].max())
 
+    # Apply Breeden-Litzenberger to turn call prices into the risk-neutral PDF
     price_array, pdf_array = pdf_from_price_curve(
         strike_grid,
         call_prices,
@@ -526,10 +534,12 @@ def _estimate(
     )
 
     try:
+        # Numerically integrate the PDF to obtain the matching CDF
         _, cdf_array = calculate_cdf_from_pdf(price_array, pdf_array)
     except Exception as exc:
         raise CalculationError(f"Failed to compute CDF: {exc}") from exc
 
+    # Assemble metadata that callers might want for diagnostics
     meta: Dict[str, Any] = {"model_params": model, "vol_curve": vol_curve}
     if forward_price is not None:
         try:
