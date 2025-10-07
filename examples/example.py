@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 from oipd import ModelParams, RND
 from oipd.market_inputs import MarketInputs
-from oipd.core.surface_fitting import SurfaceConfig, SVIFitDiagnostics, SVIConfig
+from oipd.core.svi import svi_options
 
 # --- Example 3 - Bitcoin --- #
 # options data from Deribit BTC-USDC
@@ -30,45 +30,28 @@ market_bitcoin = MarketInputs(
     risk_free_rate=0.04199,  # US 3-month nominal Treasury yield
 )
 
+custom_svi = svi_options(max_iter=800, tol=1e-9, regularisation=1e-6)
+
 model_bitcoin = ModelParams(
     price_method="mid",
     max_staleness_days=None,
-    surface_fit=SurfaceConfig(name="svi"),
+    surface_method="svi",
+    surface_options=custom_svi,
 )
 
 # 4️⃣  run using S&P500 e-mini futures options chain
-bitcoin = RND.from_csv(
+est_bitcoin = RND.from_csv(
     "data/bitcoin_date20250830_strike20251226_price108864.csv",
     market_bitcoin,
     model=model_bitcoin,
     column_mapping=column_mapping_bitcoin,
 )
 
-bitcoin.prob_at_or_above(100000)
+est_bitcoin.prob_at_or_above(100000)
 
-
-
-
-
-
-
-vol_curve = est_bitcoin.meta.get("vol_curve")
-if vol_curve is not None:
-    diagnostics = getattr(vol_curve, "diagnostics", None)
-    if isinstance(diagnostics, SVIFitDiagnostics):
-        print(
-            "SVI diagnostics:",
-            {
-                "status": diagnostics.status,
-                "objective": diagnostics.objective,
-                "min_g": diagnostics.min_g,
-                "iterations": diagnostics.iterations,
-                "message": diagnostics.message,
-            },
-        )
 
 # PDF only
-fig = bitcoin.plot(
+fig = est_bitcoin.plot(
     kind="pdf",
     figsize=(8, 6),
     title="Implied Bitcoin price on Dec 26, 2025",

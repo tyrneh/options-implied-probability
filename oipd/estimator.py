@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, Optional, Dict, Literal, Any
+from typing import Protocol, Optional, Dict, Literal, Any, Mapping
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -16,7 +16,7 @@ from oipd.core.prep import (
     select_price_column,
     compute_iv,
 )
-from oipd.core.surface_fitting import SurfaceConfig, fit_surface
+from oipd.core.surface_fitting import AVAILABLE_SURFACE_FITS, fit_surface
 from oipd.core.density import (
     price_curve_from_iv,
     pdf_from_price_curve,
@@ -56,7 +56,8 @@ class ModelParams:
     max_staleness_days: Optional[int] = (
         3  # in calendar days; set to 3 by default to accomodate weekends
     )
-    surface_fit: SurfaceConfig = field(default_factory=SurfaceConfig)
+    surface_method: Literal["svi", "bspline"] = "svi"
+    surface_options: Mapping[str, Any] | None = None
     price_method_explicit: bool = field(init=False, default=False)
 
     def __post_init__(self):
@@ -66,15 +67,17 @@ class ModelParams:
         else:
             self.price_method_explicit = True
 
-        if not isinstance(self.surface_fit, SurfaceConfig):
-            if isinstance(self.surface_fit, str):
-                self.surface_fit = SurfaceConfig(name=self.surface_fit)
-            elif isinstance(self.surface_fit, dict):
-                self.surface_fit = SurfaceConfig(**self.surface_fit)
-            else:
-                raise TypeError(
-                    "surface_fit must be a SurfaceConfig, str, or dict of kwargs"
-                )
+        if self.surface_method not in AVAILABLE_SURFACE_FITS:
+            raise ValueError(
+                f"surface_method must be one of {AVAILABLE_SURFACE_FITS}, got {self.surface_method}"
+            )
+
+        if self.surface_options is None:
+            self.surface_options = {}
+        elif isinstance(self.surface_options, Mapping):
+            self.surface_options = dict(self.surface_options)
+        else:
+            raise TypeError("surface_options must be a mapping or None")
 
 
 @dataclass(frozen=True)
@@ -481,7 +484,7 @@ def _estimate(
         iv_arr = iv_ready["iv"].to_numpy()
 
         fit_kwargs: Dict[str, Any] = {}
-        if model.surface_fit.name == "svi":
+        if model.surface_method == "svi":
             fit_kwargs.update(
                 {
                     "forward": effective_underlying,
@@ -490,9 +493,10 @@ def _estimate(
             )
 
         vol_curve = fit_surface(
-            model.surface_fit,
+            model.surface_method,
             strikes=strikes_arr,
             iv=iv_arr,
+            options=model.surface_options,
             **fit_kwargs,
         )
     except Exception as exc:
@@ -532,7 +536,7 @@ def _estimate(
             meta["forward_price"] = float(forward_price)
         except Exception:
             pass
-    meta["surface_fit"] = model.surface_fit.name
+    meta["surface_fit"] = model.surface_method
     return price_array, pdf_array, cdf_array, meta
 
 

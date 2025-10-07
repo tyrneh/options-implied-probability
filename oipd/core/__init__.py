@@ -13,7 +13,11 @@ from oipd.core.iv import (
     compute_iv,
     smooth_iv,
 )
-from oipd.core.surface_fitting import available_surface_fits, fit_surface, SurfaceConfig
+from oipd.core.surface_fitting import (
+    AVAILABLE_SURFACE_FITS,
+    available_surface_fits,
+    fit_surface,
+)
 from oipd.core.parity import (
     apply_put_call_parity,
     detect_parity_opportunity,
@@ -39,7 +43,7 @@ __all__ = [
     "smooth_iv",
     "fit_surface",
     "available_surface_fits",
-    "SurfaceConfig",
+    "AVAILABLE_SURFACE_FITS",
     "preprocess_with_parity",
     "infer_forward_from_atm",
     "apply_put_call_parity",

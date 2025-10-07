@@ -73,22 +73,14 @@ ModelParams(
     pricing_engine     = "black76" | "bs",     # default forward-based Black-76. Use Black-Scholes only when puts data are unavailable
     price_method       = "last" | "mid",       # defaults to 'mid'; mid-price calculated as `(bid + ask) / 2`
     max_staleness_days = 3,                   # filter options older than N calendar days from valuation_date. Defaults to 3 to accomodate weekends. Set to None to disable filtering
-    surface_fit        = SurfaceConfig(name="svi")  # volatility smile fit; defaults to arbitrage-aware SVI
+    surface_method     = "svi",                # "svi" (default) or "bspline"
+    surface_options    = {"max_iter": 400},    # optional dict of method-specific kwargs
 )
 ```
 
 Note that mid prices are preferred over last, due to lower noise from stale quotes. However, Yahoo Finance often doesn't have bid/ask data, so the from_ticker() method for yfinance uses last prices by default. 
 
-`SurfaceConfig` lives in `oipd.core.surface_fitting` and bundles both the chosen fit (`"svi"` or `"bspline"`) and any advanced calibration options. The default instantiation calibrates a single-expiry SVI slice using the constraints from Gatheral–Jacquier 2012. Optional keyword overrides are supplied through the `params` argument, which accepts either a plain dict or an `SVIConfig` instance. Example:
-
-```python
-from oipd.core.surface_fitting import SurfaceConfig, SVIConfig
-
-custom_svi = SVIConfig(max_iter=800, tol=1e-9, regularisation=1e-6)
-ModelParams(surface_fit=SurfaceConfig(name="svi", params=custom_svi))
-```
-
-Smoother diagnostics are attached to the fitted `VolCurve` and surfaced via `RNDResult.meta["vol_curve"].diagnostics`. For SVI fits this is an `SVIFitDiagnostics` dataclass containing the optimiser status, residual objective, minimum butterfly slack (`min_g`), and iteration count—handy for alerting or notebooks. If calibration fails (e.g., too few strikes or a hard butterfly violation) the code raises `CalculationError("Failed to smooth implied volatility data: ...")`. In those cases either clean the input quotes or retry with the legacy cubic spline `SurfaceConfig(name="bspline")` as an explicit fallback.
+`surface_method` selects between the arbitrage-aware SVI fitter and the legacy cubic B-spline smoother. Supply `surface_options` as a plain dictionary (for example via `oipd.core.svi.svi_options(max_iter=800, tol=1e-9)`) to override calibration defaults. If calibration fails (e.g., too few strikes or a hard butterfly violation) the code raises `CalculationError("Failed to smooth implied volatility data: ...")`. In those cases either clean the input quotes or retry with the legacy cubic spline via `ModelParams(surface_method="bspline")`.
 
 ### 2.4 RND estimator
 
@@ -164,7 +156,7 @@ The process of generating the PDFs and CDFs is as follows:
 2. Apply put–call parity preprocessing: estimate the forward from near‑ATM call–put pairs
 3. Based on the forward price, restrict to OTM options. Keep calls above the forward and replace in‑the‑money calls with synthetic calls constructed from OTM puts via parity, to reduce noise from illiquid ITM quotes[^2].
 4. Using the chosen pricing model (Black‑76 as it works with forward prices[^3]) we convert strike prices into implied volatilities (IV)[^4]. IV are solved using either Newton's Method or Brent's root‑finding algorithm, as specified by the `solver_method` argument
-5. Fit the implied-volatility smile using the configured surface model. By default we calibrate a raw SVI slice. During optimisation we constrain the raw parameters (`b ≥ 0`, `|ρ| ≤ ρ_bound < 1`, `σ ≥ σ_min`) and enforce the Gatheral–Jacquier minimum-variance condition `a + b σ √(1 − ρ²) ≥ 0`. After calibration we evaluate the butterfly diagnostic `g(k)` on an extended log-moneyness grid; any slice with `min_g < 0` is rejected to avoid negative densities. The registry also keeps the historical B-spline smoother available under `SurfaceConfig(name="bspline")`. The resulting callable `VolCurve` includes a diagnostic payload (`vol_curve.diagnostics`) for inspection.
+5. Fit the implied-volatility smile using the configured surface model. By default we calibrate a raw SVI slice. During optimisation we constrain the raw parameters (`b ≥ 0`, `|ρ| ≤ ρ_bound < 1`, `σ ≥ σ_min`) and enforce the Gatheral–Jacquier minimum-variance condition `a + b σ √(1 − ρ²) ≥ 0`. After calibration we evaluate the butterfly diagnostic `g(k)` on an extended log-moneyness grid; if `min_g < 0` a `CalculationError` is raised. Users can opt into the historical cubic B-spline smoother with `surface_method="bspline"`.
 6. From the volatility smile, we use the same pricing model to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
 7. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^6]
 8. Once we have the PDF, we can calculate the CDF
@@ -173,7 +165,7 @@ The process of generating the PDFs and CDFs is as follows:
 [^2]: Parity-based OTM‑only preprocessing follows Aït‑Sahalia and Lo, ["Nonparametric Estimation of State‑Price Densities Implicit in Financial Asset Prices"](https://www.princeton.edu/~yacine/aslo.pdf)
 [^3]: Derivation of Black-76 is explained well by [this article](https://benjaminwhiteside.com/2021/01/15/black-76/)
 [^4]: We convert from price-space to IV-space, and then back to price-space in step 6. See this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/) for a breakdown of why we do this double conversion
-[^5]: Options markets contain noise. Simple interpolation would yield erratic smiles, which in turn produce unstable price curves and PDFs. We therefore fit a model to the smile: by default the raw SVI parametrisation of Gatheral & Jacquier (see ["Arbitrage-Free SVI Volatility Surfaces"](https://arxiv.org/abs/1204.0646)), with a legacy cubic B-spline (`SurfaceConfig(name="bspline")`) available for diagnostics. The original B-spline motivation is discussed in [Zeng (2014)](https://edoc.hu-berlin.de/bitstream/handle/18452/14708/zeng.pdf?sequence=1&isAllowed=y)
+[^5]: Options markets contain noise. Simple interpolation would yield erratic smiles, which in turn produce unstable price curves and PDFs. We therefore fit a model to the smile: by default the raw SVI parametrisation of Gatheral & Jacquier (see ["Arbitrage-Free SVI Volatility Surfaces"](https://arxiv.org/abs/1204.0646)), with a legacy cubic B-spline fallback available for diagnostics. The original B-spline motivation is discussed in [Zeng (2014)](https://edoc.hu-berlin.de/bitstream/handle/18452/14708/zeng.pdf?sequence=1&isAllowed=y)
 [^6]: For a proof of this derivation, see this [blog post](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/)
 
 ---

@@ -7,7 +7,6 @@ import pandas as pd
 from oipd.estimator import ModelParams, RND
 from oipd.market_inputs import MarketInputs
 from oipd.pricing.black_scholes import black_scholes_call_price
-from oipd.core.surface_fitting import SurfaceConfig, SVIFitDiagnostics
 
 
 def _simple_chain():
@@ -39,10 +38,8 @@ def test_rnd_surface_diagnostics_default_svi():
     result = RND.from_dataframe(df, market, model=ModelParams(pricing_engine="black76"))
     assert result.meta["surface_fit"] == "svi"
     vol_curve = result.meta["vol_curve"]  # type: ignore[index]
-    diagnostics = getattr(vol_curve, "diagnostics", None)
-    assert isinstance(diagnostics, SVIFitDiagnostics)
-    assert diagnostics.status == "success"
-    assert diagnostics.min_g is not None
+    assert callable(vol_curve)
+    assert hasattr(vol_curve, "params")
 
 
 def test_rnd_surface_diagnostics_bspline():
@@ -50,14 +47,10 @@ def test_rnd_surface_diagnostics_bspline():
     result = RND.from_dataframe(
         df,
         market,
-        model=ModelParams(surface_fit=SurfaceConfig(name="bspline"), pricing_engine="black76"),
+        model=ModelParams(surface_method="bspline", pricing_engine="black76"),
     )
     assert result.meta["surface_fit"] == "bspline"
     vol_curve = result.meta["vol_curve"]  # type: ignore[index]
-    diagnostics = getattr(vol_curve, "diagnostics", None)
-    assert diagnostics is not None
-    if isinstance(diagnostics, SVIFitDiagnostics):
-        assert diagnostics.status in {"success", "not_run"}
-    else:
-        assert isinstance(diagnostics, dict)
-        assert "points_used" in diagnostics
+    assert callable(vol_curve)
+    assert hasattr(vol_curve, "params")
+    assert "method" in vol_curve.params

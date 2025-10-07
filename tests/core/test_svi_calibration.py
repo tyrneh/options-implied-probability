@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from oipd.core.surface_fitting import SurfaceConfig, fit_surface
+from oipd.core.surface_fitting import fit_surface
 from oipd.core.svi import (
     SVIParameters,
     from_total_variance,
@@ -27,9 +27,8 @@ def test_svi_calibration_recovers_parameters():
     forward = 100.0
     strikes, iv = generate_synthetic_smile(params_true, maturity, forward)
 
-    config = SurfaceConfig(name="svi")
     vol_curve = fit_surface(
-        config,
+        "svi",
         strikes=strikes,
         iv=iv,
         forward=forward,
@@ -52,10 +51,6 @@ def test_svi_calibration_recovers_parameters():
     target_total_var = to_total_variance(iv, maturity)
     np.testing.assert_allclose(recovered_total_var, target_total_var, atol=5e-3)
 
-    diag = vol_curve.diagnostics
-    assert diag.status == "success"
-    assert diag.min_g is not None and diag.min_g >= -1e-6
-
 
 def test_svi_calibration_with_noise():
     params_true = SVIParameters(a=0.03, b=0.15, rho=0.2, m=0.0, sigma=0.25)
@@ -66,7 +61,7 @@ def test_svi_calibration_with_noise():
     noisy_iv = iv + rng.normal(scale=1e-3, size=iv.shape)
 
     vol_curve = fit_surface(
-        SurfaceConfig(name="svi"),
+        "svi",
         strikes=strikes,
         iv=noisy_iv,
         forward=forward,
@@ -75,7 +70,6 @@ def test_svi_calibration_with_noise():
 
     recovered = vol_curve(strikes)
     np.testing.assert_allclose(recovered, iv, atol=5e-3)
-    assert vol_curve.diagnostics.status == "success"
 
 
 def test_svi_requires_forward_and_maturity():
@@ -83,10 +77,8 @@ def test_svi_requires_forward_and_maturity():
     maturity = 0.5
     forward = 80.0
     strikes, iv = generate_synthetic_smile(params_true, maturity, forward)
-    config = SurfaceConfig(name="svi")
-
     with pytest.raises(ValueError):
-        fit_surface(config, strikes=strikes, iv=iv)
+        fit_surface("svi", strikes=strikes, iv=iv)
 
 
 def test_svi_insufficient_points():
@@ -94,14 +86,11 @@ def test_svi_insufficient_points():
     maturity = 0.5
     strikes = np.linspace(90, 110, 4)
     iv = np.linspace(0.2, 0.25, 4)
-    config = SurfaceConfig(name="svi")
-
     with pytest.raises(ValueError):
         fit_surface(
-            config,
+            "svi",
             strikes=strikes,
             iv=iv,
             forward=forward,
             maturity_years=maturity,
         )
-

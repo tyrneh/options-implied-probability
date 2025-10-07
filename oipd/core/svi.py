@@ -8,16 +8,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
 
 import numpy as np
 from scipy import optimize
 
 from oipd.core.errors import CalculationError
 
-if TYPE_CHECKING:  # pragma: no cover - typing aid
-    from oipd.core.surface_fitting import SVIConfig
+DEFAULT_SVI_OPTIONS: Dict[str, float] = {
+    "max_iter": 200,
+    "tol": 1e-8,
+    "regularisation": 1e-4,
+    "rho_bound": 0.999,
+    "sigma_min": 1e-4,
+}
 
+_SVI_OPTION_KEYS = set(DEFAULT_SVI_OPTIONS.keys())
 
 @dataclass(frozen=True)
 class SVIParameters:
@@ -159,26 +165,45 @@ def _initial_guess(k: np.ndarray, total_variance: np.ndarray) -> np.ndarray:
     return np.array([a0, b0, rho0, m0, sigma0], dtype=float)
 
 
-def _build_bounds(k: np.ndarray, config: "SVIConfig") -> Sequence[Tuple[float, float]]:
+def svi_options(**overrides: Any) -> Dict[str, float]:
+    """Return a copy of the default SVI options with overrides applied."""
+
+    return merge_svi_options(overrides)
+
+
+def merge_svi_options(overrides: Mapping[str, Any] | None) -> Dict[str, float]:
+    if overrides is None:
+        return dict(DEFAULT_SVI_OPTIONS)
+
+    unknown = set(overrides) - _SVI_OPTION_KEYS
+    if unknown:
+        raise TypeError(f"Unknown SVI option(s): {sorted(unknown)}")
+
+    merged = dict(DEFAULT_SVI_OPTIONS)
+    merged.update({key: overrides[key] for key in overrides})
+    return merged
+
+
+def _build_bounds(k: np.ndarray, config: Mapping[str, float]) -> Sequence[Tuple[float, float]]:
     span = max(1.0, float(np.max(k) - np.min(k)))
     m_lo = float(np.min(k) - span)
     m_hi = float(np.max(k) + span)
     return [
         (-1.0, 4.0),
         (0.0, 5.0),
-        (-config.rho_bound, config.rho_bound),
+        (-config["rho_bound"], config["rho_bound"]),
         (m_lo, m_hi),
-        (config.sigma_min, 5.0),
+        (config["sigma_min"], 5.0),
     ]
 
 
-def _penalty_terms(params_vec: np.ndarray, config: "SVIConfig") -> float:
+def _penalty_terms(params_vec: np.ndarray, config: Mapping[str, float]) -> float:
     a, b, rho, _, sigma = params_vec
     if b < 0 or sigma <= 0 or abs(rho) >= 1:
         return 1e6
     min_var = a + b * sigma * np.sqrt(max(1e-12, 1 - rho**2))
     penalty = 1e5 * max(0.0, -min_var)
-    penalty += float(config.regularisation) * (b**2)
+    penalty += config["regularisation"] * (b**2)
     return penalty
 
 
@@ -186,11 +211,11 @@ def calibrate_svi_parameters(
     k: np.ndarray,
     total_variance: np.ndarray,
     maturity_years: float,
-    config: "SVIConfig",
-    *,
-    weights: Optional[np.ndarray] = None,
+    config: Mapping[str, float] | None,
 ) -> Tuple[SVIParameters, Dict[str, Any]]:
     """Calibrate raw SVI parameters to observed total variance data."""
+
+    options = merge_svi_options(config)
 
     if maturity_years <= 0:
         raise ValueError("maturity_years must be positive")
@@ -199,22 +224,15 @@ def calibrate_svi_parameters(
     if k.ndim != 1 or k.size < 5:
         raise ValueError("Need at least 5 strikes for SVI calibration")
 
-    if weights is None:
-        weights = np.ones_like(total_variance)
-    else:
-        weights = np.asarray(weights, dtype=float)
-        if weights.shape != k.shape:
-            raise ValueError("weights must match the shape of k")
-
     guess = _initial_guess(k, total_variance)
-    bounds = _build_bounds(k, config)
+    bounds = _build_bounds(k, options)
 
     def objective(vec: np.ndarray) -> float:
         params = SVIParameters(*vec)
         model = svi_total_variance(k, params)
         residual = model - total_variance
-        base = float(np.sum(weights * residual**2))
-        penalty = _penalty_terms(vec, config)
+        base = float(np.sum(residual**2))
+        penalty = _penalty_terms(vec, options)
         return base + penalty
 
     result = optimize.minimize(
@@ -222,7 +240,7 @@ def calibrate_svi_parameters(
         guess,
         method="L-BFGS-B",
         bounds=bounds,
-        options={"maxiter": config.max_iter, "ftol": config.tol},
+        options={"maxiter": int(options["max_iter"]), "ftol": float(options["tol"])}
     )
 
     diagnostics: Dict[str, Any] = {
@@ -253,6 +271,9 @@ def calibrate_svi_parameters(
 
 
 __all__ = [
+    "DEFAULT_SVI_OPTIONS",
+    "merge_svi_options",
+    "svi_options",
     "SVIParameters",
     "log_moneyness",
     "to_total_variance",
