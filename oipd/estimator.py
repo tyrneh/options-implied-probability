@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, Optional, Dict, Literal, Any, Mapping
+from typing import Protocol, Optional, Dict, Literal, Any, Mapping, Sequence
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -292,6 +292,81 @@ class RNDResult:
             **kwargs,
         )
 
+    def iv_smile(
+        self,
+        strikes: Sequence[float] | np.ndarray | None = None,
+        *,
+        num_points: int = 200,
+        include_observed: bool = False,
+    ) -> pd.DataFrame:
+        """Return the fitted implied-volatility smile evaluated on a strike grid.
+
+        Args:
+            strikes: Optional sequence of strikes at which to evaluate the fitted
+                implied-volatility curve. When omitted, the method uses the stored
+                calibration grid when available, otherwise a linspace spanning the
+                observed strikes with ``num_points`` samples.
+            num_points: Number of evaluation points when ``strikes`` is not
+                provided and a grid must be generated. Must be at least two when
+                the observed strike range is non-zero.
+            include_observed: Whether to join the observed implied volatilities
+                used during calibration alongside the fitted values.
+
+        Returns:
+            A DataFrame containing the strike grid and fitted implied volatilities.
+            When ``include_observed`` is True and observed data is available, an
+            additional ``observed_iv`` column is included.
+
+        Raises:
+            ValueError: If the fitted volatility curve is unavailable or a strike
+                grid cannot be constructed.
+        """
+        vol_curve = self.meta.get("vol_curve")
+        if vol_curve is None:
+            raise ValueError("No fitted implied-volatility curve is available.")
+
+        observed_iv = self.meta.get("observed_iv")
+
+        if strikes is None:
+            curve_grid = getattr(vol_curve, "grid", None)
+            if curve_grid is not None:
+                strike_grid = np.asarray(curve_grid[0], dtype=float)
+                fitted_values = np.asarray(curve_grid[1], dtype=float)
+            else:
+                if observed_iv is None or observed_iv.empty:
+                    raise ValueError(
+                        "Unable to infer an evaluation grid for the implied-volatility smile."
+                    )
+                strike_min = float(observed_iv["strike"].min())
+                strike_max = float(observed_iv["strike"].max())
+                if np.isclose(strike_min, strike_max):
+                    strike_grid = np.array([strike_min])
+                else:
+                    if num_points < 2:
+                        raise ValueError(
+                            "num_points must be at least 2 when generating a strike grid."
+                        )
+                    strike_grid = np.linspace(strike_min, strike_max, num_points)
+                fitted_values = vol_curve(strike_grid)
+        else:
+            strike_grid = np.asarray(list(strikes), dtype=float)
+            if strike_grid.size == 0:
+                raise ValueError("strikes must contain at least one value.")
+            fitted_values = vol_curve(strike_grid)
+
+        smile_df = pd.DataFrame(
+            {
+                "strike": strike_grid,
+                "fitted_iv": fitted_values,
+            }
+        )
+
+        if include_observed and isinstance(observed_iv, pd.DataFrame):
+            merged_observed = observed_iv.rename(columns={"iv": "observed_iv"})
+            smile_df = smile_df.merge(merged_observed, on="strike", how="left")
+
+        return smile_df
+
 
 # ---------------------------------------------------------------------------
 # Data-loading abstraction
@@ -512,6 +587,12 @@ def _estimate(
             f"Failed to smooth implied volatility data: {exc}"
         ) from exc
 
+    observed_iv_data = (
+        options_with_calculated_iv.loc[:, ["strike", "iv"]]
+        .groupby("strike", as_index=False)
+        .mean()
+    )
+
     # Price calls on a dense strike grid using the smoothed volatility curve
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
         fitted_volatility_curve,
@@ -546,6 +627,7 @@ def _estimate(
     result_metadata: Dict[str, Any] = {
         "model_params": model,
         "vol_curve": fitted_volatility_curve,
+        "observed_iv": observed_iv_data,
     }
     if parity_implied_forward_price is not None:
         try:
@@ -889,3 +971,31 @@ class RND:
     def plot(self, **kwargs):
         """Delegate to result.plot() for backward compatibility."""
         return self.result.plot(**kwargs)
+
+    def iv_smile(
+        self,
+        strikes: Sequence[float] | np.ndarray | None = None,
+        *,
+        num_points: int = 200,
+        include_observed: bool = False,
+    ) -> pd.DataFrame:
+        """Retrieve the fitted implied-volatility smile on a strike grid.
+
+        Args:
+            strikes: Optional sequence of strike values where the smile should
+                be evaluated. If omitted, the stored calibration grid or a
+                generated linspace is used.
+            num_points: Number of points used to generate the evaluation grid
+                when ``strikes`` is not provided. Must be at least two for a
+                non-degenerate strike range.
+            include_observed: Whether to attach the observed implied
+                volatilities used during calibration.
+
+        Returns:
+            DataFrame containing strike levels and fitted implied volatilities.
+            When ``include_observed`` is True, the observed values are included
+            in an ``observed_iv`` column where available.
+        """
+        return self.result.iv_smile(
+            strikes, num_points=num_points, include_observed=include_observed
+        )
