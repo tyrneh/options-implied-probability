@@ -241,6 +241,8 @@ def apply_put_call_parity(
         "strike",
         "Volume",
         "volume",
+        "bid",
+        "ask",
     }
     for col in original_cols:
         if col in options_df.columns:
@@ -263,6 +265,32 @@ def _calculate_mid_price(option_row) -> float:
             bid, ask = option_row["bid"], option_row["ask"]
             if pd.notna(bid) and pd.notna(ask) and bid > 0 and ask > bid:
                 return (bid + ask) / 2.0
+    except Exception:
+        pass
+    return np.nan
+
+
+def _extract_bid(option_row) -> float:
+    """Extract bid price if available."""
+    if option_row is None:
+        return np.nan
+
+    try:
+        if "bid" in option_row and pd.notna(option_row["bid"]) and option_row["bid"] > 0:
+            return float(option_row["bid"])
+    except Exception:
+        pass
+    return np.nan
+
+
+def _extract_ask(option_row) -> float:
+    """Extract ask price if available."""
+    if option_row is None:
+        return np.nan
+
+    try:
+        if "ask" in option_row and pd.notna(option_row["ask"]) and option_row["ask"] > 0:
+            return float(option_row["ask"])
     except Exception:
         pass
     return np.nan
@@ -308,11 +336,17 @@ def _process_strike_prices(
     put_mid = _calculate_mid_price(put_data)
     call_last = _extract_last_price(call_data)
     put_last = _extract_last_price(put_data)
+    call_bid = _extract_bid(call_data)
+    call_ask = _extract_ask(call_data)
+    put_bid = _extract_bid(put_data)
+    put_ask = _extract_ask(put_data)
 
     if strike > forward_price:
         # OTM call region - use ONLY original calls (never convert puts)
         final_mid = call_mid if pd.notna(call_mid) and call_mid > 0 else np.nan
         final_last = call_last if pd.notna(call_last) and call_last > 0 else np.nan
+        final_bid = call_bid if pd.notna(call_bid) and call_bid > 0 else np.nan
+        final_ask = call_ask if pd.notna(call_ask) and call_ask > 0 else np.nan
         source = "call"
         # Use call's volume for OTM strikes
         volume = _extract_volume(call_data) if call_data is not None else np.nan
@@ -326,6 +360,16 @@ def _process_strike_prices(
         final_last = (
             _convert_put_to_call(put_last, strike, forward_price, discount_factor)
             if pd.notna(put_last) and put_last > 0
+            else np.nan
+        )
+        final_bid = (
+            _convert_put_to_call(put_bid, strike, forward_price, discount_factor)
+            if pd.notna(put_bid) and put_bid > 0
+            else np.nan
+        )
+        final_ask = (
+            _convert_put_to_call(put_ask, strike, forward_price, discount_factor)
+            if pd.notna(put_ask) and put_ask > 0
             else np.nan
         )
         source = "put_converted"
@@ -342,12 +386,18 @@ def _process_strike_prices(
         final_mid = max(final_mid, intrinsic_value)
     if pd.notna(final_last):
         final_last = max(final_last, intrinsic_value)
+    if pd.notna(final_bid):
+        final_bid = max(final_bid, intrinsic_value)
+    if pd.notna(final_ask):
+        final_ask = max(final_ask, intrinsic_value)
 
     results.append(
         {
             "strike": strike,
             "mid": final_mid,
             "last_price": final_last,
+            "bid": final_bid,
+            "ask": final_ask,
             "source": source,
             "Volume": volume,
         }
@@ -484,7 +534,9 @@ def preprocess_with_parity(
     Returns
     -------
     pd.DataFrame
-        Cleaned options data with 'last_price' column ready for pipeline
+        Cleaned options data containing a ``last_price`` column (always present)
+        plus any available auxiliary fields such as ``mid``, ``bid``, and
+        ``ask`` for downstream price selection and diagnostics.
     """
     # Check if parity preprocessing would be beneficial
     if not detect_parity_opportunity(options_df):

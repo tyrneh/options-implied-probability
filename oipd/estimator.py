@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, Optional, Dict, Literal, Any, Mapping, Sequence
+from typing import Protocol, Optional, Dict, Literal, Any, Mapping, Sequence, Callable
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -227,7 +227,7 @@ class RNDResult:
 
     def plot(
         self,
-        kind: Literal["pdf", "cdf", "both"] = "both",
+        kind: Literal["pdf", "cdf", "both", "iv_smile"] = "both",
         figsize: tuple[float, float] = (10, 5),
         title: Optional[str] = None,
         show_current_price: bool = True,
@@ -235,44 +235,69 @@ class RNDResult:
         source: Optional[str] = None,
         **kwargs,
     ):
-        """
-        Plot the PDF and/or CDF with a clean, customizable interface.
+        """Plot risk-neutral outputs or the fitted implied-volatility smile.
 
-        Parameters
-        ----------
-        kind : {'pdf', 'cdf', 'both'}, default 'both'
-            Which distribution(s) to plot. When 'both', overlays PDF and CDF on same plot with dual y-axes
-        figsize : tuple of float, default (10, 5)
-            Figure size in inches (width, height)
-        title : str, optional
-            Main title for the plot. If None, auto-generates based on kind
-        show_current_price : bool, default True
-            Whether to show a vertical line at the current price
-        style : {'publication', 'default'}, default 'publication'
-            Visual style for the plots
-        source : str, optional
-            Source attribution text (e.g., "Source: Bloomberg, Author analysis")
-        **kwargs
-            Additional keyword arguments passed to matplotlib plot()
+        Args:
+            kind: Plot type to render. Set to ``"pdf"``, ``"cdf"``, or ``"both"``
+                for distribution plots, or ``"iv_smile"`` to visualize the
+                implied-volatility smile.
+            figsize: Matplotlib figure size in inches.
+            title: Optional custom title. When omitted, an informative default
+                is constructed.
+            show_current_price: Whether to highlight the current underlying
+                price on the plot (applies to distribution and smile plots).
+            style: Visual theme to apply. ``"publication"`` uses the package's
+                publication-ready styling, while ``"default"`` relies on
+                Matplotlib defaults.
+            source: Optional attribution text displayed when ``style`` is
+                ``"publication"``.
+            **kwargs: Extra options forwarded to the underlying plotting
+                routine. For ``kind="iv_smile"`` the supported keywords are
+                ``strikes``, ``num_points``, ``include_observed``,
+                ``line_kwargs``, ``scatter_kwargs``, ``xlim``, and ``ylim``.
+                ``scatter_kwargs`` customize the bid/ask range bars (colour,
+                linewidth, cap width via ``cap_ratio``). Any additional keywords
+                are applied to the fitted line.
 
-        Returns
-        -------
-        fig : matplotlib.figure.Figure
-            The matplotlib figure object
+        Returns:
+            matplotlib.figure.Figure: Figure containing the requested plot.
+
+        Raises:
+            ImportError: If Matplotlib is unavailable.
+            ValueError: If the implied-volatility smile cannot be produced.
         """
+        if kind == "iv_smile":
+            strikes_arg = kwargs.pop("strikes", None)
+            num_points_arg = kwargs.pop("num_points", 200)
+            include_observed_points = kwargs.pop("include_observed", True)
+            line_kwargs_input = kwargs.pop("line_kwargs", None)
+            scatter_kwargs = kwargs.pop("scatter_kwargs", None)
+            xlim = kwargs.pop("xlim", None)
+            ylim = kwargs.pop("ylim", None)
+
+            line_kwargs = dict(line_kwargs_input or {})
+            line_kwargs.update(kwargs)
+
+            return self._plot_iv_smile(
+                strikes=strikes_arg,
+                num_points=num_points_arg,
+                include_observed=include_observed_points,
+                figsize=figsize,
+                title=title,
+                style=style,
+                source=source,
+                show_current_price=show_current_price,
+                line_kwargs=line_kwargs,
+                scatter_kwargs=scatter_kwargs,
+                xlim=xlim,
+                ylim=ylim,
+            )
+
         from oipd.graphics import plot_rnd
 
-        # Extract current/underlying price and formatted dates from resolved market
         underlying_price = self.market.underlying_price
-
-        # Format dates nicely from resolved market parameters
-        valuation_date = None
-        expiry_date = None
-
-        # Use actual dates from the resolved market
         valuation_date_obj = self.market.valuation_date
         expiry_date_obj = self.market.expiry_date
-
         valuation_date = valuation_date_obj.strftime("%b %d, %Y")
         expiry_date = expiry_date_obj.strftime("%b %d, %Y")
 
@@ -297,7 +322,6 @@ class RNDResult:
         strikes: Sequence[float] | np.ndarray | None = None,
         *,
         num_points: int = 200,
-        include_observed: bool = False,
     ) -> pd.DataFrame:
         """Return the fitted implied-volatility smile evaluated on a strike grid.
 
@@ -305,17 +329,21 @@ class RNDResult:
             strikes: Optional sequence of strikes at which to evaluate the fitted
                 implied-volatility curve. When omitted, the method uses the stored
                 calibration grid when available, otherwise a linspace spanning the
-                observed strikes with ``num_points`` samples.
+            observed strikes with ``num_points`` samples.
             num_points: Number of evaluation points when ``strikes`` is not
                 provided and a grid must be generated. Must be at least two when
                 the observed strike range is non-zero.
-            include_observed: Whether to join the observed implied volatilities
-                used during calibration alongside the fitted values.
 
         Returns:
-            A DataFrame containing the strike grid and fitted implied volatilities.
-            When ``include_observed`` is True and observed data is available, an
-            additional ``observed_iv`` column is included.
+            DataFrame containing the fitted smile and available observed
+            implied volatilities with columns:
+
+            - ``strike`` – strike levels used for evaluation.
+            - ``fitted_iv`` – implied volatilities from the calibrated smile.
+            - ``bid_iv`` – implied volatilities backed out from observed bid
+              quotes when available.
+            - ``ask_iv`` – implied volatilities backed out from observed ask
+              quotes when available.
 
         Raises:
             ValueError: If the fitted volatility curve is unavailable or a strike
@@ -361,11 +389,272 @@ class RNDResult:
             }
         )
 
-        if include_observed and isinstance(observed_iv, pd.DataFrame):
-            merged_observed = observed_iv.rename(columns={"iv": "observed_iv"})
-            smile_df = smile_df.merge(merged_observed, on="strike", how="left")
+        observed_bid = self.meta.get("observed_iv_bid")
+        if isinstance(observed_bid, pd.DataFrame) and not observed_bid.empty:
+            observed_bid = observed_bid.copy()
+            observed_bid["strike"] = observed_bid["strike"].astype(float)
+            bid_subset = (
+                observed_bid.loc[:, ["strike", "iv"]]
+                .dropna()
+                .drop_duplicates(subset="strike")
+                .rename(columns={"iv": "bid_iv"})
+            )
+            smile_df = smile_df.merge(bid_subset, on="strike", how="left")
 
-        return smile_df
+        observed_ask = self.meta.get("observed_iv_ask")
+        if isinstance(observed_ask, pd.DataFrame) and not observed_ask.empty:
+            observed_ask = observed_ask.copy()
+            observed_ask["strike"] = observed_ask["strike"].astype(float)
+            ask_subset = (
+                observed_ask.loc[:, ["strike", "iv"]]
+                .dropna()
+                .drop_duplicates(subset="strike")
+                .rename(columns={"iv": "ask_iv"})
+            )
+            smile_df = smile_df.merge(ask_subset, on="strike", how="left")
+
+        if "bid_iv" not in smile_df.columns:
+            smile_df["bid_iv"] = np.nan
+        if "ask_iv" not in smile_df.columns:
+            smile_df["ask_iv"] = np.nan
+
+        # Ensure column ordering
+        return smile_df.loc[:, ["strike", "fitted_iv", "bid_iv", "ask_iv"]]
+
+    def _plot_iv_smile(
+        self,
+        *,
+        strikes: Sequence[float] | np.ndarray | None,
+        num_points: int,
+        include_observed: bool,
+        figsize: tuple[float, float],
+        title: Optional[str],
+        style: Literal["publication", "default"],
+        source: Optional[str],
+        show_current_price: bool,
+        line_kwargs: Dict[str, Any],
+        scatter_kwargs: Optional[Dict[str, Any]],
+        xlim: Optional[tuple[float, float]],
+        ylim: Optional[tuple[float, float]],
+    ):
+        """Render the implied-volatility smile with optional observed points.
+
+        Args:
+            strikes: Optional evaluation strikes for the fitted smile.
+            num_points: Number of points for an auto-generated grid when
+                ``strikes`` is omitted.
+            include_observed: Whether to display the observed implied
+                volatilities alongside the fitted curve.
+            figsize: Matplotlib figure size in inches.
+            title: Custom plot title. If ``None``, a default based on the expiry
+                date is used.
+            style: Visual theme, mirroring :meth:`plot`.
+            source: Optional attribution text for publication style.
+            show_current_price: Whether to draw a vertical reference line at the
+                current underlying price.
+            line_kwargs: Styling overrides for the fitted curve.
+            scatter_kwargs: Styling overrides for the observed points.
+            xlim: Optional x-axis limits.
+            ylim: Optional y-axis limits.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing the plotted smile.
+
+        Raises:
+            ImportError: If Matplotlib is unavailable.
+            ValueError: If the smile cannot be evaluated.
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.ticker as ticker
+        except ImportError as exc:  # pragma: no cover - import guard
+            raise ImportError(
+                "Matplotlib is required for plotting. Install with: pip install matplotlib"
+            ) from exc
+
+        style_axes: Optional[Callable[[Any], None]] = None
+        if style == "publication":
+            from oipd.graphics.publication import (
+                _apply_publication_style,
+                _style_publication_axes,
+            )
+
+            _apply_publication_style(plt)
+            style_axes = _style_publication_axes
+
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+        smile_df = self.iv_smile(strikes=strikes, num_points=num_points)
+
+        line_config = dict(line_kwargs or {})
+        if "color" not in line_config:
+            line_config["color"] = "#1976D2" if style == "publication" else "tab:blue"
+        if "linewidth" not in line_config:
+            line_config["linewidth"] = 1.5
+        if "label" not in line_config:
+            line_config["label"] = "Fitted IV"
+
+        ax.plot(smile_df["strike"], smile_df["fitted_iv"], **line_config)
+
+        if include_observed:
+            range_kwargs = dict(scatter_kwargs or {})
+            range_color = range_kwargs.pop(
+                "color", "#C62828" if style == "publication" else "tab:red"
+            )
+            range_alpha = range_kwargs.pop("alpha", 0.9)
+            linewidth = range_kwargs.pop("linewidth", None)
+            if linewidth is None:
+                linewidth = range_kwargs.pop("linewidths", 1.5)
+            cap_ratio = range_kwargs.pop("cap_ratio", 0.2)
+            observed_bid = self.meta.get("observed_iv_bid")
+            observed_ask = self.meta.get("observed_iv_ask")
+            if (
+                isinstance(observed_bid, pd.DataFrame)
+                and isinstance(observed_ask, pd.DataFrame)
+                and not observed_bid.empty
+                and not observed_ask.empty
+            ):
+                observed_bid = observed_bid.copy()
+                observed_ask = observed_ask.copy()
+                observed_bid["strike"] = observed_bid["strike"].astype(float)
+                observed_ask["strike"] = observed_ask["strike"].astype(float)
+                observed_ranges = (
+                    observed_bid.rename(columns={"iv": "bid_iv"})
+                    .merge(
+                        observed_ask.rename(columns={"iv": "ask_iv"}),
+                        on="strike",
+                        how="inner",
+                    )
+                    .dropna()
+                )
+            else:
+                observed_ranges = smile_df.dropna(subset=["bid_iv", "ask_iv"])
+
+            if not observed_ranges.empty:
+                strikes = observed_ranges["strike"].to_numpy(dtype=float)
+                bid_values = observed_ranges["bid_iv"].to_numpy(dtype=float)
+                ask_values = observed_ranges["ask_iv"].to_numpy(dtype=float)
+
+                vlines = ax.vlines(
+                    strikes,
+                    bid_values,
+                    ask_values,
+                    colors=range_color,
+                    linewidth=linewidth,
+                    alpha=range_alpha,
+                )
+                vlines.set_label("Bid/Ask IV range")
+
+                unique_strikes = np.unique(strikes)
+                if unique_strikes.size > 1:
+                    min_diff = np.min(np.diff(unique_strikes))
+                    cap_half_width = max(min_diff * cap_ratio, 1e-6)
+                else:
+                    cap_half_width = max(abs(strikes[0]) * 0.05, 0.1)
+
+                left = strikes - cap_half_width
+                right = strikes + cap_half_width
+                ax.hlines(
+                    bid_values,
+                    left,
+                    right,
+                    colors=range_color,
+                    linewidth=linewidth,
+                    alpha=range_alpha,
+                )
+                ax.hlines(
+                    ask_values,
+                    left,
+                    right,
+                    colors=range_color,
+                    linewidth=linewidth,
+                    alpha=range_alpha,
+                )
+
+        ax.set_xlabel("Strike", fontsize=11)
+        ax.set_ylabel("Implied Volatility", fontsize=11)
+        ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+
+        if style_axes is not None:
+            style_axes(ax)
+
+        ax.relim()
+        ax.autoscale_view()
+
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+
+        forward_price = self.meta.get("forward_price")
+        spot_price = float(self.market.underlying_price) if self.market.underlying_price is not None else None
+        reference_price = float(forward_price) if forward_price is not None else spot_price
+
+        if show_current_price and reference_price is not None:
+            ax.axvline(
+                x=reference_price,
+                color="#555555",
+                linestyle="--",
+                linewidth=1.0,
+                alpha=0.7,
+            )
+            y_min, y_max = ax.get_ylim()
+            valuation_date = self.market.valuation_date.strftime("%b %d, %Y")
+            label_text = (
+                f"Parity forward on {valuation_date}\n${reference_price:,.2f}"
+                if forward_price is not None
+                else f"Price on {valuation_date}\n${reference_price:,.2f}"
+            )
+            ax.annotate(
+                label_text,
+                xy=(reference_price, y_min),
+                xytext=(5, 15),
+                textcoords="offset points",
+                fontsize=10,
+                color="#555555",
+                ha="left",
+                va="bottom",
+            )
+
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            legend = ax.legend(frameon=False, loc="best")
+            if style == "publication":
+                for text in legend.get_texts():
+                    text.set_color("#333333")
+
+        resolved_title = title
+        if resolved_title is None:
+            expiry_obj = self.market.expiry_date
+            if expiry_obj is not None:
+                resolved_title = f"Implied Volatility Smile (Expiry {expiry_obj.strftime('%b %d, %Y')})"
+            else:
+                resolved_title = "Implied Volatility Smile"
+
+        if style == "publication":
+            plt.subplots_adjust(top=0.85, bottom=0.08 if source else 0.06)
+            fig.suptitle(
+                resolved_title,
+                fontsize=16,
+                fontweight="bold",
+                y=0.92,
+                color="#333333",
+            )
+            if source:
+                fig.text(
+                    0.99,
+                    0.02,
+                    source,
+                    ha="right",
+                    fontsize=9,
+                    color="#666666",
+                    style="italic",
+                )
+        else:
+            fig.suptitle(resolved_title, fontsize=14, fontweight="bold")
+            fig.tight_layout()
+
+        return fig
 
 
 # ---------------------------------------------------------------------------
@@ -587,11 +876,39 @@ def _estimate(
             f"Failed to smooth implied volatility data: {exc}"
         ) from exc
 
-    observed_iv_data = (
-        options_with_calculated_iv.loc[:, ["strike", "iv"]]
-        .groupby("strike", as_index=False)
-        .mean()
-    )
+    observed_iv_data = options_with_calculated_iv.copy()
+
+    def _compute_observed_iv(
+        source_df: pd.DataFrame,
+        price_column: str,
+    ) -> pd.DataFrame | None:
+        """Compute implied volatility for an alternate observed price column."""
+        if price_column not in source_df.columns:
+            return None
+
+        priced = source_df.loc[
+            source_df[price_column].notna() & (source_df[price_column] > 0)
+        ].copy()
+        if priced.empty:
+            return None
+
+        priced["price"] = priced[price_column]
+        try:
+            iv_df = compute_iv(
+                priced,
+                underlying_price,
+                resolved_market,
+                model.solver,
+                model.pricing_engine,
+                effective_dividend_yield,
+            )
+        except Exception:
+            return None
+
+        return iv_df.loc[:, ["strike", "iv"]]
+
+    observed_bid_iv = _compute_observed_iv(options_with_selected_price, "bid")
+    observed_ask_iv = _compute_observed_iv(options_with_selected_price, "ask")
 
     # Price calls on a dense strike grid using the smoothed volatility curve
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
@@ -629,6 +946,10 @@ def _estimate(
         "vol_curve": fitted_volatility_curve,
         "observed_iv": observed_iv_data,
     }
+    if observed_bid_iv is not None:
+        result_metadata["observed_iv_bid"] = observed_bid_iv
+    if observed_ask_iv is not None:
+        result_metadata["observed_iv_ask"] = observed_ask_iv
     if parity_implied_forward_price is not None:
         try:
             result_metadata["forward_price"] = float(parity_implied_forward_price)
@@ -977,7 +1298,6 @@ class RND:
         strikes: Sequence[float] | np.ndarray | None = None,
         *,
         num_points: int = 200,
-        include_observed: bool = False,
     ) -> pd.DataFrame:
         """Retrieve the fitted implied-volatility smile on a strike grid.
 
@@ -988,14 +1308,9 @@ class RND:
             num_points: Number of points used to generate the evaluation grid
                 when ``strikes`` is not provided. Must be at least two for a
                 non-degenerate strike range.
-            include_observed: Whether to attach the observed implied
-                volatilities used during calibration.
 
         Returns:
-            DataFrame containing strike levels and fitted implied volatilities.
-            When ``include_observed`` is True, the observed values are included
-            in an ``observed_iv`` column where available.
+            DataFrame containing strike levels and fitted implied volatilities,
+            along with observed bid/ask implied volatilities when available.
         """
-        return self.result.iv_smile(
-            strikes, num_points=num_points, include_observed=include_observed
-        )
+        return self.result.iv_smile(strikes, num_points=num_points)
