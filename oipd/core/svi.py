@@ -24,6 +24,7 @@ DEFAULT_SVI_OPTIONS: Dict[str, float] = {
 
 _SVI_OPTION_KEYS = set(DEFAULT_SVI_OPTIONS.keys())
 
+
 @dataclass(frozen=True)
 class SVIParameters:
     """Raw SVI parameters ``(a, b, rho, m, sigma)``.
@@ -72,7 +73,9 @@ def log_moneyness(strikes: np.ndarray | Iterable[float], forward: float) -> np.n
     return np.log(strikes_arr / forward)
 
 
-def to_total_variance(iv: np.ndarray | Iterable[float], maturity_years: float) -> np.ndarray:
+def to_total_variance(
+    iv: np.ndarray | Iterable[float], maturity_years: float
+) -> np.ndarray:
     """Convert implied volatility quotes to total variance values.
 
     Args:
@@ -312,7 +315,9 @@ def merge_svi_options(overrides: Mapping[str, Any] | None) -> Dict[str, float]:
     return merged
 
 
-def _build_bounds(k: np.ndarray, config: Mapping[str, float]) -> Sequence[Tuple[float, float]]:
+def _build_bounds(
+    k: np.ndarray, config: Mapping[str, float]
+) -> Sequence[Tuple[float, float]]:
     """Construct parameter bounds for the SVI optimisation routine.
 
     Args:
@@ -411,7 +416,7 @@ def calibrate_svi_parameters(
         guess,
         method="L-BFGS-B",
         bounds=bounds,
-        options={"maxiter": int(options["max_iter"]), "ftol": float(options["tol"])}
+        options={"maxiter": int(options["max_iter"]), "ftol": float(options["tol"])},
     )
 
     diagnostics: Dict[str, Any] = {

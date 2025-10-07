@@ -74,4 +74,3 @@ def test_g_function_detects_arbitrage():
     g_vals = g_function(k_grid, params)
     assert np.any(g_vals < 0)
     assert min_g_on_grid(params, k_grid) < 0
-

@@ -13,7 +13,9 @@ from oipd.core.svi import (
 )
 
 
-def generate_synthetic_smile(params: SVIParameters, maturity_years: float, forward: float):
+def generate_synthetic_smile(
+    params: SVIParameters, maturity_years: float, forward: float
+):
     k = np.linspace(-0.4, 0.4, 11)
     strikes = forward * np.exp(k)
     total_var = svi_total_variance(k, params)
@@ -47,7 +49,9 @@ def test_svi_calibration_recovers_parameters():
         m=params_dict["m"],
         sigma=params_dict["sigma"],
     )
-    recovered_total_var = svi_total_variance(log_moneyness(strikes, forward), params_est)
+    recovered_total_var = svi_total_variance(
+        log_moneyness(strikes, forward), params_est
+    )
     target_total_var = to_total_variance(iv, maturity)
     np.testing.assert_allclose(recovered_total_var, target_total_var, atol=5e-3)
 

@@ -192,7 +192,10 @@ def _fit_svi(
         "maturity_years": maturity_years,
     }  # type: ignore[attr-defined]
     return vol_curve
+
+
 # TODO: WHY IS VOL CURVE RETURNED AS A FUNCTION?
+
 
 def _fit_bspline(
     strikes: np.ndarray,
