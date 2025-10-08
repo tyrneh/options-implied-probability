@@ -48,6 +48,8 @@ est = RND.from_ticker("AAPL", market)
 est.prob_at_or_above(120)               # P(price >= $120)
 est.prob_below(100)                     # P(price < $100)
 est.plot()                              # plot probability and cumulative distribution functions 
+smile = est.iv_smile()                  # DataFrame with fitted, bid, and ask IVs by strike
+est.plot(kind="iv_smile")               # visualize fitted IV smile
 ```
 
 OIPD also **supports manual CSV or DataFrame uploads**. 
@@ -96,4 +98,3 @@ Algorithmic improvements:
 - Research in conversion from risk-neutral to physical probabilities 
 
 The list describes potential features and research directions; it is neither exhaustive nor a prescribed implementation schedule.
-
