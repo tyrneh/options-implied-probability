@@ -82,6 +82,7 @@ class TestModelParamsIntegration:
         assert model.price_method == "mid"
 
 
+
 class TestEndToEndPriceMethod:
     """Test price_method functionality end-to-end."""
 

@@ -14,6 +14,7 @@ from oipd.core.svi import (
     from_total_variance,
     log_moneyness,
     merge_svi_options,
+    raw_to_jw,
     svi_total_variance,
     to_total_variance,
 )
@@ -150,16 +151,24 @@ def _fit_svi(
     if maturity_years is None or maturity_years <= 0:
         raise ValueError("maturity_years must be positive for SVI fitting")
 
-    config = _build_svi_options(config_overrides or None)
+    overrides_dict = dict(config_overrides)
+    bid_iv = overrides_dict.pop("bid_iv", None)
+    ask_iv = overrides_dict.pop("ask_iv", None)
+    volumes = overrides_dict.pop("volumes", None)
+
+    config = _build_svi_options(overrides_dict or None)
 
     k = log_moneyness(strikes, forward)
     total_variance = to_total_variance(iv, maturity_years)
 
-    params, _ = calibrate_svi_parameters(
+    params, diagnostics = calibrate_svi_parameters(
         k,
         total_variance,
         maturity_years,
         config,
+        bid_iv=bid_iv,
+        ask_iv=ask_iv,
+        volumes=volumes,
     )
 
     fitted_total_variance = svi_total_variance(k, params)
@@ -191,6 +200,9 @@ def _fit_svi(
         "forward": forward,
         "maturity_years": maturity_years,
     }  # type: ignore[attr-defined]
+    vol_curve.params_raw = (params.a, params.b, params.rho, params.m, params.sigma)  # type: ignore[attr-defined]
+    vol_curve.params_jw = raw_to_jw(params)  # type: ignore[attr-defined]
+    vol_curve.diagnostics = diagnostics  # type: ignore[attr-defined]
     return vol_curve
 
 

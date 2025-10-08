@@ -80,6 +80,7 @@ class ModelParams:
             raise TypeError("surface_options must be a mapping or None")
 
 
+
 @dataclass(frozen=True)
 class RNDResult:
     """Container for the resulting PDF / CDF arrays with convenience helpers."""
@@ -904,6 +905,45 @@ def _estimate(
     # Capture the strike and IV columns as plain arrays for the fitting helper
     strike_array = options_with_calculated_iv["strike"].to_numpy()
     implied_volatility_array = options_with_calculated_iv["iv"].to_numpy()
+    volume_array: np.ndarray | None = None
+    if "volume" in options_with_calculated_iv.columns:
+        volume_array = options_with_calculated_iv["volume"].to_numpy(dtype=float)
+        if not np.isfinite(volume_array).any() or np.all(volume_array <= 0):
+            volume_array = None
+
+    def _compute_observed_iv(
+        source_df: pd.DataFrame,
+        price_column: str,
+    ) -> pd.DataFrame | None:
+        """Compute implied volatility for an alternate observed price column."""
+
+        if price_column not in source_df.columns:
+            return None
+
+        priced = source_df.loc[
+            source_df[price_column].notna() & (source_df[price_column] > 0)
+        ].copy()
+        if priced.empty:
+            return None
+
+        priced["price"] = priced[price_column]
+        try:
+            iv_df = compute_iv(
+                priced,
+                underlying_price,
+                resolved_market,
+                model.solver,
+                model.pricing_engine,
+                effective_dividend_yield,
+            )
+        except Exception:
+            return None
+
+        return iv_df.loc[:, ["strike", "iv"]]
+
+    observed_bid_iv = _compute_observed_iv(options_with_selected_price, "bid")
+    observed_ask_iv = _compute_observed_iv(options_with_selected_price, "ask")
+    observed_last_iv = _compute_observed_iv(options_with_selected_price, "last_price")
 
     surface_fit_kwargs: Dict[str, Any] = {}
     if model.surface_method == "svi":
@@ -914,6 +954,28 @@ def _estimate(
                 "maturity_years": resolved_market.days_to_expiry / 365.0,
             }
         )
+
+        def _align_iv_series(iv_df: pd.DataFrame | None) -> np.ndarray | None:
+            if iv_df is None or iv_df.empty:
+                return None
+            joined = (
+                pd.DataFrame({"strike": strike_array})
+                .merge(iv_df, on="strike", how="left")
+                .sort_index()
+            )
+            iv_values = joined["iv"].to_numpy(dtype=float)
+            if np.all(np.isnan(iv_values)):
+                return None
+            return iv_values
+
+        aligned_bid_iv = _align_iv_series(observed_bid_iv)
+        aligned_ask_iv = _align_iv_series(observed_ask_iv)
+
+        if aligned_bid_iv is not None or aligned_ask_iv is not None:
+            surface_fit_kwargs["bid_iv"] = aligned_bid_iv
+            surface_fit_kwargs["ask_iv"] = aligned_ask_iv
+        if volume_array is not None:
+            surface_fit_kwargs["volumes"] = volume_array
 
     try:
         fitted_volatility_curve = fit_surface(
@@ -943,39 +1005,6 @@ def _estimate(
             ) from exc
 
     observed_iv_data = options_with_calculated_iv.copy()
-
-    def _compute_observed_iv(
-        source_df: pd.DataFrame,
-        price_column: str,
-    ) -> pd.DataFrame | None:
-        """Compute implied volatility for an alternate observed price column."""
-        if price_column not in source_df.columns:
-            return None
-
-        priced = source_df.loc[
-            source_df[price_column].notna() & (source_df[price_column] > 0)
-        ].copy()
-        if priced.empty:
-            return None
-
-        priced["price"] = priced[price_column]
-        try:
-            iv_df = compute_iv(
-                priced,
-                underlying_price,
-                resolved_market,
-                model.solver,
-                model.pricing_engine,
-                effective_dividend_yield,
-            )
-        except Exception:
-            return None
-
-        return iv_df.loc[:, ["strike", "iv"]]
-
-    observed_bid_iv = _compute_observed_iv(options_with_selected_price, "bid")
-    observed_ask_iv = _compute_observed_iv(options_with_selected_price, "ask")
-    observed_last_iv = _compute_observed_iv(options_with_selected_price, "last_price")
 
     # Price calls on a dense strike grid using the smoothed volatility curve
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(

@@ -34,8 +34,12 @@ column_mapping = {
     "ask": "ask",
 }
 
+model = ModelParams(surface_method="svi", price_method="mid")
+
 # estimate RND
-est_appl = RND.from_dataframe(df_appl, market, column_mapping=column_mapping)
+est_appl = RND.from_dataframe(
+    df_appl, market, column_mapping=column_mapping, model=model
+)
 
 est_appl.plot(kind="pdf")
 plt.show()
@@ -52,9 +56,3 @@ plt.show()
 # columns: strike, fitted_iv, bid_iv, ask_iv, last_iv
 # bid_iv, ask_iv, last_iv are the observed implied volatilities from the raw bids, asks, and last prices
 est_appl.iv_smile()
-
-
-est_appl.to_frame()
-
-
-

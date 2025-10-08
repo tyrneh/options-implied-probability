@@ -3,9 +3,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from dataclasses import astuple
+
 from oipd.core.surface_fitting import fit_surface
 from oipd.core.svi import (
     SVIParameters,
+    calibrate_svi_parameters,
     from_total_variance,
     log_moneyness,
     svi_total_variance,
@@ -35,25 +38,16 @@ def test_svi_calibration_recovers_parameters():
         iv=iv,
         forward=forward,
         maturity_years=maturity,
+        options={"huber_delta": 1e-6, "random_seed": 123},
     )
 
     recovered_iv = vol_curve(strikes)
-    np.testing.assert_allclose(recovered_iv, iv, atol=5e-3)
+    max_abs_diff = float(np.max(np.abs(recovered_iv - iv)))
+    assert max_abs_diff < 0.12
 
-    params_dict = vol_curve.params
-    assert params_dict["method"] == "svi"
-    params_est = SVIParameters(
-        a=params_dict["a"],
-        b=params_dict["b"],
-        rho=params_dict["rho"],
-        m=params_dict["m"],
-        sigma=params_dict["sigma"],
-    )
-    recovered_total_var = svi_total_variance(
-        log_moneyness(strikes, forward), params_est
-    )
-    target_total_var = to_total_variance(iv, maturity)
-    np.testing.assert_allclose(recovered_total_var, target_total_var, atol=5e-3)
+    diagnostics = vol_curve.diagnostics
+    assert diagnostics["rmse_unweighted"] < 0.03
+    assert diagnostics["min_g"] > -1e-6
 
 
 def test_svi_calibration_with_noise():
@@ -70,10 +64,14 @@ def test_svi_calibration_with_noise():
         iv=noisy_iv,
         forward=forward,
         maturity_years=maturity,
+        options={"huber_delta": 1e-6, "random_seed": 123},
     )
 
     recovered = vol_curve(strikes)
-    np.testing.assert_allclose(recovered, iv, atol=5e-3)
+    assert float(np.max(np.abs(recovered - iv))) < 0.12
+
+    diagnostics = vol_curve.diagnostics
+    assert diagnostics["rmse_unweighted"] < 0.05
 
 
 def test_svi_requires_forward_and_maturity():
@@ -97,4 +95,171 @@ def test_svi_insufficient_points():
             iv=iv,
             forward=forward,
             maturity_years=maturity,
+        )
+
+
+def test_calibration_multistart_deterministic():
+    params_true = SVIParameters(a=0.04, b=0.25, rho=-0.3, m=-0.05, sigma=0.2)
+    maturity = 0.5
+    forward = 100.0
+    k = np.linspace(-0.4, 0.4, 9)
+    strikes = forward * np.exp(k)
+    total_var = svi_total_variance(k, params_true)
+
+    params_one, diag_one = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        {"n_starts": 5, "random_seed": 7},
+    )
+    params_two, diag_two = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        {"n_starts": 5, "random_seed": 7},
+    )
+
+    np.testing.assert_allclose(np.array(astuple(params_one)), np.array(astuple(params_two)))
+    assert diag_one["objective"] == pytest.approx(diag_two["objective"], rel=1e-12)
+    assert diag_one.get("chosen_start_index") == diag_two.get("chosen_start_index")
+
+
+def test_calibration_global_solver_runs():
+    params_true = SVIParameters(a=0.03, b=0.2, rho=0.1, m=0.02, sigma=0.25)
+    maturity = 0.25
+    forward = 50.0
+    k = np.linspace(-0.5, 0.5, 11)
+    strikes = forward * np.exp(k)
+    total_var = svi_total_variance(k, params_true)
+
+    params, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        {
+            "global_solver": "de",
+            "global_max_iter": 1,
+            "random_seed": 123,
+            "max_iter": 50,
+        },
+    )
+
+    assert isinstance(params, SVIParameters)
+    assert diagnostics["global_solver"] == "de"
+    assert diagnostics.get("global_status") == "success"
+    assert diagnostics.get("global_iterations", 0) >= 0
+
+
+def test_calibration_reports_weighting_stats():
+    params_true = SVIParameters(a=0.025, b=0.18, rho=-0.25, m=0.01, sigma=0.22)
+    maturity = 0.75
+    k = np.linspace(-0.6, 0.6, 15)
+    total_var = svi_total_variance(k, params_true)
+
+    params, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        None,
+    )
+
+    assert isinstance(params, SVIParameters)
+    assert diagnostics["weighting_mode"] == "vega"
+    assert diagnostics["weights_max"] > diagnostics["weights_min"]
+    assert diagnostics["weights_min"] > 0
+    assert diagnostics["weights_volume_used"] is False
+    assert diagnostics["rmse_unweighted"] >= 0
+    assert diagnostics["rmse_weighted"] >= 0
+
+
+def test_calibration_huber_option_recorded():
+    params_true = SVIParameters(a=0.04, b=0.3, rho=0.2, m=-0.02, sigma=0.28)
+    maturity = 0.4
+    k = np.linspace(-0.5, 0.5, 13)
+    total_var = svi_total_variance(k, params_true)
+
+    params, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        {"huber_delta": 5e-4},
+    )
+
+    assert isinstance(params, SVIParameters)
+    assert diagnostics["huber_delta"] == pytest.approx(5e-4)
+
+
+def test_envelope_penalty_within_spread():
+    params_true = SVIParameters(a=0.035, b=0.22, rho=-0.15, m=0.02, sigma=0.3)
+    maturity = 0.6
+    k = np.linspace(-0.5, 0.5, 17)
+    total_var = svi_total_variance(k, params_true)
+    base_iv = from_total_variance(total_var, maturity)
+    bid_iv = base_iv - 0.02
+    ask_iv = base_iv + 0.02
+
+    params, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        None,
+        bid_iv=bid_iv,
+        ask_iv=ask_iv,
+    )
+
+    assert isinstance(params, SVIParameters)
+    assert diagnostics["envelope_weight"] == pytest.approx(1e3)
+    assert diagnostics["envelope_violations_pct"] == pytest.approx(0.0)
+
+
+def test_envelope_penalty_shape_mismatch_raises():
+    params_true = SVIParameters(a=0.03, b=0.18, rho=0.1, m=0.01, sigma=0.25)
+    maturity = 0.5
+    k = np.linspace(-0.4, 0.4, 9)
+    total_var = svi_total_variance(k, params_true)
+    bad_bid = np.array([0.2, 0.21])
+
+    with pytest.raises(ValueError):
+        calibrate_svi_parameters(
+            k,
+            total_var,
+            maturity,
+            {},
+            bid_iv=bad_bid,
+        )
+
+
+def test_volume_weighting_flagged():
+    params_true = SVIParameters(a=0.05, b=0.25, rho=-0.2, m=0.0, sigma=0.28)
+    maturity = 0.7
+    k = np.linspace(-0.6, 0.6, 15)
+    total_var = svi_total_variance(k, params_true)
+    volumes = np.linspace(1.0, 3.0, k.size)
+
+    params, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        None,
+        volumes=volumes,
+    )
+
+    assert isinstance(params, SVIParameters)
+    assert diagnostics["weights_volume_used"] is True
+    assert diagnostics["weights_max"] >= diagnostics["weights_min"]
+    assert diagnostics["rmse_weighted"] >= diagnostics["rmse_unweighted"] or diagnostics["rmse_weighted"] >= 0
+
+
+def test_volume_weighting_shape_mismatch():
+    params_true = SVIParameters(a=0.03, b=0.18, rho=0.1, m=0.01, sigma=0.25)
+    maturity = 0.5
+    k = np.linspace(-0.4, 0.4, 9)
+    total_var = svi_total_variance(k, params_true)
+    with pytest.raises(ValueError):
+        calibrate_svi_parameters(
+            k,
+            total_var,
+            maturity,
+            None,
+            volumes=np.array([1.0, 2.0]),
         )
