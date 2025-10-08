@@ -170,5 +170,3 @@ def test_svi_fallback_to_bspline(monkeypatch):
         )
 
     assert result.meta["surface_fit"] == "bspline"
-
-    plt.close(fig)
