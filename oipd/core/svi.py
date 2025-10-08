@@ -13,6 +13,7 @@ import numpy as np
 from scipy import optimize
 
 from oipd.core.errors import CalculationError
+from oipd.pricing.black76 import black76_call_price
 
 DEFAULT_SVI_OPTIONS: Dict[str, float] = {
     "max_iter": 200,
@@ -20,6 +21,11 @@ DEFAULT_SVI_OPTIONS: Dict[str, float] = {
     "regularisation": 1e-4,
     "rho_bound": 0.999,
     "sigma_min": 1e-4,
+    "diagnostic_grid_pad": 0.5,
+    "diagnostic_grid_points": 201,
+    "butterfly_weight": 1e4,
+    "callspread_weight": 1e3,
+    "callspread_step": 0.05,
 }
 
 _SVI_OPTION_KEYS = set(DEFAULT_SVI_OPTIONS.keys())
@@ -254,6 +260,95 @@ def svi_minimum_variance(params: SVIParameters) -> float:
     return params.a + params.b * params.sigma * sqrt_term
 
 
+def _call_prices_from_params(
+    k: np.ndarray, params: SVIParameters, maturity_years: float
+) -> np.ndarray:
+    """Evaluate forward call prices implied by SVI on the supplied grid.
+
+    Args:
+        k: Log-moneyness grid where call prices are computed.
+        params: Candidate SVI parameters.
+        maturity_years: Time to expiry in year fractions.
+
+    Returns:
+        Forward-measure Black-76 call prices for the provided log-moneyness grid.
+    """
+
+    total_variance = svi_total_variance(k, params)
+    implied_variance = np.maximum(total_variance / maturity_years, 0.0)
+    implied_vol = np.sqrt(np.maximum(implied_variance, 1e-12))
+    strikes = np.exp(k)
+    return black76_call_price(1.0, strikes, implied_vol, maturity_years, 0.0)
+
+
+def _butterfly_penalty(
+    params: SVIParameters, k_grid: np.ndarray, weight: float
+) -> float:
+    """Return a hinge penalty for butterfly arbitrage violations on ``k_grid``.
+
+    Args:
+        params: Candidate SVI parameters.
+        k_grid: Diagnostic log-moneyness grid.
+        weight: Penalty weight applied to squared violations.
+
+    Returns:
+        Penalty value; zero when no violation is detected.
+    """
+
+    if weight <= 0.0:
+        return 0.0
+
+    g_vals = g_function(k_grid, params)
+    if np.any(~np.isfinite(g_vals)):
+        return weight * 1e6
+
+    violations = g_vals[g_vals < 0.0]
+    if violations.size == 0:
+        return 0.0
+    return weight * float(np.sum(np.square(violations)))
+
+
+def _call_spread_penalty(
+    params: SVIParameters,
+    k_grid: np.ndarray,
+    maturity_years: float,
+    step: float,
+    weight: float,
+) -> float:
+    """Return hinge penalties enforcing positive call spreads on ``k_grid``.
+
+    Args:
+        params: Candidate SVI parameters.
+        k_grid: Diagnostic log-moneyness grid.
+        maturity_years: Time to expiry in years.
+        step: Shift in log-moneyness applied to construct spreads.
+        weight: Penalty weight applied to squared violations.
+
+    Returns:
+        Penalty value capturing violations of monotonicity in strike.
+    """
+
+    if weight <= 0.0 or step <= 0.0:
+        return 0.0
+
+    k_minus = k_grid - step
+    k_plus = k_grid + step
+
+    prices_central = _call_prices_from_params(k_grid, params, maturity_years)
+    prices_left = _call_prices_from_params(k_minus, params, maturity_years)
+    prices_right = _call_prices_from_params(k_plus, params, maturity_years)
+
+    left_spread = prices_left - prices_central
+    right_spread = prices_central - prices_right
+
+    violations = np.concatenate(
+        [left_spread[left_spread < 0.0], right_spread[right_spread < 0.0]]
+    )
+    if violations.size == 0:
+        return 0.0
+    return weight * float(np.sum(np.square(violations)))
+
+
 def _initial_guess(k: np.ndarray, total_variance: np.ndarray) -> np.ndarray:
     """Generate a heuristic starting point for SVI calibration.
 
@@ -384,6 +479,12 @@ def calibrate_svi_parameters(
 
     options = merge_svi_options(config)
 
+    diagnostic_pad = float(options["diagnostic_grid_pad"])
+    diagnostic_points = int(options["diagnostic_grid_points"])
+    butterfly_weight = float(options["butterfly_weight"])
+    callspread_weight = float(options["callspread_weight"])
+    callspread_step = float(options["callspread_step"])
+
     if maturity_years <= 0:
         raise ValueError("maturity_years must be positive")
     if k.shape != total_variance.shape:
@@ -393,6 +494,11 @@ def calibrate_svi_parameters(
 
     guess = _initial_guess(k, total_variance)
     bounds = _build_bounds(k, options)
+
+    k_min, k_max = float(np.min(k)), float(np.max(k))
+    diagnostic_grid = np.linspace(
+        k_min - diagnostic_pad, k_max + diagnostic_pad, diagnostic_points
+    )
 
     def objective(vec: np.ndarray) -> float:
         """Evaluate the penalised least-squares objective for calibration.
@@ -409,6 +515,10 @@ def calibrate_svi_parameters(
         residual = model - total_variance
         base = float(np.sum(residual**2))
         penalty = _penalty_terms(vec, options)
+        penalty += _butterfly_penalty(params, diagnostic_grid, butterfly_weight)
+        penalty += _call_spread_penalty(
+            params, diagnostic_grid, maturity_years, callspread_step, callspread_weight
+        )
         return base + penalty
 
     result = optimize.minimize(
@@ -432,8 +542,7 @@ def calibrate_svi_parameters(
     params_vec = result.x
     params = SVIParameters(*params_vec)
 
-    k_min, k_max = float(np.min(k)), float(np.max(k))
-    k_grid = np.linspace(k_min - 0.5, k_max + 0.5, 201)
+    k_grid = diagnostic_grid
     min_g = min_g_on_grid(params, k_grid)
     diagnostics["min_g"] = min_g
     if min_g < -1e-6:

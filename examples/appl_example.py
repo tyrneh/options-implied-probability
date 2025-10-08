@@ -16,7 +16,7 @@ df_appl = df_appl[df_appl["expiration"] == "2026-01-16"]
 
 # 3 INPUTS:
 # 1. market parameters
-# 2. model parameters
+# 2. model  [optional]
 # 3. column mapping
 
 market = MarketInputs(
@@ -51,4 +51,10 @@ plt.show()
 # get the fitted IV smile as a dataframe
 # columns: strike, fitted_iv, bid_iv, ask_iv, last_iv
 # bid_iv, ask_iv, last_iv are the observed implied volatilities from the raw bids, asks, and last prices
-est_appl.iv_smile().head()
+est_appl.iv_smile()
+
+
+est_appl.to_frame()
+
+
+
