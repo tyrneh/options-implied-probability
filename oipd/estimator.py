@@ -631,8 +631,26 @@ class RNDResult:
 
         if xlim is not None:
             ax.set_xlim(xlim)
+
         if ylim is not None:
             ax.set_ylim(ylim)
+        else:
+            iv_arrays: list[np.ndarray] = [
+                smile_df["fitted_iv"].to_numpy(dtype=float)
+            ]
+            for col in ("bid_iv", "ask_iv", "last_iv"):
+                if col in smile_df.columns:
+                    iv_arrays.append(smile_df[col].to_numpy(dtype=float))
+            iv_values = np.concatenate(
+                [arr[np.isfinite(arr)] for arr in iv_arrays if arr.size]
+            )
+            if iv_values.size == 0:
+                max_iv = 1.0
+            else:
+                max_iv = float(np.max(iv_values))
+            if not np.isfinite(max_iv) or max_iv <= 0:
+                max_iv = 1.0
+            ax.set_ylim(0.0, max_iv * 1.05)
 
         forward_price = self.meta.get("forward_price")
         spot_price = (

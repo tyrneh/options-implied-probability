@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
+import warnings
 
 import numpy as np
 from scipy import optimize
@@ -17,7 +18,7 @@ from oipd.pricing.black76 import black76_call_price
 
 DEFAULT_SVI_OPTIONS: Dict[str, Any] = {
     "max_iter": 200,
-    "tol": 1e-8,
+    "tol": 1e-6,
     "regularisation": 1e-4,
     "rho_bound": 0.999,
     "sigma_min": 1e-4,
@@ -27,7 +28,7 @@ DEFAULT_SVI_OPTIONS: Dict[str, Any] = {
     "callspread_weight": 1e3,
     "callspread_step": 0.05,
     "global_solver": "de",
-    "global_max_iter": 30,
+    "global_max_iter": 20,
     "polish_solver": "lbfgsb",
     "n_starts": 5,
     "random_seed": 1,
@@ -843,10 +844,26 @@ def calibrate_svi_parameters(
         for idx in range(n_starts):
             if jw_heuristic is not None and idx < len(JW_SEED_DIRECTIONS):
                 direction = JW_SEED_DIRECTIONS[idx]
-                tweaked_jw = tuple(jw_heuristic[d] * (1 + direction[d]) if direction[d] != 0 else jw_heuristic[d] for d in range(5))
+                tweaked_jw = tuple(
+                    (
+                        jw_heuristic[d] * (1 + direction[d])
+                        if direction[d] != 0
+                        else jw_heuristic[d]
+                    )
+                    for d in range(5)
+                )
                 try:
                     candidate = jw_to_raw(tweaked_jw)
-                    sample = np.array([candidate.a, candidate.b, candidate.rho, candidate.m, candidate.sigma], dtype=float)
+                    sample = np.array(
+                        [
+                            candidate.a,
+                            candidate.b,
+                            candidate.rho,
+                            candidate.m,
+                            candidate.sigma,
+                        ],
+                        dtype=float,
+                    )
                 except Exception:
                     sample = lowers + span * rng.random(size=lowers.shape)
             else:
@@ -945,9 +962,11 @@ def calibrate_svi_parameters(
     min_g = min_g_on_grid(params, k_grid)
     diagnostics["min_g"] = min_g
     if min_g < -1e-6:
-        diagnostics["status"] = "failure"
-        raise CalculationError(
-            f"SVI calibration violates butterfly condition: min_g={min_g:.3e}"
+        diagnostics["status"] = "warning"
+        diagnostics["butterfly_warning"] = float(min_g)
+        warnings.warn(
+            f"SVI calibration violates butterfly condition: min_g={min_g:.3e}",
+            UserWarning,
         )
 
     final_model = svi_total_variance(k, params)
@@ -981,7 +1000,8 @@ def calibrate_svi_parameters(
     else:
         diagnostics["envelope_violations_pct"] = 0.0
 
-    diagnostics["status"] = "success"
+    if diagnostics.get("status") != "warning":
+        diagnostics["status"] = "success"
     return params, diagnostics
 
 

@@ -4,6 +4,8 @@ from oipd.core.svi import svi_options
 import matplotlib.pyplot as plt
 from datetime import date
 import pandas as pd
+import time
+
 
 # --- Example 1 - AAPL --- #
 
@@ -36,10 +38,14 @@ column_mapping = {
 
 model = ModelParams(surface_method="svi", price_method="mid")
 
-# estimate RND
+
+# estimate RND and time the operation
+start_time = time.perf_counter()
 est_appl = RND.from_dataframe(
     df_appl, market, column_mapping=column_mapping, model=model
 )
+end_time = time.perf_counter()
+print(f"RND.from_dataframe executed in {end_time - start_time:.4f} seconds")
 
 est_appl.plot(kind="pdf")
 plt.show()
