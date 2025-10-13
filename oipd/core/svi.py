@@ -209,7 +209,8 @@ def _svi_core_terms(
     k_arr = np.asarray(k, dtype=float)
     diff = k_arr - params.m
     root = np.hypot(diff, params.sigma)
-    return k_arr, diff, root
+    root_clipped = np.clip(root, 1e-12, None)
+    return k_arr, diff, root_clipped
 
 
 def _svi_total_variance_with_derivatives(
@@ -238,45 +239,41 @@ def _svi_total_variance_with_derivatives(
     """
 
     k_arr, diff, root = _svi_core_terms(k, params)
-    root_safe = np.where(root < 1e-12, 1e-12, root)
-    diff_over_root = diff / root_safe
+    inv_root = 1.0 / root
+    diff_over_root = diff * inv_root
     sigma = params.sigma
     sigma_sq = sigma * sigma
+    inv_root_sq = inv_root * inv_root
+    inv_root_cu = inv_root_sq * inv_root
+    inv_root_fifth = inv_root_cu * inv_root_sq
 
     w = params.a + params.b * (params.rho * diff + root)
 
-    dw_da = np.ones_like(k_arr)
-    dw_db = params.rho * diff + root
-    dw_drho = params.b * diff
-    dw_dm = -params.b * (params.rho + diff_over_root)
-    dw_dsigma = params.b * (sigma / root_safe)
-
-    dw = np.column_stack((dw_da, dw_db, dw_drho, dw_dm, dw_dsigma))
+    dw = np.empty((k_arr.shape[0], 5), dtype=float)
+    dw[:, 0] = 1.0
+    dw[:, 1] = params.rho * diff + root
+    dw[:, 2] = params.b * diff
+    dw[:, 3] = -params.b * (params.rho + diff_over_root)
+    dw[:, 4] = params.b * (sigma * inv_root)
 
     term_f = params.rho + diff_over_root
-    root_cubed = root_safe**3
-    root_fifth = root_safe**5
 
     w_prime = params.b * term_f
-    dwprime_da = np.zeros_like(k_arr)
-    dwprime_db = term_f
-    dwprime_drho = np.full_like(k_arr, params.b)
-    dwprime_dm = -params.b * sigma_sq / root_cubed
-    dwprime_dsigma = -params.b * diff * sigma / root_cubed
-    dw_prime = np.column_stack(
-        (dwprime_da, dwprime_db, dwprime_drho, dwprime_dm, dwprime_dsigma)
-    )
+    dw_prime = np.empty_like(dw)
+    dw_prime[:, 0] = 0.0
+    dw_prime[:, 1] = term_f
+    dw_prime[:, 2] = params.b
+    dw_prime[:, 3] = -params.b * sigma_sq * inv_root_cu
+    dw_prime[:, 4] = -params.b * diff * sigma * inv_root_cu
 
-    w_second = params.b * sigma_sq / root_cubed
-    dwsecond_da = np.zeros_like(k_arr)
-    dwsecond_db = sigma_sq / root_cubed
-    dwsecond_drho = np.zeros_like(k_arr)
-    dwsecond_dm = 3.0 * params.b * sigma_sq * diff / root_fifth
-    dwsecond_dsigma = params.b * (
-        (2.0 * sigma / root_cubed) - (3.0 * sigma**3 / root_fifth)
-    )
-    dw_second = np.column_stack(
-        (dwsecond_da, dwsecond_db, dwsecond_drho, dwsecond_dm, dwsecond_dsigma)
+    w_second = params.b * sigma_sq * inv_root_cu
+    dw_second = np.empty_like(dw)
+    dw_second[:, 0] = 0.0
+    dw_second[:, 1] = sigma_sq * inv_root_cu
+    dw_second[:, 2] = 0.0
+    dw_second[:, 3] = 3.0 * params.b * sigma_sq * diff * inv_root_fifth
+    dw_second[:, 4] = params.b * (
+        (2.0 * sigma * inv_root_cu) - (3.0 * sigma**3 * inv_root_fifth)
     )
 
     return k_arr, w, dw, w_prime, dw_prime, w_second, dw_second
