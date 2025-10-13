@@ -6,8 +6,10 @@ import pytest
 from oipd.core.svi import (
     SVICalibrationOptions,
     SVIParameters,
+    calibrate_svi_parameters,
     _build_bounds,
     _bid_ask_penalty,
+    _direct_least_squares_seed,
     _initial_guess,
     JWParams,
     RawSVI,
@@ -201,4 +203,60 @@ def test_raw_tuple_to_jw_round_trip():
         (recovered.a, recovered.b, recovered.rho, recovered.m, recovered.sigma),
         rtol=1e-9,
         atol=1e-9,
+    )
+
+
+def test_direct_least_squares_seed_recovers_parameters():
+    params = make_sample_params()
+    k = np.linspace(-0.6, 0.6, 31)
+    total_var = svi_total_variance(k, params)
+    sqrt_weights = np.ones_like(k)
+
+    seed = _direct_least_squares_seed(k, total_var, sqrt_weights)
+    assert seed is not None
+    np.testing.assert_allclose(
+        seed,
+        np.array([params.a, params.b, params.rho, params.m, params.sigma]),
+        rtol=0.1,
+        atol=5e-3,
+    )
+
+
+def test_calibration_reports_spread_usage_and_wing_bounds():
+    params = make_sample_params()
+    k = np.linspace(-0.4, 0.4, 21)
+    maturity = 0.5
+    total_var = svi_total_variance(k, params)
+    iv = from_total_variance(total_var, maturity)
+
+    bid_iv = iv - 0.01
+    ask_iv = iv + 0.01
+
+    options = merge_svi_options(
+        {
+            "global_solver": "none",
+            "n_starts": 0,
+            "spread_floor": 1e-3,
+        }
+    )
+
+    calibrated, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        options,
+        bid_iv=bid_iv,
+        ask_iv=ask_iv,
+    )
+
+    assert diagnostics.status in {"success", "warning"}
+    assert diagnostics.weights_spread_used is True
+    assert diagnostics.max_wing_slope is not None
+    assert diagnostics.max_wing_slope <= 2.0 + 1e-4
+
+    np.testing.assert_allclose(
+        [calibrated.a, calibrated.b, calibrated.rho, calibrated.m, calibrated.sigma],
+        [params.a, params.b, params.rho, params.m, params.sigma],
+        rtol=0.1,
+        atol=5e-2,
     )

@@ -52,7 +52,7 @@ plt.show()
 
 
 # fetch fitted IV smile from results object
-est_appl.plot_iv(observed_style="range", x_axis="log_moneyness")
+est_appl.plot_iv(observed_style="range", x_axis="strike")
 plt.show()
 
 # get the fitted IV smile as a dataframe

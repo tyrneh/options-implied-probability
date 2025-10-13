@@ -7,6 +7,7 @@ single-expiry SVI model following Gatheral & Jacquier (2012).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 from typing import Any, Iterable, Mapping, Sequence, Tuple
 import warnings
 
@@ -589,16 +590,19 @@ def _vega_based_weights(
     mode: str,
     weight_cap: float,
     volumes: np.ndarray | None = None,
-) -> tuple[np.ndarray, bool]:
+    bid_iv: np.ndarray | None = None,
+    ask_iv: np.ndarray | None = None,
+    spread_floor: float = 1e-4,
+) -> tuple[np.ndarray, bool, bool]:
     """Construct weighting vector for the calibration objective."""
 
     size = k.shape[0]
     if size == 0 or maturity_years <= 0:
-        return np.ones(size, dtype=float), False
+        return np.ones(size, dtype=float), False, False
 
     mode_normalised = mode.lower()
     if mode_normalised in {"none", "off", "disabled"}:
-        return np.ones(size, dtype=float), False
+        return np.ones(size, dtype=float), False, False
 
     total_var_arr = np.asarray(total_variance, dtype=float)
     total_var_arr = np.maximum(total_var_arr, 1e-12)
@@ -606,7 +610,7 @@ def _vega_based_weights(
     sqrt_t = np.sqrt(max(maturity_years, 1e-12))
 
     if not np.isfinite(sqrt_t):
-        return np.ones(size, dtype=float)
+        return np.ones(size, dtype=float), False, False
 
     strikes = np.exp(np.asarray(k, dtype=float))
     ln_fk = -np.log(np.maximum(strikes, 1e-12))
@@ -617,6 +621,7 @@ def _vega_based_weights(
 
     weights = np.maximum(vega, 1e-8)
     volume_used = False
+    spread_used = False
 
     if volumes is not None:
         vol_arr = np.asarray(volumes, dtype=float)
@@ -629,6 +634,28 @@ def _vega_based_weights(
             weights *= vol_weights
             volume_used = True
 
+    if bid_iv is not None and ask_iv is not None:
+        bid_arr = np.asarray(bid_iv, dtype=float)
+        ask_arr = np.asarray(ask_iv, dtype=float)
+        if bid_arr.shape != weights.shape or ask_arr.shape != weights.shape:
+            raise ValueError("bid_iv and ask_iv must match the shape of k")
+        raw_spread = ask_arr - bid_arr
+        finite_mask = np.isfinite(raw_spread)
+        positive_mask = raw_spread > 0
+        valid_mask = finite_mask & positive_mask
+        if valid_mask.any():
+            spread_floor = max(spread_floor, 1e-6)
+            fallback = float(np.nanmedian(raw_spread[valid_mask]))
+            if not np.isfinite(fallback) or fallback <= 0:
+                fallback = spread_floor
+            safe_spread = np.where(
+                valid_mask,
+                np.maximum(raw_spread, spread_floor),
+                fallback,
+            )
+            weights *= 1.0 / np.square(safe_spread)
+            spread_used = True
+
     mean_weight = float(np.mean(weights))
     if mean_weight > 0:
         weights = weights / mean_weight
@@ -636,7 +663,136 @@ def _vega_based_weights(
     if np.isfinite(weight_cap) and weight_cap > 0:
         weights = np.clip(weights, 1e-6, weight_cap)
 
-    return weights, volume_used
+    return weights, volume_used, spread_used
+
+
+def _direct_least_squares_seed(
+    k: np.ndarray,
+    total_variance: np.ndarray,
+    sqrt_weights: np.ndarray,
+) -> np.ndarray | None:
+    """Return a direct least-squares seed via SVI conic linearisation.
+
+    This helper fits the implicit conic representation of the raw SVI smile,
+    yielding parameters consistent with ``(a, b, rho, m, sigma)`` without
+    requiring a nonlinear solve. The coefficients are obtained from the
+    eigenvector associated with the minimum eigenvalue of the weighted normal
+    equations, which is numerically stable and invariant to scaling.
+
+    Args:
+        k: Log-moneyness coordinates for the observed smile.
+        total_variance: Observed total variance values aligned with ``k``.
+        sqrt_weights: Square roots of the residual weights used for regression.
+
+    Returns:
+        A five-element array containing the raw SVI parameters when the fit is
+        successful, otherwise ``None`` when the data do not admit a valid
+        solution within numerical tolerance.
+    """
+
+    if k.size < 5 or total_variance.size != k.size or sqrt_weights.size != k.size:
+        return None
+
+    x = np.asarray(k, dtype=float)
+    y = np.asarray(total_variance, dtype=float)
+    w = np.asarray(sqrt_weights, dtype=float)
+    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+        return None
+
+    # Fall back if the weights collapse to zero; treat as unweighted fit.
+    if np.any(w < 0):
+        return None
+    w = np.where(np.isfinite(w), w, 0.0)
+    if float(np.sum(w)) <= 0.0:
+        w = np.ones_like(w)
+
+    design = np.column_stack(
+        (y**2, x * y, x**2, y, x, np.ones_like(x))
+    )
+    weighted = w[:, None] * design
+    normal_matrix = weighted.T @ weighted
+    normal_matrix = 0.5 * (normal_matrix + normal_matrix.T)
+
+    try:
+        eigenvalues, eigenvectors = np.linalg.eigh(normal_matrix)
+    except np.linalg.LinAlgError:
+        return None
+
+    idx = int(np.argmin(eigenvalues))
+    coeff = eigenvectors[:, idx]
+    if coeff.size != 6:
+        return None
+
+    alpha = float(coeff[0])
+    if not np.isfinite(alpha) or abs(alpha) < 1e-10:
+        return None
+
+    # Fix the sign ambiguity by enforcing a positive alpha.
+    if alpha < 0:
+        coeff = -coeff
+        alpha = -alpha
+
+    beta = float(coeff[1])
+    gamma = float(coeff[2])
+    delta = float(coeff[3])
+    epsilon = float(coeff[4])
+    zeta = float(coeff[5])
+
+    c = alpha
+    two_c = 2.0 * c
+    if not np.isfinite(two_c):
+        return None
+
+    b_rho = -beta / two_c
+    slope_term = -gamma / c
+    if not np.isfinite(b_rho) or not np.isfinite(slope_term):
+        return None
+
+    b_sq = slope_term + b_rho**2
+    if not np.isfinite(b_sq) or b_sq <= 0.0:
+        return None
+
+    b = float(np.sqrt(b_sq))
+    if not np.isfinite(b) or b <= 0.0:
+        return None
+
+    rho = b_rho / b
+    if not np.isfinite(rho) or abs(rho) >= 1.0:
+        return None
+
+    delta_c = delta / c
+    epsilon_c = epsilon / c
+    zeta_c = zeta / c
+    if not (np.isfinite(delta_c) and np.isfinite(epsilon_c) and np.isfinite(zeta_c)):
+        return None
+
+    denominator = 2.0 * b_sq
+    if abs(denominator) < 1e-12:
+        return None
+
+    m = (epsilon_c + b_rho * delta_c) / denominator
+    if not np.isfinite(m):
+        return None
+
+    a = b_rho * m - 0.5 * delta_c
+    if not np.isfinite(a):
+        return None
+
+    numerator = a**2 - 2.0 * b_rho * a * m - slope_term * m**2 - zeta_c
+    sigma_sq = numerator / b_sq
+    if not np.isfinite(sigma_sq) or sigma_sq <= 0.0:
+        return None
+
+    sigma = float(np.sqrt(sigma_sq))
+    if not np.isfinite(sigma) or sigma <= 0.0:
+        return None
+
+    try:
+        candidate = SVIParameters(a=a, b=b, rho=rho, m=m, sigma=sigma)
+    except ValueError:
+        return None
+
+    return np.array([candidate.a, candidate.b, candidate.rho, candidate.m, candidate.sigma], dtype=float)
 
 
 def _qe_split_seeds(
@@ -820,6 +976,8 @@ def _build_bounds(
     # Wider wing slopes allowed for short-dated expiries
     wing_amp = max(1.0, 1.0 / np.sqrt(tenor))
     b_upper = min(50.0, 5.0 * wing_amp)
+    lee_cap = 2.0 / (1.0 + rho_bound)
+    b_upper = min(b_upper, lee_cap)
 
     sigma_upper = min(5.0, max(0.5, 2.0 * expansion))
     sigma_lower = max(sigma_min, 1e-4)
@@ -849,7 +1007,115 @@ def _penalty_terms(params_vec: np.ndarray, regularisation: float) -> float:
     min_var = a + b * sigma * np.sqrt(max(1e-12, 1 - rho**2))
     penalty = 1e5 * max(0.0, -min_var)
     penalty += regularisation * (b**2)
+    wing_limit = 2.0
+    left_excess = max(0.0, b * (1 - rho) - wing_limit)
+    right_excess = max(0.0, b * (1 + rho) - wing_limit)
+    penalty += 1e4 * (left_excess**2 + right_excess**2)
     return penalty
+
+
+@dataclass
+class _QEObjective:
+    """Callable objective encapsulating the 2D QE split calibration problem."""
+
+    k: np.ndarray
+    total_variance: np.ndarray
+    weights: np.ndarray
+    sqrt_weights: np.ndarray
+    maturity_years: float
+    huber_delta: float
+    callspread_step: float
+    callspread_weight: float
+    butterfly_weight: float
+    envelope_weight: float
+    diagnostic_grid: np.ndarray
+    regularisation: float
+    bid_iv: np.ndarray | None = None
+    ask_iv: np.ndarray | None = None
+
+    def solve_inner(self, m_val: float, sigma_val: float) -> np.ndarray | None:
+        """Return raw SVI parameters for a given pair ``(m, sigma)``.
+
+        Args:
+            m_val: Centre parameter of the SVI smile.
+            sigma_val: Scale parameter of the SVI smile.
+
+        Returns:
+            A parameter vector ``(a, b, rho, m, sigma)`` or ``None`` when the
+            least-squares system is ill-conditioned or violates constraints.
+        """
+
+        if not np.isfinite(m_val) or not np.isfinite(sigma_val) or sigma_val <= 0.0:
+            return None
+
+        diff = self.k - m_val
+        phi = np.sqrt(np.square(diff) + sigma_val**2)
+        design = np.column_stack((np.ones_like(diff), diff, phi))
+        weighted_design = self.sqrt_weights[:, None] * design
+        weighted_response = self.sqrt_weights * self.total_variance
+
+        try:
+            coefficients, _, _, _ = np.linalg.lstsq(
+                weighted_design, weighted_response, rcond=None
+            )
+        except np.linalg.LinAlgError:
+            return None
+
+        a_val = float(coefficients[0])
+        b_rho_val = float(coefficients[1])
+        b_val = float(coefficients[2])
+        if not np.isfinite(b_val) or b_val <= 0.0:
+            return None
+
+        rho_val = b_rho_val / b_val
+        if not np.isfinite(rho_val):
+            return None
+        rho_val = float(np.clip(rho_val, -0.999999, 0.999999))
+
+        params_vec = np.array(
+            [a_val, b_val, rho_val, m_val, sigma_val],
+            dtype=float,
+        )
+
+        try:
+            SVIParameters(*params_vec)
+        except ValueError:
+            return None
+
+        return params_vec
+
+    def __call__(self, msigma: np.ndarray) -> float:
+        """Evaluate the penalised calibration objective."""
+
+        if msigma.size != 2:
+            return 1e9
+        m_val = float(msigma[0])
+        sigma_val = float(msigma[1])
+        params_vec = self.solve_inner(m_val, sigma_val)
+        if params_vec is None:
+            return 1e9
+
+        params = SVIParameters(*params_vec)
+        model = svi_total_variance(self.k, params)
+        residual = model - self.total_variance
+        abs_residual = np.abs(residual)
+        mask = abs_residual <= self.huber_delta
+        quadratic = 0.5 * residual**2
+        linear = self.huber_delta * (abs_residual - 0.5 * self.huber_delta)
+        huber_loss = np.where(mask, quadratic, linear)
+        base = float(np.sum(self.weights * huber_loss))
+        model_iv = from_total_variance(np.maximum(model, 0.0), self.maturity_years)
+        penalty = _penalty_terms(params_vec, self.regularisation)
+        penalty += _butterfly_penalty(params, self.diagnostic_grid, self.butterfly_weight)
+        penalty += _call_spread_penalty(
+            params,
+            self.diagnostic_grid,
+            self.maturity_years,
+            self.callspread_step,
+            self.callspread_weight,
+        )
+        penalty += _bid_ask_penalty(model_iv, self.bid_iv, self.ask_iv, self.envelope_weight)
+        return base + penalty
 
 
 def calibrate_svi_parameters(
@@ -916,14 +1182,6 @@ def calibrate_svi_parameters(
         if volumes_arr.shape != k.shape:
             raise ValueError("volumes must have the same shape as k")
 
-    weights_array, volume_used = _vega_based_weights(
-        k, total_variance, maturity_years, weighting_mode, weight_cap, volumes_arr
-    )
-    weights = np.asarray(weights_array, dtype=float)
-    if weights.shape != k.shape:
-        raise ValueError("weights must have the same shape as k")
-    sqrt_weights = np.sqrt(weights)
-
     bid_iv_arr: np.ndarray | None
     if bid_iv is None:
         bid_iv_arr = None
@@ -940,41 +1198,46 @@ def calibrate_svi_parameters(
         if ask_iv_arr.shape != k.shape:
             raise ValueError("ask_iv must have the same shape as k")
 
+    weights_array, volume_used, spread_used = _vega_based_weights(
+        k,
+        total_variance,
+        maturity_years,
+        weighting_mode,
+        weight_cap,
+        volumes_arr,
+        bid_iv=bid_iv_arr,
+        ask_iv=ask_iv_arr,
+        spread_floor=float(options.spread_floor),
+    )
+    weights = np.asarray(weights_array, dtype=float)
+    if weights.shape != k.shape:
+        raise ValueError("weights must have the same shape as k")
+    sqrt_weights = np.sqrt(weights)
+
     k_min, k_max = float(np.min(k)), float(np.max(k))
     diagnostic_grid = np.linspace(
         k_min - diagnostic_pad, k_max + diagnostic_pad, diagnostic_points
     )
 
-    def objective(vec: np.ndarray) -> float:
-        """Evaluate the penalised least-squares objective for calibration.
+    objective_engine = _QEObjective(
+        k=k,
+        total_variance=total_variance,
+        weights=weights,
+        sqrt_weights=sqrt_weights,
+        maturity_years=maturity_years,
+        huber_delta=float(huber_delta),
+        callspread_step=float(callspread_step),
+        callspread_weight=float(callspread_weight),
+        butterfly_weight=float(butterfly_weight),
+        envelope_weight=float(envelope_weight),
+        diagnostic_grid=diagnostic_grid,
+        regularisation=float(options.regularisation),
+        bid_iv=bid_iv_arr,
+        ask_iv=ask_iv_arr,
+    )
 
-        Args:
-            vec: Candidate SVI parameter vector.
-
-        Returns:
-            Scalar objective value combining residuals and regularisation.
-        """
-
-        try:
-            params = SVIParameters(*vec)
-        except ValueError:
-            return 1e9
-        model = svi_total_variance(k, params)
-        residual = model - total_variance
-        abs_residual = np.abs(residual)
-        mask = abs_residual <= huber_delta
-        quadratic = 0.5 * residual**2
-        linear = huber_delta * (abs_residual - 0.5 * huber_delta)
-        huber_loss = np.where(mask, quadratic, linear)
-        base = float(np.sum(weights * huber_loss))
-        model_iv = from_total_variance(np.maximum(model, 0.0), maturity_years)
-        penalty = _penalty_terms(vec, options.regularisation)
-        penalty += _butterfly_penalty(params, diagnostic_grid, butterfly_weight)
-        penalty += _call_spread_penalty(
-            params, diagnostic_grid, maturity_years, callspread_step, callspread_weight
-        )
-        penalty += _bid_ask_penalty(model_iv, bid_iv_arr, ask_iv_arr, envelope_weight)
-        return base + penalty
+    def objective_msigma(msigma: np.ndarray) -> float:
+        return objective_engine(msigma)
 
     global_solver = str(options.global_solver or "none").lower()
     polish_solver = str(options.polish_solver or "lbfgsb").lower()
@@ -1002,6 +1265,7 @@ def calibrate_svi_parameters(
         qe_seed_count=len(qe_seeds),
     )
     diagnostics.random_seed = random_seed if random_seed is not None else None
+    diagnostics.weights_spread_used = bool(spread_used)
 
     logger.info(
         "Starting SVI calibration: n_strikes=%d, maturity_years=%.6f, weighting=%s, seed=%s",
@@ -1013,22 +1277,53 @@ def calibrate_svi_parameters(
 
     rng = np.random.default_rng(random_seed)
 
-    start_candidates: list[tuple[np.ndarray, str]] = [
-        (np.asarray(heuristic_guess, dtype=float), "heuristic")
-    ]
+    msigma_bounds = [bounds[3], bounds[4]]
+
+    def _clip_msigma(vec: np.ndarray) -> np.ndarray:
+        return np.array(
+            [
+                float(np.clip(vec[0], msigma_bounds[0][0], msigma_bounds[0][1])),
+                float(np.clip(vec[1], msigma_bounds[1][0], msigma_bounds[1][1])),
+            ],
+            dtype=float,
+        )
+
+    msigma_candidates: list[tuple[np.ndarray, str]] = []
+
+    heur_msigma = np.asarray(heuristic_guess[3:5], dtype=float)
+    msigma_candidates.append((_clip_msigma(heur_msigma), "heuristic"))
+
+    dls_seed = _direct_least_squares_seed(k, total_variance, sqrt_weights)
+    if dls_seed is not None:
+        msigma_candidates.insert(0, (_clip_msigma(dls_seed[3:5]), "dls"))
+
     for seed in qe_seeds:
-        start_candidates.append((np.asarray(seed, dtype=float), "qe"))
+        msigma_candidates.append((_clip_msigma(np.asarray(seed[3:5], dtype=float)), "qe"))
 
     global_result: optimize.OptimizeResult | None = None
 
     if global_solver in {"de", "differential_evolution"}:
         try:
+            global_tol = float(getattr(options, "global_tol", 1e-3))
+            worker_setting = getattr(options, "global_workers", None)
+            if isinstance(worker_setting, Integral):
+                workers_arg = int(worker_setting)
+            else:
+                workers_arg = 1
+            if workers_arg < -1:
+                workers_arg = -1
+            if workers_arg == 0:
+                workers_arg = 1
             global_result = optimize.differential_evolution(
-                objective,
-                bounds,
+                objective_engine,
+                msigma_bounds,
                 maxiter=global_max_iter,
+                tol=global_tol,
                 seed=random_seed,
                 polish=False,
+                updating="deferred",
+                init="sobol",
+                workers=workers_arg,
             )
         except Exception as exc:  # pragma: no cover - SciPy backend failures
             diagnostics.global_status = f"failure: {exc}"
@@ -1042,17 +1337,15 @@ def calibrate_svi_parameters(
                 float(global_result.fun),
                 int(getattr(global_result, "nit", 0)),
             )
-            start_candidates.insert(
-                0, (np.asarray(global_result.x, dtype=float), "global")
+            msigma_candidates.insert(
+                0, (_clip_msigma(np.asarray(global_result.x, dtype=float)), "global")
             )
 
     # Multi-start: sample additional initial points within bounds deterministically when seeded
     if n_starts > 0:
-        lowers = np.array([bound[0] for bound in bounds], dtype=float)
-        uppers = np.array([bound[1] for bound in bounds], dtype=float)
-        span = uppers - lowers
+        m_lower, m_upper = msigma_bounds[0]
+        sigma_lower, sigma_upper = msigma_bounds[1]
 
-        # Generate JW-informed directions for seeding
         try:
             jw_heuristic = raw_to_jw(SVIParameters(*heuristic_guess))
         except Exception:
@@ -1061,7 +1354,7 @@ def calibrate_svi_parameters(
         for idx in range(n_starts):
             if jw_heuristic is not None and idx < len(JW_SEED_DIRECTIONS):
                 direction = JW_SEED_DIRECTIONS[idx]
-                tweaked_jw = tuple(
+                tweaked = tuple(
                     (
                         jw_heuristic[d] * (1 + direction[d])
                         if direction[d] != 0
@@ -1070,41 +1363,47 @@ def calibrate_svi_parameters(
                     for d in range(5)
                 )
                 try:
-                    candidate = jw_to_raw(tweaked_jw)
+                    candidate = jw_to_raw(tweaked)
+                    sample = np.array([candidate.m, candidate.sigma], dtype=float)
+                    origin = "jw"
+                except Exception:
                     sample = np.array(
                         [
-                            candidate.a,
-                            candidate.b,
-                            candidate.rho,
-                            candidate.m,
-                            candidate.sigma,
+                            m_lower + (m_upper - m_lower) * rng.random(),
+                            sigma_lower + (sigma_upper - sigma_lower) * rng.random(),
                         ],
                         dtype=float,
                     )
-                    origin = "jw"
-                except Exception:
-                    sample = lowers + span * rng.random(size=lowers.shape)
                     origin = "random"
             else:
-                sample = lowers + span * rng.random(size=lowers.shape)
+                sample = np.array(
+                    [
+                        m_lower + (m_upper - m_lower) * rng.random(),
+                        sigma_lower + (sigma_upper - sigma_lower) * rng.random(),
+                    ],
+                    dtype=float,
+                )
                 origin = "random"
-            start_candidates.append((np.asarray(sample, dtype=float), origin))
+            msigma_candidates.append((_clip_msigma(sample), origin))
 
     # Deduplicate starts while preserving order
     unique_starts: list[tuple[np.ndarray, str]] = []
-    for vec, origin in start_candidates:
+    for vec, origin in msigma_candidates:
         if any(np.allclose(vec, existing_vec) for existing_vec, _ in unique_starts):
             continue
         unique_starts.append((vec, origin))
 
     def _run_local(start_vec: np.ndarray) -> optimize.OptimizeResult:
         clipped = np.array(
-            [np.clip(val, bound[0], bound[1]) for val, bound in zip(start_vec, bounds)],
+            [
+                np.clip(start_vec[0], msigma_bounds[0][0], msigma_bounds[0][1]),
+                np.clip(start_vec[1], msigma_bounds[1][0], msigma_bounds[1][1]),
+            ],
             dtype=float,
         )
         if polish_solver == "nelder" or polish_solver == "nelder-mead":
             return optimize.minimize(
-                objective,
+                objective_msigma,
                 clipped,
                 method="Nelder-Mead",
                 options={
@@ -1113,10 +1412,10 @@ def calibrate_svi_parameters(
                 },
             )
         primary = optimize.minimize(
-            objective,
+            objective_msigma,
             clipped,
             method="L-BFGS-B",
-            bounds=bounds,
+            bounds=msigma_bounds,
             options={
                 "maxiter": int(options.max_iter),
                 "ftol": float(options.tol),
@@ -1125,7 +1424,7 @@ def calibrate_svi_parameters(
         if primary.success:
             return primary
         secondary = optimize.minimize(
-            objective,
+            objective_msigma,
             clipped,
             method="Nelder-Mead",
             options={
@@ -1142,13 +1441,34 @@ def calibrate_svi_parameters(
     for start_index, (start_vec, origin) in enumerate(unique_starts):
         result = _run_local(start_vec)
         local_results.append(result)
+        start_params = objective_engine.solve_inner(
+            float(start_vec[0]), float(start_vec[1])
+        )
+        result_params = (
+            objective_engine.solve_inner(float(result.x[0]), float(result.x[1]))
+            if result.success
+            else None
+        )
+
+        start_tuple: tuple[float, ...]
+        if start_params is None:
+            start_tuple = (
+                float("nan"),
+                float("nan"),
+                float("nan"),
+                float(start_vec[0]),
+                float(start_vec[1]),
+            )
+        else:
+            start_tuple = tuple(float(x) for x in start_params)
+
         record = SVITrialRecord(
             start_index=start_index,
-            start=tuple(float(x) for x in start_vec),
+            start=start_tuple,
             success=bool(result.success),
             objective=float(result.fun),
             start_origin=origin,
-            params=tuple(float(x) for x in result.x) if result.success else None,
+            params=tuple(float(x) for x in result_params) if result_params is not None else None,
         )
         diagnostics.add_trial_record(record)
         logger.debug(
@@ -1183,8 +1503,14 @@ def calibrate_svi_parameters(
     if not result.success:
         raise CalculationError(f"SVI calibration failed: {result.message}")
 
-    params_vec = result.x
-    params = SVIParameters(*params_vec)
+    final_params_vec = objective_engine.solve_inner(
+        float(result.x[0]), float(result.x[1])
+    )
+    if final_params_vec is None:
+        logger.error("Failed to reconstruct SVI parameters from optimised (m, sigma)")
+        raise CalculationError("SVI calibration failed: invalid final parameter reconstruction")
+
+    params = SVIParameters(*final_params_vec)
 
     k_grid = diagnostic_grid
     min_g = min_g_on_grid(params, k_grid)
@@ -1228,6 +1554,17 @@ def calibrate_svi_parameters(
             diagnostics.envelope_violations_pct = 0.0
     else:
         diagnostics.envelope_violations_pct = 0.0
+
+    left_slope = params.b * (1.0 - params.rho)
+    right_slope = params.b * (1.0 + params.rho)
+    max_wing_slope = float(max(left_slope, right_slope))
+    diagnostics.max_wing_slope = max_wing_slope
+    if max_wing_slope > 2.0 + 1e-6:
+        diagnostics.status = "warning"
+        diagnostics.wing_warning = max_wing_slope - 2.0
+        logger.warning(
+            "SVI calibration wing slope exceeds Lee bound: slope=%.3f", max_wing_slope
+        )
 
     if diagnostics.status != "warning":
         diagnostics.status = "success"

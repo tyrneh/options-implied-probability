@@ -35,6 +35,9 @@ class SVICalibrationOptions:
         huber_delta_floor: Minimum allowed value for the inferred Huber delta.
         envelope_weight: Penalty weight for breaching the bid/ask implied-volatility envelope.
         volume_column: Optional column name used when extracting volumes from input frames.
+        spread_floor: Minimum allowed bid/ask spread when computing residual weights.
+        global_tol: Convergence tolerance used by the global optimiser.
+        global_workers: Number of worker processes supplied to the global optimiser.
     """
 
     max_iter: int = 200
@@ -61,6 +64,9 @@ class SVICalibrationOptions:
     huber_delta_floor: float = 1e-4
     envelope_weight: float = 1e3
     volume_column: str | None = None
+    spread_floor: float = 1e-4
+    global_tol: float = 1e-3
+    global_workers: int = 1
 
     @classmethod
     def field_names(cls) -> set[str]:
@@ -141,6 +147,7 @@ class SVICalibrationDiagnostics:
     weights_max: float = 0.0
     envelope_weight: float = 0.0
     weights_volume_used: bool = False
+    weights_spread_used: bool = False
     qe_seed_count: int = 0
     random_seed: int | None = None
     global_status: str | None = None
@@ -150,6 +157,8 @@ class SVICalibrationDiagnostics:
     chosen_start_origin: str | None = None
     min_g: float | None = None
     butterfly_warning: float | None = None
+    max_wing_slope: float | None = None
+    wing_warning: float | None = None
     rmse_unweighted: float | None = None
     rmse_weighted: float | None = None
     residual_mean: float | None = None
