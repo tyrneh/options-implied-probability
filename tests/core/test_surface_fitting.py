@@ -3,7 +3,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from oipd.core.svi import SVIParameters, from_total_variance, raw_to_jw, svi_total_variance
+from oipd.core.svi import (
+    SVICalibrationDiagnostics,
+    SVIParameters,
+    from_total_variance,
+    raw_to_jw,
+    svi_total_variance,
+)
 from oipd.core.surface_fitting import (
     AVAILABLE_SURFACE_FITS,
     available_surface_fits,
@@ -87,5 +93,6 @@ def test_fit_surface_svi_exposes_jw_and_diagnostics():
 
     assert hasattr(vol_curve, "diagnostics")
     diagnostics = vol_curve.diagnostics
-    assert "rmse_unweighted" in diagnostics
-    assert diagnostics["rmse_unweighted"] < 1e-2
+    assert isinstance(diagnostics, SVICalibrationDiagnostics)
+    assert hasattr(diagnostics, "rmse_unweighted")
+    assert diagnostics.rmse_unweighted < 1e-2

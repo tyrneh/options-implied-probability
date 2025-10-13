@@ -7,10 +7,12 @@ from dataclasses import astuple
 
 from oipd.core.surface_fitting import fit_surface
 from oipd.core.svi import (
+    SVICalibrationDiagnostics,
     SVIParameters,
     calibrate_svi_parameters,
     from_total_variance,
     log_moneyness,
+    svi_options,
     svi_total_variance,
     to_total_variance,
 )
@@ -38,7 +40,7 @@ def test_svi_calibration_recovers_parameters():
         iv=iv,
         forward=forward,
         maturity_years=maturity,
-        options={"huber_delta": 1e-6, "random_seed": 123},
+        options=svi_options(huber_delta=1e-6, random_seed=123),
     )
 
     recovered_iv = vol_curve(strikes)
@@ -46,8 +48,9 @@ def test_svi_calibration_recovers_parameters():
     assert max_abs_diff < 0.12
 
     diagnostics = vol_curve.diagnostics
-    assert diagnostics["rmse_unweighted"] < 0.03
-    assert diagnostics["min_g"] > -1e-6
+    assert isinstance(diagnostics, SVICalibrationDiagnostics)
+    assert diagnostics.rmse_unweighted < 0.03
+    assert diagnostics.min_g > -1e-6
 
 
 def test_svi_calibration_with_noise():
@@ -64,14 +67,14 @@ def test_svi_calibration_with_noise():
         iv=noisy_iv,
         forward=forward,
         maturity_years=maturity,
-        options={"huber_delta": 1e-6, "random_seed": 123},
+        options=svi_options(huber_delta=1e-6, random_seed=123),
     )
 
     recovered = vol_curve(strikes)
     assert float(np.max(np.abs(recovered - iv))) < 0.12
 
     diagnostics = vol_curve.diagnostics
-    assert diagnostics["rmse_unweighted"] < 0.05
+    assert diagnostics.rmse_unweighted < 0.05
 
 
 def test_svi_requires_forward_and_maturity():
@@ -120,8 +123,8 @@ def test_calibration_multistart_deterministic():
     )
 
     np.testing.assert_allclose(np.array(astuple(params_one)), np.array(astuple(params_two)))
-    assert diag_one["objective"] == pytest.approx(diag_two["objective"], rel=1e-12)
-    assert diag_one.get("chosen_start_index") == diag_two.get("chosen_start_index")
+    assert diag_one.objective == pytest.approx(diag_two.objective, rel=1e-12)
+    assert diag_one.chosen_start_index == diag_two.chosen_start_index
 
 
 def test_calibration_global_solver_runs():
@@ -145,9 +148,9 @@ def test_calibration_global_solver_runs():
     )
 
     assert isinstance(params, SVIParameters)
-    assert diagnostics["global_solver"] == "de"
-    assert diagnostics.get("global_status") == "success"
-    assert diagnostics.get("global_iterations", 0) >= 0
+    assert diagnostics.global_solver == "de"
+    assert diagnostics.global_status == "success"
+    assert (diagnostics.global_iterations or 0) >= 0
 
 
 def test_calibration_reports_weighting_stats():
@@ -164,12 +167,13 @@ def test_calibration_reports_weighting_stats():
     )
 
     assert isinstance(params, SVIParameters)
-    assert diagnostics["weighting_mode"] == "vega"
-    assert diagnostics["weights_max"] > diagnostics["weights_min"]
-    assert diagnostics["weights_min"] > 0
-    assert diagnostics["weights_volume_used"] is False
-    assert diagnostics["rmse_unweighted"] >= 0
-    assert diagnostics["rmse_weighted"] >= 0
+    assert diagnostics.weighting_mode == "vega"
+    assert diagnostics.weights_max > diagnostics.weights_min
+    assert diagnostics.weights_min > 0
+    assert diagnostics.weights_volume_used is False
+    assert diagnostics.callspread_step > 0
+    assert diagnostics.rmse_unweighted >= 0
+    assert diagnostics.rmse_weighted >= 0
 
 
 def test_calibration_huber_option_recorded():
@@ -186,7 +190,7 @@ def test_calibration_huber_option_recorded():
     )
 
     assert isinstance(params, SVIParameters)
-    assert diagnostics["huber_delta"] == pytest.approx(5e-4)
+    assert diagnostics.huber_delta == pytest.approx(5e-4)
 
 
 def test_envelope_penalty_within_spread():
@@ -208,8 +212,8 @@ def test_envelope_penalty_within_spread():
     )
 
     assert isinstance(params, SVIParameters)
-    assert diagnostics["envelope_weight"] == pytest.approx(1e3)
-    assert diagnostics["envelope_violations_pct"] == pytest.approx(0.0)
+    assert diagnostics.envelope_weight == pytest.approx(1e3)
+    assert diagnostics.envelope_violations_pct == pytest.approx(0.0)
 
 
 def test_envelope_penalty_shape_mismatch_raises():
@@ -245,9 +249,12 @@ def test_volume_weighting_flagged():
     )
 
     assert isinstance(params, SVIParameters)
-    assert diagnostics["weights_volume_used"] is True
-    assert diagnostics["weights_max"] >= diagnostics["weights_min"]
-    assert diagnostics["rmse_weighted"] >= diagnostics["rmse_unweighted"] or diagnostics["rmse_weighted"] >= 0
+    assert diagnostics.weights_volume_used is True
+    assert diagnostics.weights_max >= diagnostics.weights_min
+    assert (
+        diagnostics.rmse_weighted >= diagnostics.rmse_unweighted
+        or diagnostics.rmse_weighted >= 0
+    )
 
 
 def test_volume_weighting_shape_mismatch():
@@ -263,3 +270,58 @@ def test_volume_weighting_shape_mismatch():
             None,
             volumes=np.array([1.0, 2.0]),
         )
+
+
+def test_huber_delta_scales_with_slice():
+    params_true = SVIParameters(a=0.02, b=0.18, rho=-0.2, m=0.0, sigma=0.3)
+    maturity = 1.0
+    k = np.linspace(-0.5, 0.5, 13)
+    total_var = svi_total_variance(k, params_true)
+
+    _, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        None,
+    )
+
+    expected_scale = np.median(total_var)
+    expected_delta = max(1e-4, 0.01 * expected_scale)
+    assert diagnostics.huber_delta == pytest.approx(expected_delta, rel=1e-6)
+
+
+def test_callspread_step_adapts_to_spacing():
+    params_true = SVIParameters(a=0.03, b=0.22, rho=0.1, m=0.05, sigma=0.4)
+    maturity = 1.0
+    k = np.linspace(-0.6, 0.6, 7)  # spacing 0.2
+    total_var = svi_total_variance(k, params_true)
+
+    _, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        None,
+    )
+
+    # baseline spacing = 0.2 -> 0.5 * spacing * scale(=2) = 0.2
+    assert diagnostics.callspread_step == pytest.approx(0.2, rel=1e-6)
+
+
+def test_qe_seed_origin_recorded():
+    params_true = SVIParameters(a=0.025, b=0.21, rho=-0.15, m=-0.03, sigma=0.28)
+    maturity = 0.8
+    k = np.linspace(-0.5, 0.5, 11)
+    total_var = svi_total_variance(k, params_true)
+    # perturb the smile slightly to avoid duplicate seeds
+    rng = np.random.default_rng(123)
+    total_var = total_var * (1 + rng.normal(scale=1e-3, size=total_var.shape))
+
+    _, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        {"n_starts": 0, "random_seed": 42},
+    )
+
+    assert diagnostics.qe_seed_count >= 1
+    assert any(record.start_origin == "qe" for record in diagnostics.trial_records)

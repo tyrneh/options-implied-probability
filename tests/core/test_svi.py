@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from oipd.core.svi import (
+    SVICalibrationOptions,
     SVIParameters,
     _build_bounds,
     _bid_ask_penalty,
@@ -29,6 +30,15 @@ from oipd.core.svi import (
 def make_sample_params() -> SVIParameters:
     # Representative arbitrage-free parameters
     return SVIParameters(a=0.04, b=0.2, rho=-0.4, m=-0.1, sigma=0.3)
+
+
+def test_merge_svi_options_returns_dataclass():
+    options = merge_svi_options({"max_iter": 123})
+    assert isinstance(options, SVICalibrationOptions)
+    assert options.max_iter == 123
+
+    with pytest.raises(TypeError):
+        merge_svi_options({"invalid_option": 1})
 
 
 def test_log_moneyness_basic():

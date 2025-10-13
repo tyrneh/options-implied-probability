@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 from scipy import interpolate
@@ -18,6 +18,7 @@ from oipd.core.svi import (
     svi_total_variance,
     to_total_variance,
 )
+from oipd.core.svi_types import SVICalibrationOptions
 
 VolCurve = Callable[[Iterable[float] | np.ndarray], np.ndarray]
 
@@ -47,7 +48,7 @@ def fit_surface(
     iv: np.ndarray,
     forward: float | None = None,
     maturity_years: float | None = None,
-    options: Mapping[str, Any] | None = None,
+    options: SVICalibrationOptions | Mapping[str, Any] | None = None,
     **overrides: Any,
 ) -> VolCurve:
     """Fit an implied-volatility smile using the requested method.
@@ -58,7 +59,7 @@ def fit_surface(
         iv: Implied volatilities corresponding to ``strikes``.
         forward: Forward price for the underlying asset when SVI is requested.
         maturity_years: Time to expiry in years for SVI calibration.
-        options: Optional configuration object for the chosen method.
+        options: Optional SVI calibration configuration when ``method`` is ``"svi"``.
         **overrides: Keyword-only overrides applied on top of ``options``.
 
     Returns:
@@ -82,19 +83,27 @@ def fit_surface(
     if strikes_arr.shape != iv_arr.shape:
         raise ValueError("Strike and IV arrays must have identical shapes")
 
-    method_options: dict[str, Any] = {}
-    if options:
-        method_options.update(dict(options))
-    if overrides:
-        method_options.update(overrides)
+    if options is not None and not isinstance(options, (SVICalibrationOptions, Mapping)):
+        raise TypeError(
+            "options must be a mapping of SVI overrides or an SVICalibrationOptions instance"
+        )
+    method_overrides = dict(overrides) if overrides else {}
 
     if method_name == "svi":
+        bid_iv = method_overrides.pop("bid_iv", None)
+        ask_iv = method_overrides.pop("ask_iv", None)
+        volumes = method_overrides.pop("volumes", None)
+
         return _fit_svi(
             strikes_arr,
             iv_arr,
             forward=forward,
             maturity_years=maturity_years,
-            **method_options,
+            config=options,
+            bid_iv=bid_iv,
+            ask_iv=ask_iv,
+            volumes=volumes,
+            **method_overrides,
         )
 
     if forward is not None or maturity_years is not None:
@@ -102,22 +111,7 @@ def fit_surface(
             "forward and maturity_years are only valid for the 'svi' method"
         )
 
-    return _fit_bspline(strikes_arr, iv_arr, **method_options)
-
-
-def _build_svi_options(overrides: Mapping[str, Any] | None) -> Dict[str, Any]:
-    """Construct the configuration dictionary for SVI calibration.
-
-    Args:
-        overrides: Mapping of user-supplied configuration overrides.
-
-    Returns:
-        A mutable copy of the default SVI options with ``overrides`` applied.
-    """
-
-    if overrides is None:
-        return dict(DEFAULT_SVI_OPTIONS)
-    return merge_svi_options(overrides)
+    return _fit_bspline(strikes_arr, iv_arr, **method_overrides)
 
 
 def _fit_svi(
@@ -126,6 +120,10 @@ def _fit_svi(
     *,
     forward: float | None,
     maturity_years: float | None,
+    config: SVICalibrationOptions | None = None,
+    bid_iv: np.ndarray | None = None,
+    ask_iv: np.ndarray | None = None,
+    volumes: np.ndarray | None = None,
     **config_overrides: Any,
 ) -> VolCurve:
     """Calibrate an SVI smile and return an evaluator over strike space.
@@ -135,7 +133,12 @@ def _fit_svi(
         iv: Implied volatilities aligned with ``strikes``.
         forward: Forward price corresponding to the maturity.
         maturity_years: Time to expiry in years used for calibration.
-        **config_overrides: Keyword overrides for SVI calibration settings.
+        config: Optional base calibration options.
+        bid_iv: Optional bid implied volatility quotes aligning with ``strikes``.
+        ask_iv: Optional ask implied volatility quotes aligning with ``strikes``.
+        volumes: Optional trade volumes aligning with ``strikes``.
+        **config_overrides: Additional SVI option overrides applied on top of
+            ``config``.
 
     Returns:
         A callable that evaluates the calibrated SVI smile at arbitrary
@@ -151,12 +154,17 @@ def _fit_svi(
     if maturity_years is None or maturity_years <= 0:
         raise ValueError("maturity_years must be positive for SVI fitting")
 
-    overrides_dict = dict(config_overrides)
-    bid_iv = overrides_dict.pop("bid_iv", None)
-    ask_iv = overrides_dict.pop("ask_iv", None)
-    volumes = overrides_dict.pop("volumes", None)
+    base_config = merge_svi_options(config)
 
-    config = _build_svi_options(overrides_dict or None)
+    if config_overrides:
+        unknown = set(config_overrides) - SVICalibrationOptions.field_names()
+        if unknown:
+            raise TypeError(f"Unknown SVI option(s): {sorted(unknown)}")
+        merged = base_config.to_mapping()
+        merged.update(config_overrides)
+        config = merge_svi_options(merged)
+    else:
+        config = base_config
 
     k = log_moneyness(strikes, forward)
     total_variance = to_total_variance(iv, maturity_years)
@@ -204,9 +212,6 @@ def _fit_svi(
     vol_curve.params_jw = raw_to_jw(params)  # type: ignore[attr-defined]
     vol_curve.diagnostics = diagnostics  # type: ignore[attr-defined]
     return vol_curve
-
-
-# TODO: WHY IS VOL CURVE RETURNED AS A FUNCTION?
 
 
 def _fit_bspline(
