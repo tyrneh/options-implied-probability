@@ -49,7 +49,8 @@ est.prob_at_or_above(120)               # P(price >= $120)
 est.prob_below(100)                     # P(price < $100)
 est.plot()                              # plot probability and cumulative distribution functions 
 smile = est.iv_smile()                  # DataFrame with fitted, bid, and ask IVs by strike
-est.plot(kind="iv_smile")               # visualize fitted IV smile
+est.plot_iv()                           # visualize fitted IV smile (default: log moneyness axis)
+est.plot_iv(x_axis="strike")            # strike-based axis if preferred
 curve = est.meta["vol_curve"]                # access fitted smile for diagnostics and JW params
 curve.diagnostics.rmse_unweighted             # structured stats (JW params, penalties, optimiser lineage)
 

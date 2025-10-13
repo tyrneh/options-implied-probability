@@ -92,13 +92,75 @@ def test_plot_iv_smile_includes_line_and_observed_points():
         chain, market, model=ModelParams(price_method="last", pricing_engine="bs")
     )
 
-    fig = result.plot(kind="iv_smile")
+    fig = result.plot_iv()
     ax = fig.axes[0]
 
     line_labels = [line.get_label() for line in ax.lines]
     assert "Fitted IV" in line_labels
     labels = [coll.get_label() for coll in ax.collections]
     assert any(label == "Bid/Ask IV range" for label in labels)
+
+    plt.close(fig)
+
+
+def test_plot_iv_smile_marker_style_shows_bid_ask_markers():
+    """Marker style should render call/put bid/ask markers with distinct labels."""
+    strikes = np.array([80.0, 90.0, 100.0, 110.0, 120.0])
+    rows = []
+    for strike in strikes:
+        intrinsic = max(0.0, strike - 100.0)
+        call_price = max(1.5, 20.0 - 0.1 * (strike - 80.0))
+        put_price = max(1.0, 0.1 * (strike - 80.0) + 2.0)
+        rows.append(
+            {
+                "strike": strike,
+                "last_price": call_price,
+                "bid": call_price * 0.96,
+                "ask": call_price * 1.04,
+                "option_type": "C",
+            }
+        )
+        rows.append(
+            {
+                "strike": strike,
+                "last_price": put_price,
+                "bid": put_price * 0.96,
+                "ask": put_price * 1.04,
+                "option_type": "P",
+            }
+        )
+    chain = pd.DataFrame(rows)
+    market = _build_market_inputs()
+
+    result = RND.from_dataframe(
+        chain, market, model=ModelParams(price_method="last", pricing_engine="bs")
+    )
+
+    bid_points = pd.DataFrame(
+        {
+            "strike": np.repeat(strikes, 2),
+            "iv": np.linspace(0.25, 0.45, strikes.size * 2),
+            "option_type": ["C", "P"] * strikes.size,
+        }
+    )
+    ask_points = pd.DataFrame(
+        {
+            "strike": np.repeat(strikes, 2),
+            "iv": np.linspace(0.26, 0.46, strikes.size * 2),
+            "option_type": ["C", "P"] * strikes.size,
+        }
+    )
+    result.meta["observed_iv_bid"] = bid_points
+    result.meta["observed_iv_ask"] = ask_points
+
+    fig = result.plot_iv(observed_style="markers")
+    ax = fig.axes[0]
+
+    labels = {coll.get_label() for coll in ax.collections if coll.get_label()}
+    assert "Call bids" in labels
+    assert "Call asks" in labels
+    assert "Put bids" in labels
+    assert "Put asks" in labels
 
     plt.close(fig)
 
@@ -112,7 +174,7 @@ def test_plot_iv_smile_can_hide_observed_points():
         chain, market, model=ModelParams(price_method="last", pricing_engine="bs")
     )
 
-    fig = result.plot(kind="iv_smile", include_observed=False)
+    fig = result.plot_iv(include_observed=False)
     ax = fig.axes[0]
 
     line_labels = [line.get_label() for line in ax.lines]
@@ -131,7 +193,7 @@ def test_plot_iv_smile_with_last_price_only():
         chain, market, model=ModelParams(price_method="last", pricing_engine="bs")
     )
 
-    fig = result.plot(kind="iv_smile")
+    fig = result.plot_iv()
     ax = fig.axes[0]
 
     labels = [coll.get_label() for coll in ax.collections]

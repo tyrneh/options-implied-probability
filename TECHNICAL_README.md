@@ -93,6 +93,8 @@ Main class that fits risk-neutral density models from options data and provides 
 RND.from_csv(path, market, model, column_mapping={"YourHeader": "oipd_field"})  # Maps CSV headers to OIPD fields
 RND.from_dataframe(df, market, model, column_mapping={"YourHeader": "oipd_field"})  # Maps DataFrame columns to OIPD fields
 RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # (auto-fetches from vendors, only YFinance currently integrated)
+result.plot_iv(x_axis="log_moneyness")  # Inspect the fitted SVI smile
+result.plot(kind="pdf")                 # Inspect the risk-neutral density
 ```
 
 #### Expected Data Format

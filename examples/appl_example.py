@@ -52,10 +52,7 @@ plt.show()
 
 
 # fetch fitted IV smile from results object
-est_appl.plot(
-    "iv_smile",
-    title="AAPL IV Smile using SVI, expiry 2026-01-16, data from Yahoo Finance",
-)
+est_appl.plot_iv(observed_style="range", x_axis="log_moneyness")
 plt.show()
 
 # get the fitted IV smile as a dataframe
