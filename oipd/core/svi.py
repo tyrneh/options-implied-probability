@@ -11,8 +11,7 @@ from typing import Any, Iterable, Mapping, Sequence, Tuple
 import warnings
 
 import numpy as np
-from scipy import optimize
-from scipy.stats import norm
+from scipy import optimize, special
 
 from oipd.core.errors import CalculationError
 from oipd.logging import get_logger
@@ -508,24 +507,17 @@ def _butterfly_penalty(
 
 def _call_spread_penalty(
     params: SVIParameters,
-    k_grid: np.ndarray,
-    maturity_years: float,
-    step: float,
+    context: _CallSpreadContext | None,
     weight: float,
     *,
     return_grad: bool = False,
 ) -> float | tuple[float, np.ndarray]:
     """Return call-spread penalty and optionally its gradient."""
 
-    if weight <= 0.0 or step <= 0.0:
+    if weight <= 0.0 or context is None:
         if return_grad:
             return 0.0, np.zeros(5, dtype=float)
         return 0.0
-
-    size = k_grid.shape[0]
-    k_minus = k_grid - step
-    k_plus = k_grid + step
-    combined_k = np.concatenate((k_minus, k_grid, k_plus))
 
     (
         _,
@@ -535,7 +527,7 @@ def _call_spread_penalty(
         _,
         _,
         _,
-    ) = _svi_total_variance_with_derivatives(combined_k, params)
+    ) = _svi_total_variance_with_derivatives(context.combined_k, params)
 
     if np.any(~np.isfinite(w_combined)):
         penalty = weight * 1e6
@@ -543,31 +535,32 @@ def _call_spread_penalty(
             return penalty, np.zeros(5, dtype=float)
         return penalty
 
-    variance = w_combined / max(maturity_years, 1e-12)
+    variance = w_combined / context.maturity
     variance = np.maximum(variance, 0.0)
     sigma = np.sqrt(np.maximum(variance, 1e-12))
 
-    strikes = np.exp(combined_k)
-    prices = black76_call_price(1.0, strikes, sigma, maturity_years, 0.0)
-
-    sqrt_t = np.sqrt(max(maturity_years, 1e-12))
-    log_fk = -np.log(strikes)
-    denom = sigma * sqrt_t
+    denom = sigma * context.sqrt_t
     denom = np.where(np.abs(denom) < 1e-12, 1e-12, denom)
-    d1 = (log_fk + 0.5 * sigma**2 * maturity_years) / denom
-    vega = norm.pdf(d1) * sqrt_t
+    d1 = (context.log_fk + 0.5 * sigma**2 * context.maturity) / denom
+    d2 = d1 - sigma * context.sqrt_t
+    cdf_d1 = special.ndtr(d1)
+    cdf_d2 = special.ndtr(d2)
+    prices = cdf_d1 - context.strikes * cdf_d2
+
+    pdf_d1 = np.exp(-0.5 * d1**2) / np.sqrt(2.0 * np.pi)
+    vega = context.sqrt_t * pdf_d1
 
     dc_dw = np.zeros_like(sigma)
     valid_sigma = sigma > 1e-12
     dc_dw[valid_sigma] = (
         vega[valid_sigma]
-        / (2.0 * sigma[valid_sigma] * max(maturity_years, 1e-12))
+        / (2.0 * sigma[valid_sigma] * context.maturity)
     )
     price_grads = dc_dw[:, None] * dw_combined
 
-    prices_left = prices[0:size]
-    prices_central = prices[size : 2 * size]
-    prices_right = prices[2 * size : 3 * size]
+    prices_left = prices[context.left_slice]
+    prices_central = prices[context.centre_slice]
+    prices_right = prices[context.right_slice]
 
     left_spread = prices_left - prices_central
     right_spread = prices_central - prices_right
@@ -581,8 +574,8 @@ def _call_spread_penalty(
         penalty += float(diff_val)
         scaled = 2.0 * weight * left_spread[left_mask][:, None]
         left_grad = (
-            price_grads[0:size][left_mask]
-            - price_grads[size : 2 * size][left_mask]
+            price_grads[context.left_slice][left_mask]
+            - price_grads[context.centre_slice][left_mask]
         )
         grad += np.sum(scaled * left_grad, axis=0)
 
@@ -592,8 +585,8 @@ def _call_spread_penalty(
         penalty += float(diff_val)
         scaled = 2.0 * weight * right_spread[right_mask][:, None]
         right_grad = (
-            price_grads[size : 2 * size][right_mask]
-            - price_grads[2 * size : 3 * size][right_mask]
+            price_grads[context.centre_slice][right_mask]
+            - price_grads[context.right_slice][right_mask]
         )
         grad += np.sum(scaled * right_grad, axis=0)
 
@@ -1172,6 +1165,9 @@ def calibrate_svi_parameters(
     diagnostic_grid = np.linspace(
         k_min - diagnostic_pad, k_max + diagnostic_pad, diagnostic_points
     )
+    callspread_context = _CallSpreadContext.build(
+        diagnostic_grid, callspread_step, maturity_years
+    )
 
     cache_vec: np.ndarray | None = None
     cache_value: float | None = None
@@ -1231,9 +1227,7 @@ def calibrate_svi_parameters(
 
         callspread_val, callspread_grad = _call_spread_penalty(
             params,
-            diagnostic_grid,
-            maturity_years,
-            callspread_step,
+            callspread_context,
             callspread_weight,
             return_grad=True,
         )
@@ -1587,3 +1581,42 @@ __all__ = [
     "SVICalibrationDiagnostics",
     "SVITrialRecord",
 ]
+@dataclass(frozen=True)
+class _CallSpreadContext:
+    """Pre-computed constants used by the call-spread penalty."""
+
+    combined_k: np.ndarray
+    left_slice: slice
+    centre_slice: slice
+    right_slice: slice
+    strikes: np.ndarray
+    log_fk: np.ndarray
+    sqrt_t: float
+    maturity: float
+
+    @classmethod
+    def build(
+        cls, k_grid: np.ndarray, step: float, maturity_years: float
+    ) -> _CallSpreadContext | None:
+        if step <= 0.0 or maturity_years <= 0.0:
+            return None
+
+        size = k_grid.shape[0]
+        k_minus = k_grid - step
+        k_plus = k_grid + step
+        combined_k = np.concatenate((k_minus, k_grid, k_plus))
+
+        strikes = np.exp(combined_k)
+        log_fk = -combined_k
+        sqrt_t = np.sqrt(max(maturity_years, 1e-12))
+
+        return cls(
+            combined_k=combined_k,
+            left_slice=slice(0, size),
+            centre_slice=slice(size, 2 * size),
+            right_slice=slice(2 * size, 3 * size),
+            strikes=strikes,
+            log_fk=log_fk,
+            sqrt_t=sqrt_t,
+            maturity=max(maturity_years, 1e-12),
+        )

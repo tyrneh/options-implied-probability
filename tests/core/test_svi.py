@@ -6,6 +6,7 @@ import pytest
 from oipd.core.svi import (
     SVICalibrationOptions,
     SVIParameters,
+    _CallSpreadContext,
     _adaptive_call_spread_step,
     _build_bounds,
     _bid_ask_penalty,
@@ -239,6 +240,7 @@ def test_objective_gradient_matches_numeric():
         k.max() + options.diagnostic_grid_pad,
         options.diagnostic_grid_points,
     )
+    context = _CallSpreadContext.build(diagnostic_grid, callspread_step, maturity)
 
     def objective_with_grad(vec: np.ndarray) -> tuple[float, np.ndarray]:
         try:
@@ -270,9 +272,7 @@ def test_objective_gradient_matches_numeric():
         )
         call_val, call_grad = _call_spread_penalty(
             trial,
-            diagnostic_grid,
-            maturity,
-            callspread_step,
+            context,
             options.callspread_weight,
             return_grad=True,
         )
