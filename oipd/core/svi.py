@@ -14,6 +14,7 @@ import numpy as np
 from scipy import optimize
 
 from oipd.core.errors import CalculationError
+from oipd.logging import get_logger
 from oipd.pricing.black76 import black76_call_price
 
 from oipd.core.svi_types import (
@@ -36,6 +37,7 @@ JW_SEED_DIRECTIONS: Tuple[Tuple[float, float, float, float, float], ...] = (
 )
 
 _SVI_OPTION_KEYS = SVICalibrationOptions.field_names()
+logger = get_logger("oipd.svi")
 
 
 @dataclass(frozen=True)
@@ -999,6 +1001,15 @@ def calibrate_svi_parameters(
         weights_volume_used=bool(volume_used),
         qe_seed_count=len(qe_seeds),
     )
+    diagnostics.random_seed = random_seed if random_seed is not None else None
+
+    logger.info(
+        "Starting SVI calibration: n_strikes=%d, maturity_years=%.6f, weighting=%s, seed=%s",
+        k.size,
+        maturity_years,
+        weighting_mode,
+        str(random_seed),
+    )
 
     rng = np.random.default_rng(random_seed)
 
@@ -1021,10 +1032,16 @@ def calibrate_svi_parameters(
             )
         except Exception as exc:  # pragma: no cover - SciPy backend failures
             diagnostics.global_status = f"failure: {exc}"
+            logger.warning("Global solver failed: %s", exc)
         else:
             diagnostics.global_status = "success"
             diagnostics.global_objective = float(global_result.fun)
             diagnostics.global_iterations = int(getattr(global_result, "nit", 0))
+            logger.info(
+                "Global solver success: objective=%.3e iterations=%d",
+                float(global_result.fun),
+                int(getattr(global_result, "nit", 0)),
+            )
             start_candidates.insert(
                 0, (np.asarray(global_result.x, dtype=float), "global")
             )
@@ -1134,6 +1151,13 @@ def calibrate_svi_parameters(
             params=tuple(float(x) for x in result.x) if result.success else None,
         )
         diagnostics.add_trial_record(record)
+        logger.debug(
+            "Local optimiser start %d (%s): success=%s objective=%.3e",
+            start_index,
+            origin,
+            result.success,
+            float(result.fun),
+        )
         if result.success and result.fun < best_fun:
             best_fun = float(result.fun)
             best_result = result
@@ -1142,6 +1166,7 @@ def calibrate_svi_parameters(
 
     if best_result is None:
         messages = [str(res.message) for res in local_results]
+        logger.error("All local optimiser starts failed: %s", "; ".join(messages))
         raise CalculationError(
             "SVI calibration failed: no successful local optimisation (messages="
             + "; ".join(messages)
@@ -1167,6 +1192,7 @@ def calibrate_svi_parameters(
     if min_g < -1e-6:
         diagnostics.status = "warning"
         diagnostics.butterfly_warning = float(min_g)
+        logger.warning("SVI calibration butterfly violation: min_g=%.3e", min_g)
         warnings.warn(
             f"SVI calibration violates butterfly condition: min_g={min_g:.3e}",
             UserWarning,
@@ -1205,6 +1231,13 @@ def calibrate_svi_parameters(
 
     if diagnostics.status != "warning":
         diagnostics.status = "success"
+    logger.info(
+        "SVI calibration complete: status=%s, objective=%.3e, min_g=%.3e, seed=%s",
+        diagnostics.status,
+        diagnostics.objective,
+        diagnostics.min_g if diagnostics.min_g is not None else float("nan"),
+        str(diagnostics.random_seed),
+    )
     return params, diagnostics
 
 

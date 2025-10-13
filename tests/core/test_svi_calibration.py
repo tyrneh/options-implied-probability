@@ -51,6 +51,7 @@ def test_svi_calibration_recovers_parameters():
     assert isinstance(diagnostics, SVICalibrationDiagnostics)
     assert diagnostics.rmse_unweighted < 0.03
     assert diagnostics.min_g > -1e-6
+    assert diagnostics.random_seed == 123
 
 
 def test_svi_calibration_with_noise():
@@ -75,6 +76,7 @@ def test_svi_calibration_with_noise():
 
     diagnostics = vol_curve.diagnostics
     assert diagnostics.rmse_unweighted < 0.05
+    assert diagnostics.random_seed == 123
 
 
 def test_svi_requires_forward_and_maturity():
@@ -151,6 +153,7 @@ def test_calibration_global_solver_runs():
     assert diagnostics.global_solver == "de"
     assert diagnostics.global_status == "success"
     assert (diagnostics.global_iterations or 0) >= 0
+    assert diagnostics.random_seed == 123
 
 
 def test_calibration_reports_weighting_stats():
@@ -174,6 +177,7 @@ def test_calibration_reports_weighting_stats():
     assert diagnostics.callspread_step > 0
     assert diagnostics.rmse_unweighted >= 0
     assert diagnostics.rmse_weighted >= 0
+    assert diagnostics.random_seed == 1
 
 
 def test_calibration_huber_option_recorded():
@@ -191,6 +195,7 @@ def test_calibration_huber_option_recorded():
 
     assert isinstance(params, SVIParameters)
     assert diagnostics.huber_delta == pytest.approx(5e-4)
+    assert diagnostics.random_seed == 1
 
 
 def test_envelope_penalty_within_spread():
@@ -214,6 +219,7 @@ def test_envelope_penalty_within_spread():
     assert isinstance(params, SVIParameters)
     assert diagnostics.envelope_weight == pytest.approx(1e3)
     assert diagnostics.envelope_violations_pct == pytest.approx(0.0)
+    assert diagnostics.random_seed == 1
 
 
 def test_envelope_penalty_shape_mismatch_raises():
@@ -255,6 +261,7 @@ def test_volume_weighting_flagged():
         diagnostics.rmse_weighted >= diagnostics.rmse_unweighted
         or diagnostics.rmse_weighted >= 0
     )
+    assert diagnostics.random_seed == 1
 
 
 def test_volume_weighting_shape_mismatch():
@@ -288,6 +295,7 @@ def test_huber_delta_scales_with_slice():
     expected_scale = np.median(total_var)
     expected_delta = max(1e-4, 0.01 * expected_scale)
     assert diagnostics.huber_delta == pytest.approx(expected_delta, rel=1e-6)
+    assert diagnostics.random_seed == 1
 
 
 def test_callspread_step_adapts_to_spacing():
@@ -305,6 +313,7 @@ def test_callspread_step_adapts_to_spacing():
 
     # baseline spacing = 0.2 -> 0.5 * spacing * scale(=2) = 0.2
     assert diagnostics.callspread_step == pytest.approx(0.2, rel=1e-6)
+    assert diagnostics.random_seed == 1
 
 
 def test_qe_seed_origin_recorded():
@@ -325,3 +334,24 @@ def test_qe_seed_origin_recorded():
 
     assert diagnostics.qe_seed_count >= 1
     assert any(record.start_origin == "qe" for record in diagnostics.trial_records)
+    assert diagnostics.random_seed == 42
+
+
+def test_calibration_emits_logging(caplog):
+    params_true = SVIParameters(a=0.035, b=0.18, rho=-0.2, m=0.02, sigma=0.3)
+    maturity = 0.6
+    k = np.linspace(-0.4, 0.4, 9)
+    total_var = svi_total_variance(k, params_true)
+
+    caplog.set_level("INFO", logger="oipd.svi")
+
+    calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        {"random_seed": 314},
+    )
+
+    messages = [record.message for record in caplog.records if record.name == "oipd.svi"]
+    assert any("Starting SVI calibration" in message for message in messages)
+    assert any("SVI calibration complete" in message for message in messages)

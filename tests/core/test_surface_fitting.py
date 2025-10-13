@@ -8,6 +8,7 @@ from oipd.core.svi import (
     SVIParameters,
     from_total_variance,
     raw_to_jw,
+    svi_options,
     svi_total_variance,
 )
 from oipd.core.surface_fitting import (
@@ -54,6 +55,32 @@ def test_fit_surface_svi_unknown_option_rejected():
             maturity_years=0.5,
             unknown_option=123,
         )
+
+
+def test_fit_surface_svi_requires_typed_options():
+    strikes = np.linspace(90.0, 110.0, 6)
+    iv = np.linspace(0.2, 0.25, 6)
+
+    with pytest.raises(TypeError):
+        fit_surface(
+            "svi",
+            strikes=strikes,
+            iv=iv,
+            forward=100.0,
+            maturity_years=0.5,
+            options=object(),
+        )
+
+    options = svi_options(max_iter=150)
+    vol_curve = fit_surface(
+        "svi",
+        strikes=strikes,
+        iv=iv,
+        forward=100.0,
+        maturity_years=0.5,
+        options=options,
+    )
+    assert isinstance(vol_curve.diagnostics, SVICalibrationDiagnostics)
 
 
 def test_fit_surface_unknown_method():

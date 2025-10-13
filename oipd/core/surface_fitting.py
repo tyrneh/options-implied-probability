@@ -83,13 +83,20 @@ def fit_surface(
     if strikes_arr.shape != iv_arr.shape:
         raise ValueError("Strike and IV arrays must have identical shapes")
 
-    if options is not None and not isinstance(options, (SVICalibrationOptions, Mapping)):
-        raise TypeError(
-            "options must be a mapping of SVI overrides or an SVICalibrationOptions instance"
-        )
     method_overrides = dict(overrides) if overrides else {}
 
     if method_name == "svi":
+        if options is None:
+            config_options: SVICalibrationOptions | None = None
+        elif isinstance(options, SVICalibrationOptions):
+            config_options = options
+        elif isinstance(options, Mapping):
+            config_options = merge_svi_options(dict(options))
+        else:
+            raise TypeError(
+                "options must be an SVICalibrationOptions instance or mapping for SVI"
+            )
+
         bid_iv = method_overrides.pop("bid_iv", None)
         ask_iv = method_overrides.pop("ask_iv", None)
         volumes = method_overrides.pop("volumes", None)
@@ -99,12 +106,18 @@ def fit_surface(
             iv_arr,
             forward=forward,
             maturity_years=maturity_years,
-            config=options,
+            config=config_options,
             bid_iv=bid_iv,
             ask_iv=ask_iv,
             volumes=volumes,
             **method_overrides,
         )
+
+    if options is not None:
+        if isinstance(options, Mapping):
+            method_overrides.update(dict(options))
+        else:
+            raise TypeError("options must be a mapping for non-SVI surface fits")
 
     if forward is not None or maturity_years is not None:
         raise ValueError(

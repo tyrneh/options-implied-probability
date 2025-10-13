@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol, Optional, Dict, Literal, Any, Mapping, Sequence, Callable
 from datetime import datetime
 from contextlib import contextmanager
@@ -17,6 +17,7 @@ from oipd.core.prep import (
     compute_iv,
 )
 from oipd.core.surface_fitting import AVAILABLE_SURFACE_FITS, fit_surface
+from oipd.core.svi import SVICalibrationOptions, svi_options
 from oipd.core.density import (
     price_curve_from_iv,
     pdf_from_price_curve,
@@ -57,7 +58,8 @@ class ModelParams:
         3  # in calendar days; set to 3 by default to accomodate weekends
     )
     surface_method: Literal["svi", "bspline"] = "svi"
-    surface_options: Mapping[str, Any] | None = None
+    surface_options: Mapping[str, Any] | SVICalibrationOptions | None = None
+    surface_random_seed: int | None = None
     price_method_explicit: bool = field(init=False, default=False)
 
     def __post_init__(self):
@@ -72,12 +74,35 @@ class ModelParams:
                 f"surface_method must be one of {AVAILABLE_SURFACE_FITS}, got {self.surface_method}"
             )
 
-        if self.surface_options is None:
-            self.surface_options = {}
-        elif isinstance(self.surface_options, Mapping):
-            self.surface_options = dict(self.surface_options)
+        if self.surface_method == "svi":
+            if self.surface_options is None:
+                self.surface_options = svi_options()
+            elif isinstance(self.surface_options, SVICalibrationOptions):
+                pass
+            elif isinstance(self.surface_options, Mapping):
+                self.surface_options = svi_options(**dict(self.surface_options))
+            else:
+                raise TypeError(
+                    "surface_options must be an SVICalibrationOptions instance or mapping for SVI"
+                )
+
+            if self.surface_random_seed is not None:
+                self.surface_options = replace(
+                    self.surface_options, random_seed=self.surface_random_seed
+                )
         else:
-            raise TypeError("surface_options must be a mapping or None")
+            if self.surface_options is None:
+                self.surface_options = {}
+            elif isinstance(self.surface_options, Mapping):
+                self.surface_options = dict(self.surface_options)
+            else:
+                raise TypeError("surface_options must be a mapping or None")
+
+            if self.surface_random_seed is not None:
+                warnings.warn(
+                    "surface_random_seed is only used for SVI calibration and will be ignored.",
+                    UserWarning,
+                )
 
 
 

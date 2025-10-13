@@ -74,13 +74,16 @@ ModelParams(
     price_method       = "last" | "mid",       # defaults to 'mid'; mid-price calculated as `(bid + ask) / 2`
     max_staleness_days = 3,                   # filter options older than N calendar days from valuation_date. Defaults to 3 to accomodate weekends. Set to None to disable filtering
     surface_method     = "svi",                # "svi" (default) or "bspline"
-    surface_options    = {"max_iter": 400},    # optional dict of method-specific kwargs
+    surface_options    = svi_options(max_iter=400),  # SVICalibrationOptions when using SVI; dict for bspline
+    surface_random_seed = 7,                   # optional seed forwarded to the SVI optimiser
 )
 ```
 
 Note that mid prices are preferred over last, due to lower noise from stale quotes. However, Yahoo Finance often doesn't have bid/ask data, so the from_ticker() method for yfinance uses last prices by default. 
 
-`surface_method` selects between the arbitrage-aware SVI fitter and the legacy cubic B-spline smoother. Supply `surface_options` as a plain dictionary (for example via `oipd.core.svi.svi_options(max_iter=800, tol=1e-9)`) to override calibration defaults. If calibration fails (e.g., too few strikes or a hard butterfly violation) the code raises `CalculationError("Failed to smooth implied volatility data: ...")`. In those cases either clean the input quotes or retry with the legacy cubic spline via `ModelParams(surface_method="bspline")`.
+`surface_method` selects between the arbitrage-aware SVI fitter and the legacy cubic B-spline smoother. When `surface_method="svi"`, pass either an `SVICalibrationOptions` instance (typically via the convenience helper `svi_options(...)`) and, if desired, a `surface_random_seed` for reproducible optimiser starts. For the B-spline smoother keep using a plain dictionary. If calibration fails (e.g., too few strikes or a hard butterfly violation) the code raises `CalculationError("Failed to smooth implied volatility data: ...")`. In those cases either clean the input quotes or retry with the legacy cubic spline via `ModelParams(surface_method="bspline")`.
+
+Diagnostics from SVI calibration, including the selected JW parameters, weights, and optimiser lineage, are attached to the fitted smile via `vol_curve.diagnostics`. You can log progress by installing handlers on the package logger exposed through `oipd.logging.configure_logging()`.
 
 ### 2.4 RND estimator
 

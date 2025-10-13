@@ -142,6 +142,7 @@ class SVICalibrationDiagnostics:
     envelope_weight: float = 0.0
     weights_volume_used: bool = False
     qe_seed_count: int = 0
+    random_seed: int | None = None
     global_status: str | None = None
     global_objective: float | None = None
     global_iterations: int | None = None
