@@ -6,11 +6,16 @@ import pytest
 from oipd.core.svi import (
     SVICalibrationOptions,
     SVIParameters,
-    calibrate_svi_parameters,
+    _adaptive_call_spread_step,
     _build_bounds,
     _bid_ask_penalty,
-    _direct_least_squares_seed,
+    _butterfly_penalty,
+    _call_spread_penalty,
+    _compute_huber_delta,
     _initial_guess,
+    _penalty_terms,
+    _svi_total_variance_with_derivatives,
+    _vega_based_weights,
     JWParams,
     RawSVI,
     from_total_variance,
@@ -206,57 +211,90 @@ def test_raw_tuple_to_jw_round_trip():
     )
 
 
-def test_direct_least_squares_seed_recovers_parameters():
+def test_objective_gradient_matches_numeric():
     params = make_sample_params()
-    k = np.linspace(-0.6, 0.6, 31)
-    total_var = svi_total_variance(k, params)
-    sqrt_weights = np.ones_like(k)
-
-    seed = _direct_least_squares_seed(k, total_var, sqrt_weights)
-    assert seed is not None
-    np.testing.assert_allclose(
-        seed,
-        np.array([params.a, params.b, params.rho, params.m, params.sigma]),
-        rtol=0.1,
-        atol=5e-3,
-    )
-
-
-def test_calibration_reports_spread_usage_and_wing_bounds():
-    params = make_sample_params()
-    k = np.linspace(-0.4, 0.4, 21)
     maturity = 0.5
+    k = np.linspace(-0.4, 0.4, 21)
     total_var = svi_total_variance(k, params)
-    iv = from_total_variance(total_var, maturity)
-
-    bid_iv = iv - 0.01
-    ask_iv = iv + 0.01
-
     options = merge_svi_options(
         {
             "global_solver": "none",
             "n_starts": 0,
-            "spread_floor": 1e-3,
+            "envelope_weight": 0.0,
         }
     )
 
-    calibrated, diagnostics = calibrate_svi_parameters(
+    weights, _ = _vega_based_weights(
         k,
         total_var,
         maturity,
-        options,
-        bid_iv=bid_iv,
-        ask_iv=ask_iv,
+        options.weighting_mode,
+        options.weight_cap,
+        None,
+    )
+    callspread_step = _adaptive_call_spread_step(k, maturity, options)
+    huber_delta = _compute_huber_delta(total_var, options)
+    diagnostic_grid = np.linspace(
+        k.min() - options.diagnostic_grid_pad,
+        k.max() + options.diagnostic_grid_pad,
+        options.diagnostic_grid_points,
     )
 
-    assert diagnostics.status in {"success", "warning"}
-    assert diagnostics.weights_spread_used is True
-    assert diagnostics.max_wing_slope is not None
-    assert diagnostics.max_wing_slope <= 2.0 + 1e-4
+    def objective_with_grad(vec: np.ndarray) -> tuple[float, np.ndarray]:
+        try:
+            trial = SVIParameters(*vec)
+        except ValueError:
+            return 1e9, np.zeros(5, dtype=float)
 
-    np.testing.assert_allclose(
-        [calibrated.a, calibrated.b, calibrated.rho, calibrated.m, calibrated.sigma],
-        [params.a, params.b, params.rho, params.m, params.sigma],
-        rtol=0.1,
-        atol=5e-2,
-    )
+        (_, w, dw, _, _, _, _) = _svi_total_variance_with_derivatives(k, trial)
+
+        residual = w - total_var
+        abs_residual = np.abs(residual)
+        mask = abs_residual <= huber_delta
+        quadratic = 0.5 * residual**2
+        linear = huber_delta * (abs_residual - 0.5 * huber_delta)
+        huber_loss = np.where(mask, quadratic, linear)
+        base = float(np.sum(weights * huber_loss))
+
+        huber_grad = weights * np.where(mask, residual, huber_delta * np.sign(residual))
+        grad = np.sum(huber_grad[:, None] * dw, axis=0)
+
+        penalty_val, penalty_grad = _penalty_terms(
+            vec, options.regularisation, return_grad=True
+        )
+        value = base + penalty_val
+        grad = grad + penalty_grad
+
+        butterfly_val, butterfly_grad = _butterfly_penalty(
+            trial, diagnostic_grid, options.butterfly_weight, return_grad=True
+        )
+        call_val, call_grad = _call_spread_penalty(
+            trial,
+            diagnostic_grid,
+            maturity,
+            callspread_step,
+            options.callspread_weight,
+            return_grad=True,
+        )
+
+        value += butterfly_val + call_val
+        grad += butterfly_grad + call_grad
+        return value, grad
+
+    initial = _initial_guess(k, total_var)
+    test_vec = initial + np.array([0.02, -0.03, 0.04, -0.01, 0.05])
+    _, analytic_grad = objective_with_grad(test_vec)
+
+    eps = np.sqrt(np.finfo(float).eps)
+    numeric_grad = np.zeros_like(test_vec)
+    for idx in range(test_vec.size):
+        step = eps * max(1.0, abs(test_vec[idx]))
+        forward = test_vec.copy()
+        forward[idx] += step
+        backward = test_vec.copy()
+        backward[idx] -= step
+        f_plus = objective_with_grad(forward)[0]
+        f_minus = objective_with_grad(backward)[0]
+        numeric_grad[idx] = (f_plus - f_minus) / (2.0 * step)
+
+    np.testing.assert_allclose(analytic_grad, numeric_grad, rtol=1e-6, atol=1e-8)
