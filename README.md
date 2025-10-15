@@ -31,7 +31,7 @@ pip install oipd
 ![OIPDwalkthrough](https://github.com/user-attachments/assets/2da5506d-a720-4f93-820b-23b368d074bb)
 
 ```python
-from oipd import RND, MarketInputs
+from oipd import RND, MarketInputs, VolModel
 from datetime import date
 
 # 1 ─ point to a ticker and provide market info
@@ -42,7 +42,7 @@ market = MarketInputs(
 )
 
 # 2 - run estimator, auto fetching data from Yahoo Finance
-est = RND.from_ticker("AAPL", market)   
+est = RND.from_ticker("AAPL", market)
 
 # 3 ─ access results and plots
 est.prob_at_or_above(120)               # P(price >= $120)
@@ -57,6 +57,34 @@ curve.diagnostics.rmse_unweighted             # structured stats (JW params, pen
 from oipd.logging import configure_logging
 
 configure_logging(format_string="%(levelname)s | %(message)s")  # turn on SVI optimiser logs
+```
+
+`VolModel` is optional; it defaults to the raw SVI smile for a single expiry. Pass `VolModel(method="svi-jw")` to seed calibration from Jump-Wings parameters or `VolModel(method="bspline")` for the legacy smoother.
+
+### Term-structure surfaces
+
+Calibrate an entire maturity surface with the new `RNDSurface` façade. The default configuration fits an arbitrage-free SSVI surface that enforces the Gatheral–Jacquier calendar and butterfly constraints.
+
+```python
+from oipd import RNDSurface
+
+surface = RNDSurface.from_ticker(
+    "AAPL",
+    market,
+    horizon="12M",                  # auto-fetch all listed expiries inside the horizon
+)
+
+surface.iv(K=[350, 400], t=0.5)      # implied vols at the 6M slice
+surface.price(K=[380], t=1.0)        # forward-measure call price via Black-76
+surface.check_no_arbitrage()         # calendar & inequality margins for diagnostics
+surface.plot_iv()                    # overlay log-moneyness smiles across maturities
+
+# Prefer a penalty-stitched raw SVI surface instead of theorem-backed SSVI
+raw_surface = RNDSurface.from_dataframe(
+    custom_df,
+    market,
+    vol=VolModel(method="raw_svi"),
+)
 ```
 
 OIPD also **supports manual CSV or DataFrame uploads**. 
@@ -97,11 +125,10 @@ Convenience features:
 - integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
 
 Algorithmic improvements:
-- implement no-arbitrage checks 
+- implement additional no-arbitrage diagnostics for raw SVI stitching
 - fit IV smile using SABR model
 - infer forward price using a band of near-ATM option-pairs, rather than the one nearest pair
 - American-option de-Americanisation module
-- full term-structure surface (`RNDTermSurface`)
 - Research in conversion from risk-neutral to physical probabilities 
 
 The list describes potential features and research directions; it is neither exhaustive nor a prescribed implementation schedule.

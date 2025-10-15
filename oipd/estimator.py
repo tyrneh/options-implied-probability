@@ -18,6 +18,7 @@ from oipd.core.prep import (
 )
 from oipd.core.surface_fitting import AVAILABLE_SURFACE_FITS, fit_surface
 from oipd.core.svi import SVICalibrationOptions, svi_options
+from oipd.core.vol_model import VolModel, SLICE_METHODS
 from oipd.core.density import (
     price_curve_from_iv,
     pdf_from_price_curve,
@@ -1311,6 +1312,55 @@ def _estimate(
     return pdf_strike_values, pdf_values, cdf_values, result_metadata
 
 
+def _resolve_slice_vol_model(
+    base_model: ModelParams,
+    vol: Optional[VolModel],
+) -> tuple[ModelParams, VolModel, str]:
+    """Resolve the effective slice model given a requested ``VolModel``.
+
+    Args:
+        base_model: Baseline :class:`ModelParams` prior to any overrides.
+        vol: Optional :class:`VolModel` describing user intent.
+
+    Returns:
+        A tuple ``(effective_model, resolved_vol, requested_method)`` where
+        ``effective_model`` is safe to pass downstream, ``resolved_vol`` has a
+        concrete ``method`` value, and ``requested_method`` records the user's
+        canonical intent (e.g. ``"svi-jw"`` vs ``"svi"``).
+
+    Raises:
+        ValueError: If an incompatible ``VolModel.method`` is supplied for a
+        single-expiry smile.
+    """
+
+    resolved_vol = vol or VolModel()
+    requested_method = resolved_vol.method
+
+    if requested_method is None:
+        canonical = base_model.surface_method.lower()
+        if canonical not in SLICE_METHODS:
+            canonical = "svi"
+        return base_model, replace(resolved_vol, method=canonical), canonical
+
+    if requested_method not in SLICE_METHODS:
+        raise ValueError(
+            "VolModel.method must be one of {'svi', 'svi-jw', 'bspline'} for single expiries"
+        )
+
+    effective_surface_method = "svi" if requested_method in {"svi", "svi-jw"} else "bspline"
+
+    if base_model.surface_method != effective_surface_method:
+        # Reset surface_options so ModelParams.__post_init__ rebuilds the correct type.
+        new_options: Any = None if effective_surface_method == "svi" else {}
+        base_model = replace(
+            base_model,
+            surface_method=effective_surface_method,
+            surface_options=new_options,
+        )
+
+    return base_model, replace(resolved_vol, method=requested_method), requested_method
+
+
 # ---------------------------------------------------------------------------
 # Public façade – what casual users will interact with
 # ---------------------------------------------------------------------------
@@ -1319,8 +1369,15 @@ def _estimate(
 class RND:
     """High-level, user-friendly estimator of the option-implied risk-neutral density (RND)."""
 
-    def __init__(self, model: Optional[ModelParams] = None, *, verbose: bool = True):
+    def __init__(
+        self,
+        model: Optional[ModelParams] = None,
+        vol: Optional[VolModel] = None,
+        *,
+        verbose: bool = True,
+    ):
         self.model = model or ModelParams()
+        self.vol = vol or VolModel()
         self._result: Optional[RNDResult] = None
         self._verbose: bool = verbose
 
@@ -1398,9 +1455,16 @@ class RND:
         """Estimate the RND from the given *DataSource* and resolved market parameters."""
         with self._suppress_oipd_warnings(suppress=not self._verbose):
             options_data = source.load()
-            prices, pdf, cdf, meta = _estimate(
-                options_data, resolved_market, self.model
+            effective_model, resolved_vol, requested_method = _resolve_slice_vol_model(
+                self.model, self.vol
             )
+            prices, pdf, cdf, meta = _estimate(
+                options_data, resolved_market, effective_model
+            )
+        meta.setdefault("vol_model", resolved_vol)
+        meta.setdefault("vol_model_method", requested_method)
+        self.model = effective_model
+        self.vol = resolved_vol
         self._result = RNDResult(
             prices=prices, pdf=pdf, cdf=cdf, market=resolved_market, meta=meta
         )
@@ -1415,13 +1479,15 @@ class RND:
         market: MarketInputs,
         *,
         model: Optional[ModelParams] = None,
+        vol: Optional[VolModel] = None,
         column_mapping: Optional[Dict[str, str]] = None,
         verbose: bool = True,
     ) -> RNDResult:
         """Load options data from CSV and estimate RND.
 
         In CSV mode, underlying_price and dividend information must be provided
-        by the user in the market parameters.
+        by the user in the market parameters. The optional ``vol`` argument
+        selects the volatility model (defaults to raw SVI for single expiries).
         """
         # Read chain from CSV
         source = CSVSource(path, column_mapping=column_mapping)
@@ -1432,7 +1498,13 @@ class RND:
             resolved = resolve_market(market, vendor=None, mode="strict")
 
             # Run estimation
-            prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
+            base_model = model or ModelParams()
+            effective_model, resolved_vol, requested_method = _resolve_slice_vol_model(
+                base_model, vol
+            )
+            prices, pdf, cdf, meta = _estimate(chain, resolved, effective_model)
+            meta.setdefault("vol_model", resolved_vol)
+            meta.setdefault("vol_model_method", requested_method)
 
         return RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
@@ -1443,13 +1515,15 @@ class RND:
         market: MarketInputs,
         *,
         model: Optional[ModelParams] = None,
+        vol: Optional[VolModel] = None,
         column_mapping: Optional[Dict[str, str]] = None,
         verbose: bool = True,
     ) -> RNDResult:
         """Load options data from DataFrame and estimate RND.
 
         Similar to from_csv, underlying_price and dividend information must be
-        provided by the user in the market parameters.
+        provided by the user in the market parameters. The optional ``vol``
+        argument selects the volatility model (defaults to raw SVI).
         """
         # Process DataFrame
         source = DataFrameSource(df, column_mapping=column_mapping)
@@ -1460,7 +1534,13 @@ class RND:
             resolved = resolve_market(market, vendor=None, mode="strict")
 
             # Run estimation
-            prices, pdf, cdf, meta = _estimate(chain, resolved, model or ModelParams())
+            base_model = model or ModelParams()
+            effective_model, resolved_vol, requested_method = _resolve_slice_vol_model(
+                base_model, vol
+            )
+            prices, pdf, cdf, meta = _estimate(chain, resolved, effective_model)
+            meta.setdefault("vol_model", resolved_vol)
+            meta.setdefault("vol_model_method", requested_method)
 
         return RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 
@@ -1473,6 +1553,9 @@ class RND:
         ----------
         ticker : str
             Stock ticker symbol (e.g., "AAPL", "SPY")
+        vol : VolModel, optional
+            Volatility model selector (defaults to raw SVI for single expiries
+            when omitted).
         vendor : str, default "yfinance"
             Data vendor to use (currently only "yfinance" is supported)
 
@@ -1500,6 +1583,7 @@ class RND:
         market: MarketInputs,
         *,
         model: Optional[ModelParams] = None,
+        vol: Optional[VolModel] = None,
         vendor: str = "yfinance",
         fill: FillMode = "missing",
         echo: Optional[bool] = None,
@@ -1579,7 +1663,7 @@ class RND:
             resolved = resolve_market(market, snapshot, mode=fill)
 
             # Choose effective model: default to last price for yfinance
-            effective_model = (
+            base_model = (
                 model
                 if model is not None
                 else (
@@ -1587,6 +1671,10 @@ class RND:
                     if vendor == "yfinance"
                     else ModelParams()
                 )
+            )
+
+            effective_model, resolved_vol, requested_method = _resolve_slice_vol_model(
+                base_model, vol
             )
 
             # Run estimation
@@ -1600,6 +1688,8 @@ class RND:
                 "asof": snapshot.asof.isoformat(),
             }
         )
+        meta.setdefault("vol_model", resolved_vol)
+        meta.setdefault("vol_model_method", requested_method)
 
         result = RNDResult(prices=prices, pdf=pdf, cdf=cdf, market=resolved, meta=meta)
 

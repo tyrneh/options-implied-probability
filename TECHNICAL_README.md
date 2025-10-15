@@ -22,9 +22,12 @@ Requires at minimum **Python 3.10+**.
 
 ## 2. API Overview
 
-OIPD provides a single `RND` class that extracts market-implied probability distributions from options data.
- 
-The default implementation uses Black-76 pricing in forward space with the Breeden-Litzenberger formula. Users may switch to Black-Scholes when only calls are available and dividend assumptions are provided.
+OIPD provides two complementary facades:
+
+- `RND` extracts a single-expiry implied distribution.
+- `RNDSurface` fits a multi-maturity implied-volatility surface (SSVI by default).
+
+Both share the same preprocessing pipeline. Single expiries default to the raw SVI smile; term structures default to the Gatheral–Jacquier SSVI surface, with an optional raw SVI stitching mode.
 
 **Main Entry Point: `RND` Class**
 
@@ -63,7 +66,7 @@ MarketInputs(
 )
 ```
 
-### 2.3 ModelParams
+### 2.2 ModelParams
 
 OPTIONAL configuration object that controls the algorithms used in the RND calculation.
 
@@ -73,7 +76,7 @@ ModelParams(
     pricing_engine     = "black76" | "bs",     # default forward-based Black-76. Use Black-Scholes only when puts data are unavailable
     price_method       = "last" | "mid",       # defaults to 'mid'; mid-price calculated as `(bid + ask) / 2`
     max_staleness_days = 3,                   # filter options older than N calendar days from valuation_date. Defaults to 3 to accomodate weekends. Set to None to disable filtering
-    surface_method     = "svi",                # "svi" (default) or "bspline"
+    surface_method     = "svi",                # legacy hook; use VolModel for new code
     surface_options    = svi_options(max_iter=400),  # SVICalibrationOptions when using SVI; dict for bspline
     surface_random_seed = 7,                   # optional seed forwarded to the SVI optimiser
 )
@@ -81,7 +84,23 @@ ModelParams(
 
 Note that mid prices are preferred over last, due to lower noise from stale quotes. However, Yahoo Finance often doesn't have bid/ask data, so the from_ticker() method for yfinance uses last prices by default. 
 
-`surface_method` selects between the arbitrage-aware SVI fitter and the legacy cubic B-spline smoother. When `surface_method="svi"`, pass either an `SVICalibrationOptions` instance (typically via the convenience helper `svi_options(...)`) and, if desired, a `surface_random_seed` for reproducible optimiser starts. For the B-spline smoother keep using a plain dictionary. If calibration fails (e.g., too few strikes or a hard butterfly violation) the code raises `CalculationError("Failed to smooth implied volatility data: ...")`. In those cases either clean the input quotes or retry with the legacy cubic spline via `ModelParams(surface_method="bspline")`.
+`surface_method` selects between the arbitrage-aware SVI fitter and the legacy cubic B-spline smoother for single expiries. In new code prefer the `VolModel` facade (below), which defaults to `"svi"` for `RND` and `"ssvi"` for `RNDSurface`. When `surface_method="svi"`, pass either an `SVICalibrationOptions` instance (typically via the convenience helper `svi_options(...)`) and, if desired, a `surface_random_seed` for reproducible optimiser starts. For the B-spline smoother keep using a plain dictionary. If calibration fails (e.g., too few strikes or a hard butterfly violation) the code raises `CalculationError("Failed to smooth implied volatility data: ...")`. In those cases either clean the input quotes or retry with the legacy cubic spline via `ModelParams(surface_method="bspline")`.
+
+### 2.3 VolModel
+
+`VolModel` unifies all volatility-surface selections:
+
+```python
+VolModel(
+    method: Literal["svi", "svi-jw", "bspline", "ssvi", "raw_svi", None] = None,
+    strict_no_arbitrage: bool = True,
+)
+```
+
+- When `method` is `None`, `RND` defaults to a raw SVI slice, while `RNDSurface` defaults to an SSVI surface.
+- Use `"svi-jw"` to seed the slice fitter in Jump-Wings parameters; `"bspline"` keeps the legacy smoothing spline.
+- On term structures, choose between theorem-backed `"ssvi"` or a penalty-stitched raw SVI surface via `"raw_svi"`.
+- `strict_no_arbitrage=True` enforces butterfly and calendar checks (SSVI inequalities, calendar margins, and the raw SVI crossedness diagnostic).
 
 Diagnostics from SVI calibration, including the selected JW parameters, weights, and optimiser lineage, are attached to the fitted smile via `vol_curve.diagnostics`. You can log progress by installing handlers on the package logger exposed through `oipd.logging.configure_logging()`.
 
@@ -90,9 +109,9 @@ Diagnostics from SVI calibration, including the selected JW parameters, weights,
 Main class that fits risk-neutral density models from options data and provides probability distribution results.
 
 ```python
-RND.from_csv(path, market, model, column_mapping={"YourHeader": "oipd_field"})  # Maps CSV headers to OIPD fields
-RND.from_dataframe(df, market, model, column_mapping={"YourHeader": "oipd_field"})  # Maps DataFrame columns to OIPD fields
-RND.from_ticker("AAPL", market, vendor="yfinance", ...)  # (auto-fetches from vendors, only YFinance currently integrated)
+RND.from_csv(path, market, model, vol=VolModel(method="svi"), column_mapping={"YourHeader": "oipd_field"})
+RND.from_dataframe(df, market, model, vol=VolModel(method="svi-jw"), column_mapping={"YourHeader": "oipd_field"})
+RND.from_ticker("AAPL", market, vol=VolModel(), vendor="yfinance", ...)
 result.plot_iv(x_axis="log_moneyness")  # Inspect the fitted SVI smile
 result.plot(kind="pdf")                 # Inspect the risk-neutral density
 ```
@@ -133,6 +152,38 @@ column_mapping = {
 }
 ```
 
+### 2.5 RNDSurface (term structure)
+
+`RNDSurface` stitches multiple expiries into a no-arbitrage implied-volatility surface.
+
+```python
+from oipd import RNDSurface, VolModel
+
+surface = RNDSurface.from_ticker(
+    "AAPL",
+    market,
+    horizon="12M",                   # pull all expiries within 12 months
+    vol=VolModel(method="ssvi"),     # default; theorem-backed SSVI
+)
+
+surface.iv(K=[350, 400], t=0.5)       # implied vols on the 6M slice
+surface.price(K=[380], t=1.0)         # forward-measure pricing via Black-76
+surface.check_no_arbitrage()          # {'objective': ..., 'min_calendar_margin': ..., ...}
+
+# Custom DataFrame ingestion with a raw SVI fallback
+surface_raw = RNDSurface.from_dataframe(
+    df,                               # must contain an expiry column of dtype date/datetime
+    market,
+    vol=VolModel(method="raw_svi"),  # penalty-stitched raw SVI
+)
+```
+
+Key requirements:
+
+- `from_dataframe` expects an `expiry` column with actual dates (one row per quote); the loader groups maturities automatically.
+- `from_ticker` infers the maturity set from the vendor and filters by the requested `horizon`. Accepts strings like `"90D"`, `"6M"`, or floats/ints for years/days.
+- When `strict_no_arbitrage=True`, SSVI enforces the Gatheral–Jacquier inequalities and calendar monotonicity; the raw SVI mode checks butterfly diagnostics and calendar crossedness margins, raising `CalculationError` when violations exceed a small tolerance.
+
 ---
 
 ## 3. Theory Overview
@@ -161,7 +212,7 @@ The process of generating the PDFs and CDFs is as follows:
 2. Apply put–call parity preprocessing: estimate the forward from near‑ATM call–put pairs
 3. Based on the forward price, restrict to OTM options. Keep calls above the forward and replace in‑the‑money calls with synthetic calls constructed from OTM puts via parity, to reduce noise from illiquid ITM quotes[^2].
 4. Using the chosen pricing model (Black‑76 as it works with forward prices[^3]) we convert strike prices into implied volatilities (IV)[^4]. IV are solved using either Newton's Method or Brent's root‑finding algorithm, as specified by the `solver_method` argument
-5. Fit the implied-volatility smile using the configured surface model. By default we calibrate a raw SVI slice. During optimisation we constrain the raw parameters (`b ≥ 0`, `|ρ| ≤ ρ_bound < 1`, `σ ≥ σ_min`) and enforce the Gatheral–Jacquier minimum-variance condition `a + b σ √(1 − ρ²) ≥ 0`. After calibration we evaluate the butterfly diagnostic `g(k)` on an extended log-moneyness grid; if `min_g < 0` a `CalculationError` is raised. Users can opt into the historical cubic B-spline smoother with `surface_method="bspline"`.
+5. Fit the implied-volatility smile using the configured surface model. For single expiries we calibrate a raw SVI slice by default, constraining the raw parameters (`b ≥ 0`, `|ρ| ≤ ρ_bound < 1`, `σ ≥ σ_min`) and enforcing the Gatheral–Jacquier minimum-variance condition `a + b σ √(1 − ρ²) ≥ 0`. After calibration we evaluate the butterfly diagnostic `g(k)` on an extended log-moneyness grid; if `min_g < 0` a `CalculationError` is raised. Users can opt into the historical cubic B-spline smoother with `surface_method="bspline"`. For term structures, the default `VolModel(method="ssvi")` calibrates a theorem-backed SSVI surface that also enforces calendar monotonicity and the Corollary 4.1 inequalities; the `method="raw_svi"` alternative fits each slice independently and penalises calendar crossedness.
 6. From the volatility smile, we use the same pricing model to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
 7. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^6]
 8. Once we have the PDF, we can calculate the CDF
