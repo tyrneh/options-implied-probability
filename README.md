@@ -63,7 +63,7 @@ configure_logging(format_string="%(levelname)s | %(message)s")  # turn on SVI op
 
 ### Term-structure surfaces
 
-Calibrate an entire maturity surface with the new `RNDSurface` façade. The default configuration fits an arbitrage-free SSVI surface that enforces the Gatheral–Jacquier calendar and butterfly constraints.
+Calibrate an entire maturity surface with the new `RNDSurface` façade. Every slice is staleness-filtered, parity-adjusted, and vega-weighted before calibration. The default configuration fits an arbitrage-free SSVI surface that enforces the Gatheral–Jacquier calendar and butterfly constraints **by construction**.
 
 ```python
 from oipd import RNDSurface
@@ -76,7 +76,9 @@ surface = RNDSurface.from_ticker(
 
 surface.iv(K=[350, 400], t=0.5)      # implied vols at the 6M slice
 surface.price(K=[380], t=1.0)        # forward-measure call price via Black-76
-surface.check_no_arbitrage()         # calendar & inequality margins for diagnostics
+diagnostics = surface.check_no_arbitrage()
+diagnostics["calendar_margins"]      # per-step calendar spread margins (should be >= 0)
+diagnostics["min_theta_phi_margin"]  # Gatheral inequality margins enforced during fit
 surface.plot_iv()                    # overlay log-moneyness smiles across maturities
 
 # Prefer a penalty-stitched raw SVI surface instead of theorem-backed SSVI
@@ -85,9 +87,18 @@ raw_surface = RNDSurface.from_dataframe(
     market,
     vol=VolModel(method="raw_svi"),
 )
+# When strict_no_arbitrage=True (default) a Gatheral α-tilt is applied automatically
+# if independent slices cross; inspect the returned alpha and repaired margins:
+raw_surface.check_no_arbitrage()
 ```
 
 OIPD also **supports manual CSV or DataFrame uploads**. 
+
+#### Diagnostics & validators
+
+- `RNDSurface.check_no_arbitrage()` now reports the optimiser objective, per-interval calendar margins, and SSVI inequality margins.
+- `check_butterfly`, `check_ssvi_constraints`, and `check_ssvi_calendar` (under `oipd.core.svi` / `oipd.core.ssvi`) expose low-level diagnostics when you need bespoke grids or custom reporting.
+- Raw SVI surfaces return an automatic Gatheral α-tilt (`alpha`) and the pre-repair calendar margins so you can see how much was nudged.
 
 See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details, and the academic theory behind the technique. 
 
@@ -125,7 +136,7 @@ Convenience features:
 - integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
 
 Algorithmic improvements:
-- implement additional no-arbitrage diagnostics for raw SVI stitching
+- sequential/eSSVI calibration for even tighter control of calendar spreads
 - fit IV smile using SABR model
 - infer forward price using a band of near-ATM option-pairs, rather than the one nearest pair
 - American-option de-Americanisation module

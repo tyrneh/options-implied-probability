@@ -22,6 +22,10 @@ from oipd.core.ssvi import (
 )
 from oipd.core.vol_model import VolModel
 
+GAMMA_MIN = 5e-3
+GAMMA_MAX = 0.5
+THETA_INCREMENT_EPS = 1e-6
+
 
 @dataclass(frozen=True)
 class SSVISliceObservations:
@@ -32,12 +36,18 @@ class SSVISliceObservations:
         log_moneyness: Array of log-moneyness coordinates.
         total_variance: Observed total variance on ``log_moneyness`` grid.
         weights: Non-negative weights for each observation.
+        bid_iv: Optional array of observed bid implied volatilities aligned with
+            ``log_moneyness``.
+        ask_iv: Optional array of observed ask implied volatilities aligned with
+            ``log_moneyness``.
     """
 
     maturity: float
     log_moneyness: np.ndarray
     total_variance: np.ndarray
     weights: np.ndarray
+    bid_iv: np.ndarray | None = None
+    ask_iv: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +58,7 @@ class SSVISurfaceFit:
     theta_interpolator: interpolate.PchipInterpolator
     objective: float
     calendar_margin: float
+    calendar_margins: list[float]
     inequality_margins: dict[str, float]
 
 
@@ -71,6 +82,32 @@ def _atanh(x: float) -> float:
     return 0.5 * np.log((1.0 + x) / (1.0 - x))
 
 
+def _eta_upper_bound(theta: np.ndarray, rho: float, gamma: float) -> float:
+    """Return the largest admissible ``η`` satisfying SSVI slice inequalities."""
+
+    bounds: list[float] = []
+    abs_rho = abs(rho)
+    sqrt_term = np.sqrt(max(1e-12, 1.0 - rho * rho))
+
+    for theta_val in theta:
+        theta_val = float(max(theta_val, 1e-8))
+        power1 = theta_val ** (1.0 - gamma) * (1.0 + theta_val) ** (gamma - 1.0)
+        if power1 > 0.0:
+            bounds.append(4.0 / ((1.0 + abs_rho) * power1))
+
+        power2 = theta_val ** (gamma - 0.5) * (1.0 + theta_val) ** (1.0 - gamma)
+        if power2 > 0.0:
+            bounds.append(2.0 * sqrt_term * power2)
+
+    if not bounds:
+        return 1.0
+
+    upper = min(bounds)
+    if not np.isfinite(upper) or upper <= 0.0:
+        return 1.0
+    return float(upper)
+
+
 def _transform_parameters(
     vector: np.ndarray,
     num_slices: int,
@@ -80,10 +117,22 @@ def _transform_parameters(
     theta_raw = vector[:num_slices]
     rho_raw, eta_raw, gamma_raw = vector[num_slices : num_slices + 3]
 
-    theta = _softplus(theta_raw)
-    rho = np.tanh(rho_raw) * RHO_BOUND
-    eta = float(_softplus(np.array([eta_raw]))[0])
-    gamma = float(_sigmoid(np.array([gamma_raw]))[0])
+    increments = _softplus(theta_raw) + THETA_INCREMENT_EPS
+    theta = np.cumsum(increments)
+
+    rho = float(np.tanh(rho_raw) * RHO_BOUND)
+    gamma_unit = float(_sigmoid(np.array([gamma_raw]))[0])
+    gamma = float(GAMMA_MIN + (GAMMA_MAX - GAMMA_MIN) * gamma_unit)
+
+    eta_cap = _eta_upper_bound(theta, rho, gamma)
+    sigma_eta = float(_sigmoid(np.array([eta_raw]))[0])
+    eta_candidate = sigma_eta * eta_cap
+    if eta_cap > 0.0:
+        eta_max = np.nextafter(eta_cap, 0.0)
+        eta = float(np.clip(eta_candidate, 0.0, eta_max))
+    else:
+        eta = 0.0
+
     return theta, rho, eta, gamma
 
 
@@ -96,11 +145,30 @@ def _initial_guess(observations: Sequence[SSVISliceObservations]) -> np.ndarray:
         else:
             theta_guess.append(float(np.median(positive)))
 
-    theta_guess = np.maximum(theta_guess, 1e-4)
-    theta_raw = _softplus_inv(np.asarray(theta_guess, dtype=float))
+    theta_guess = np.maximum.accumulate(np.maximum(np.asarray(theta_guess, dtype=float), 5e-4))
+
+    desired_increments = []
+    cumulative = 0.0
+    for value in theta_guess:
+        if value <= cumulative + THETA_INCREMENT_EPS:
+            increment = THETA_INCREMENT_EPS * 2.0
+        else:
+            increment = value - cumulative
+        increment = max(increment, THETA_INCREMENT_EPS * 2.0)
+        desired_increments.append(increment)
+        cumulative += increment
+
+    adjusted = np.maximum(np.asarray(desired_increments, dtype=float) - THETA_INCREMENT_EPS, 1e-8)
+    theta_raw = _softplus_inv(adjusted)
+
     rho_raw = _atanh(-0.3 / RHO_BOUND)
-    eta_raw = _softplus_inv(np.asarray([1.0]))[0]
-    gamma_raw = _logit(0.5)
+
+    gamma_target = 0.25
+    gamma_unit = (gamma_target - GAMMA_MIN) / (GAMMA_MAX - GAMMA_MIN)
+    gamma_unit = float(np.clip(gamma_unit, 1e-3, 1.0 - 1e-3))
+    gamma_raw = _logit(gamma_unit)
+
+    eta_raw = 0.0
     return np.concatenate([theta_raw, [rho_raw, eta_raw, gamma_raw]])
 
 
@@ -130,13 +198,10 @@ def _constraint_penalty(
 ) -> float:
     penalty = 0.0
 
-    diffs = np.diff(theta)
-    penalty += np.sum(np.square(np.minimum(0.0, diffs))) * 1e4
-
     for theta_val in theta:
         phi = float(phi_eta_gamma(theta_val, eta, gamma))
         margin1 = 4.0 - theta_phi(theta_val, eta, gamma) * (1.0 + abs(rho))
-        margin2 = 4.0 - theta_phi_squared(theta_val, eta, gamma) * (1.0 + abs(rho))
+        margin2 = 4.0 * (1.0 - rho * rho) - theta_phi_squared(theta_val, eta, gamma)
         if abs(rho) < 1e-6:
             upper = 2.0 * phi
         else:
@@ -225,20 +290,41 @@ def calibrate_ssvi_surface(
 
     k_grid = np.linspace(-2.5, 2.5, 61)
     calendar_margin = 0.0
+    calendar_margins: list[float] = []
     if len(theta) > 1:
         margins = [
             ssvi_calendar_margin(t0, t1, params.rho, params.eta, params.gamma, k_grid)
             for t0, t1 in zip(theta[:-1], theta[1:])
         ]
         calendar_margin = float(np.min(margins))
+        calendar_margins = [float(m) for m in margins]
 
     inequality_margins = compute_ssvi_margins(theta, params.rho, params.eta, params.gamma)
+
+    if vol_model.strict_no_arbitrage:
+        tol = 1e-6
+        if calendar_margin < -tol:
+            raise CalculationError(
+                f"SSVI calibration violated calendar monotonicity (min margin {calendar_margin:.3e})"
+            )
+        for key, margin in inequality_margins.items():
+            if isinstance(margin, (list, tuple, np.ndarray)):
+                min_margin = float(np.min(margin)) if margin else float("inf")
+                if min_margin < -tol:
+                    raise CalculationError(
+                        f"SSVI calibration violated {key} (min margin {min_margin:.3e})"
+                    )
+            else:
+                if float(margin) < -tol:
+                    raise CalculationError(
+                        f"SSVI calibration violated {key} (margin {float(margin):.3e})"
+                    )
 
     return SSVISurfaceFit(
         params=params,
         theta_interpolator=interpolator,
         objective=float(result.fun),
         calendar_margin=calendar_margin,
+        calendar_margins=calendar_margins,
         inequality_margins=inequality_margins,
     )
-

@@ -52,14 +52,33 @@ def filter_stale_options(
     valuation_ts = pd.Timestamp(valuation_date)
     days_old = (valuation_ts - last_trade_datetimes.dt.normalize()).dt.days
     fresh_mask = days_old <= max_staleness_days
-    stale_count = (~fresh_mask).sum()
-    if stale_count > 0 and emit_warning:
+
+    stale_rows = options_data[~fresh_mask]
+    shared_strike_mask = np.zeros(len(options_data), dtype=bool)
+    unique_stale_strikes = 0
+
+    if "strike" in options_data.columns and not stale_rows.empty:
+        unique_strikes = stale_rows["strike"].unique()
+        unique_stale_strikes = len(unique_strikes)
+        shared_strike_mask = options_data["strike"].isin(unique_strikes)
+
+    combined_stale_mask = (~fresh_mask) | shared_strike_mask
+    removed_count = int(np.sum(combined_stale_mask))
+
+    if removed_count > 0 and emit_warning:
+        removed_days = days_old[combined_stale_mask]
+        min_age = int(removed_days.min()) if not removed_days.empty else "N/A"
+        max_age = int(removed_days.max()) if not removed_days.empty else "N/A"
+        strike_desc = unique_stale_strikes if unique_stale_strikes else "N/A"
         warnings.warn(
-            f"Filtered {stale_count} strikes older than {max_staleness_days} days "
-            f"(most recent: {days_old.min()} days old, oldest: {days_old.max()} days old)",
+            f"Filtered {removed_count} option rows (covering {strike_desc} strikes) "
+            f"older than {max_staleness_days} days "
+            f"(most recent: {min_age} days old, oldest: {max_age} days old)",
             UserWarning,
         )
-    return options_data[fresh_mask].reset_index(drop=True)
+
+    filtered = options_data[~combined_stale_mask].reset_index(drop=True)
+    return filtered
 
 
 def select_price_column(

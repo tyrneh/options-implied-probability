@@ -380,6 +380,32 @@ def min_g_on_grid(params: SVIParameters, k_grid: np.ndarray | Iterable[float]) -
     return float(finite_vals.min())
 
 
+def check_butterfly(
+    params: SVIParameters,
+    k_grid: np.ndarray | Iterable[float],
+) -> dict[str, float | np.ndarray]:
+    """Evaluate butterfly arbitrage diagnostics for a raw SVI slice.
+
+    Args:
+        params: Raw SVI parameters for the slice.
+        k_grid: Log-moneyness grid used to evaluate ``g(k)``.
+
+    Returns:
+        Dictionary containing the evaluation grid, the diagnostic values, and
+        the minimum finite margin observed across the grid.
+    """
+
+    grid = np.asarray(k_grid, dtype=float)
+    values = g_function(grid, params)
+    finite_mask = np.isfinite(values)
+    min_margin = float(np.min(values[finite_mask])) if finite_mask.any() else float("nan")
+    return {
+        "grid": grid,
+        "g_values": values,
+        "min_margin": min_margin,
+    }
+
+
 def svi_minimum_location(params: SVIParameters) -> float:
     """Return the log-moneyness where total variance is minimised.
 
@@ -1570,6 +1596,7 @@ __all__ = [
     "svi_first_derivative",
     "svi_second_derivative",
     "g_function",
+    "check_butterfly",
     "min_g_on_grid",
     "svi_minimum_location",
     "svi_minimum_variance",

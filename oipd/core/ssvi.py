@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 from scipy import interpolate
 
 
-RHO_BOUND: float = 0.999
+RHO_BOUND: float = 0.95
 
 
 def phi_eta_gamma(theta: np.ndarray | float, eta: float, gamma: float) -> np.ndarray:
@@ -146,7 +146,7 @@ def compute_ssvi_margins(
         theta_phi_sq_val = theta_val * phi * phi
         deriv = theta_phi_derivative(theta_val, eta, gamma)
         margin1 = 4.0 - theta_phi_val * (1.0 + abs(rho))
-        margin2 = 4.0 - theta_phi_sq_val * (1.0 + abs(rho))
+        margin2 = 4.0 * (1.0 - rho * rho) - theta_phi_sq_val
         if abs(rho) < 1e-6:
             upper = 2.0 * phi
         else:
@@ -160,5 +160,69 @@ def compute_ssvi_margins(
         "min_theta_phi_margin": float(np.min(margins1)),
         "min_theta_phi_sq_margin": float(np.min(margins2)),
         "min_derivative_margin": float(np.min(margins3)),
+        "theta_phi_margins": [float(m) for m in margins1],
+        "theta_phi_sq_margins": [float(m) for m in margins2],
+        "derivative_margins": [float(m) for m in margins3],
     }
 
+
+def check_ssvi_constraints(
+    theta: Sequence[float],
+    rho: float,
+    eta: float,
+    gamma: float,
+) -> dict[str, Any]:
+    """Return Gatheral–Jacquier inequality margins for SSVI parameters.
+
+    Args:
+        theta: Sequence of total variance levels per maturity.
+        rho: Common correlation-like parameter ``ρ``.
+        eta: Scale parameter ``η`` of the canonical ``φ`` form.
+        gamma: Shape parameter ``γ`` of the canonical ``φ`` form.
+
+    Returns:
+        Dictionary containing the minimum margins and the per-slice values for
+        each inequality.
+    """
+
+    return compute_ssvi_margins(theta, rho, eta, gamma)
+
+
+def check_ssvi_calendar(
+    theta: Sequence[float],
+    rho: float,
+    eta: float,
+    gamma: float,
+    *,
+    k_grid: np.ndarray | Iterable[float] | None = None,
+) -> dict[str, Any]:
+    """Evaluate calendar-spread margins between consecutive SSVI maturities.
+
+    Args:
+        theta: Sequence of total variance levels per maturity.
+        rho: Common correlation-like parameter ``ρ``.
+        eta: Scale parameter ``η``.
+        gamma: Shape parameter ``γ``.
+        k_grid: Optional log-moneyness grid used for evaluation. Defaults to a
+            symmetric grid on ``[-2.5, 2.5]`` with 61 points.
+
+    Returns:
+        Dictionary containing the per-interval margins and the overall minimum.
+    """
+
+    if len(theta) < 2:
+        return {"margins": [], "min_margin": float("inf")}
+
+    grid = (
+        np.asarray(k_grid, dtype=float)
+        if k_grid is not None
+        else np.linspace(-2.5, 2.5, 61)
+    )
+    margins = [
+        ssvi_calendar_margin(t0, t1, rho, eta, gamma, grid)
+        for t0, t1 in zip(theta[:-1], theta[1:])
+    ]
+    return {
+        "margins": [float(m) for m in margins],
+        "min_margin": float(np.min(margins)),
+    }

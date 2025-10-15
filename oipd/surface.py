@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
+import math
 import re
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Literal
 
@@ -22,7 +23,7 @@ from oipd.calibration.raw_svi_surface import (
 from oipd.core.errors import CalculationError
 from oipd.core.prep import apply_put_call_parity, compute_iv, filter_stale_options, select_price_column
 from oipd.core.ssvi import phi_eta_gamma, ssvi_total_variance
-from oipd.core.svi import log_moneyness, svi_total_variance
+from oipd.core.svi import log_moneyness, svi_total_variance, _vega_based_weights
 from oipd.core.svi_types import SVICalibrationOptions
 from oipd.core.vol_model import SURFACE_METHODS, VolModel
 from oipd.estimator import ModelParams
@@ -30,6 +31,9 @@ from oipd.market_inputs import MarketInputs, ResolvedMarket, VendorSnapshot, res
 from oipd.pricing.black76 import black76_call_price
 from oipd.pricing.utils import prepare_dividends
 from oipd.vendor import get_reader
+
+SSVI_WEIGHT_CAP = 50.0
+ATM_WEIGHT_MULTIPLIER = 5.0
 
 
 @dataclass(frozen=True)
@@ -171,11 +175,24 @@ class RNDSurface:
             effective_spot = resolved.underlying_price
             effective_dividend = None
 
-        parity_adjusted, parity_forward = apply_put_call_parity(
+        filtered_quotes = filter_stale_options(
             options,
-            effective_spot,
-            resolved,
+            valuation_date,
+            self.model.max_staleness_days,
+            emit_warning=False,
         )
+
+        if filtered_quotes.empty:
+            raise CalculationError("No valid option prices after staleness filtering")
+
+        try:
+            parity_adjusted, parity_forward = apply_put_call_parity(
+                filtered_quotes,
+                effective_spot,
+                resolved,
+            )
+        except ValueError as exc:
+            raise CalculationError("Failed to infer forward after put-call parity preprocessing") from exc
 
         if self.model.pricing_engine == "black76":
             if parity_forward is None:
@@ -186,14 +203,7 @@ class RNDSurface:
         else:
             underlying_for_iv = effective_spot
 
-        filtered = filter_stale_options(
-            parity_adjusted,
-            valuation_date,
-            self.model.max_staleness_days,
-            emit_warning=False,
-        )
-
-        priced = select_price_column(filtered, self.model.price_method)
+        priced = select_price_column(parity_adjusted, self.model.price_method)
         if priced.empty:
             raise CalculationError("No valid option prices after preprocessing")
 
@@ -206,21 +216,97 @@ class RNDSurface:
             effective_dividend,
         )
 
-        strikes = iv_df["strike"].to_numpy(dtype=float)
+        bid_iv = None
+        ask_iv = None
+        strikes_sorted = iv_df["strike"].to_numpy(dtype=float)
+
+        if "bid" in priced.columns:
+            bid_frame = priced.loc[(priced["bid"].notna()) & (priced["bid"] > 0.0)].copy()
+            if not bid_frame.empty:
+                bid_frame = bid_frame.assign(price=bid_frame["bid"])
+                bid_iv_df = compute_iv(
+                    bid_frame,
+                    underlying_for_iv,
+                    resolved,
+                    self.model.solver,
+                    self.model.pricing_engine,
+                    effective_dividend,
+                )
+                bid_iv_series = bid_iv_df.set_index("strike")["iv"]
+                bid_iv = bid_iv_series.reindex(strikes_sorted).to_numpy(dtype=float)
+
+        if "ask" in priced.columns:
+            ask_frame = priced.loc[(priced["ask"].notna()) & (priced["ask"] > 0.0)].copy()
+            if not ask_frame.empty:
+                ask_frame = ask_frame.assign(price=ask_frame["ask"])
+                ask_iv_df = compute_iv(
+                    ask_frame,
+                    underlying_for_iv,
+                    resolved,
+                    self.model.solver,
+                    self.model.pricing_engine,
+                    effective_dividend,
+                )
+                ask_iv_series = ask_iv_df.set_index("strike")["iv"]
+                ask_iv = ask_iv_series.reindex(strikes_sorted).to_numpy(dtype=float)
+
+        strikes = strikes_sorted
         iv_values = iv_df["iv"].to_numpy(dtype=float)
         maturity_years = resolved.days_to_expiry / 365.0
         if maturity_years <= 0:
             raise CalculationError("Time to expiry must be positive for surface calibration")
 
+        valid_mask = np.isfinite(strikes) & np.isfinite(iv_values)
+        strikes = strikes[valid_mask]
+        iv_values = iv_values[valid_mask]
+
         log_mny = log_moneyness(strikes, underlying_for_iv)
         total_variance = np.square(iv_values) * maturity_years
-        weights = np.ones_like(total_variance)
+
+        finite_mask = np.isfinite(log_mny) & np.isfinite(total_variance)
+        log_mny = log_mny[finite_mask]
+        total_variance = total_variance[finite_mask]
+        if log_mny.size < 3:
+            raise CalculationError("Insufficient viable quotes for surface calibration")
+
+        if bid_iv is not None:
+            bid_iv = bid_iv[finite_mask]
+        if ask_iv is not None:
+            ask_iv = ask_iv[finite_mask]
+
+        weights_array, _ = _vega_based_weights(
+            log_mny,
+            total_variance,
+            maturity_years,
+            "vega",
+            SSVI_WEIGHT_CAP,
+        )
+        weights = np.asarray(weights_array, dtype=float)
+        if weights.shape != total_variance.shape:
+            raise CalculationError("Failed to construct calibration weights")
+
+        if weights.size:
+            atm_index = int(np.argmin(np.abs(log_mny)))
+            mean_weight = float(np.mean(weights))
+            boosted = max(weights[atm_index], ATM_WEIGHT_MULTIPLIER * max(mean_weight, 1e-6))
+            weights[atm_index] = float(np.clip(boosted, 1e-6, SSVI_WEIGHT_CAP))
+
+        order = np.argsort(log_mny)
+        log_mny = log_mny[order]
+        total_variance = total_variance[order]
+        weights = weights[order]
+        if bid_iv is not None:
+            bid_iv = np.asarray(bid_iv, dtype=float)[order]
+        if ask_iv is not None:
+            ask_iv = np.asarray(ask_iv, dtype=float)[order]
 
         observation = SSVISliceObservations(
             maturity=maturity_years,
             log_moneyness=log_mny,
             total_variance=total_variance,
             weights=weights,
+            bid_iv=bid_iv,
+            ask_iv=ask_iv,
         )
 
         return observation, float(underlying_for_iv), resolved
@@ -453,22 +539,24 @@ class RNDSurface:
         slices = sorted(raw_fit.slices, key=lambda s: s.maturity)
         if not slices:
             raise CalculationError("Surface contains no raw SVI slices")
+        alpha = float(getattr(raw_fit, "alpha", 0.0))
         if len(slices) == 1:
-            return svi_total_variance(k, slices[0].params)
+            return svi_total_variance(k, slices[0].params) + alpha * float(t)
 
         if t <= slices[0].maturity:
-            return svi_total_variance(k, slices[0].params)
+            return svi_total_variance(k, slices[0].params) + alpha * float(t)
         if t >= slices[-1].maturity:
-            return svi_total_variance(k, slices[-1].params)
+            return svi_total_variance(k, slices[-1].params) + alpha * float(t)
 
         for left, right in zip(slices[:-1], slices[1:]):
             if left.maturity <= t <= right.maturity:
                 weight = (t - left.maturity) / (right.maturity - left.maturity)
                 w_left = svi_total_variance(k, left.params)
                 w_right = svi_total_variance(k, right.params)
-                return (1.0 - weight) * w_left + weight * w_right
+                blended = (1.0 - weight) * w_left + weight * w_right
+                return blended + alpha * float(t)
 
-        return svi_total_variance(k, slices[-1].params)
+        return svi_total_variance(k, slices[-1].params) + alpha * float(t)
 
     def plot_iv(
         self,
@@ -480,8 +568,21 @@ class RNDSurface:
         title: Optional[str] = None,
         style: Literal["publication", "default"] = "publication",
         source: Optional[str] = None,
+        view: Literal["overlay", "grid"] = "overlay",
     ):
-        """Plot implied-volatility slices across maturities on a single chart."""
+        """Plot implied-volatility slices across maturities.
+
+        Args:
+            maturities: Optional sequence of maturities (year fractions) to plot.
+            num_points: Number of points in the evaluation grid per slice.
+            x_axis: ``"log_moneyness"`` (default) or ``"strike"`` axis.
+            figsize: Matplotlib figure size.
+            title: Optional figure title.
+            style: Plot styling configuration.
+            source: Optional footer text (publication style only).
+            view: ``"overlay"`` plots all slices on a single chart; ``"grid"`` renders
+                a matrix of subplots with bid/ask envelopes per slice.
+        """
 
         try:
             import matplotlib.pyplot as plt
@@ -531,8 +632,6 @@ class RNDSurface:
         padding = 0.05 * (k_max - k_min if k_max > k_min else 1.0)
         k_grid = np.linspace(k_min - padding, k_max + padding, num_points)
 
-        fig, ax = plt.subplots(figsize=figsize)
-
         axis_mode = x_axis.lower()
         if axis_mode not in {"log_moneyness", "strike"}:
             raise ValueError("x_axis must be 'log_moneyness' or 'strike'")
@@ -542,22 +641,96 @@ class RNDSurface:
                 return k
             return forward * np.exp(k)
 
-        for maturity in plot_maturities:
+        if view == "overlay":
+            fig, ax = plt.subplots(figsize=figsize)
+
+            for maturity in plot_maturities:
+                forward = self._infer_forward(maturity, None)
+                total_var = self.total_variance(k_grid, maturity)
+                iv_curve = np.sqrt(np.maximum(total_var / max(maturity, 1e-8), 1e-12))
+                label_days = int(round(maturity * 365))
+                label = f"{label_days}d"
+                ax.plot(_axis_values(k_grid, forward), iv_curve, label=label)
+
+            ax.set_xlabel("Log Moneyness" if axis_mode == "log_moneyness" else "Strike")
+            ax.set_ylabel("Implied Volatility")
+            display_title = title or "Implied Volatility Surface"
+            ax.set_title(display_title)
+            legend = ax.legend(loc="best")
+            if legend is not None:
+                for text in legend.get_texts():
+                    text.set_color("black")
+
+            if style_axes is not None:
+                style_axes(ax)
+            if source and style == "publication":
+                fig.text(0.99, 0.01, source, ha="right", va="bottom", fontsize=8, alpha=0.6)
+
+            return fig
+
+        if view != "grid":
+            raise ValueError("view must be either 'overlay' or 'grid'")
+
+        num_slices = len(plot_maturities)
+        if num_slices == 0:
+            raise CalculationError("Surface calibration has no maturities to plot")
+
+        cols = min(3, num_slices)
+        rows = math.ceil(num_slices / cols)
+        fig, axes = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
+
+        flat_axes = axes.flatten()
+        for ax in flat_axes[num_slices:]:
+            ax.axis("off")
+
+        for ax, maturity in zip(flat_axes, plot_maturities):
             forward = self._infer_forward(maturity, None)
             total_var = self.total_variance(k_grid, maturity)
             iv_curve = np.sqrt(np.maximum(total_var / max(maturity, 1e-8), 1e-12))
+            ax.plot(_axis_values(k_grid, forward), iv_curve, color="C0", label="model")
+
+            obs = None
+            for candidate in observations:
+                if abs(candidate.maturity - maturity) < 5e-3:
+                    obs = candidate
+                    break
+            if obs is not None:
+                x_obs = _axis_values(obs.log_moneyness, forward)
+                bid_iv = getattr(obs, "bid_iv", None)
+                ask_iv = getattr(obs, "ask_iv", None)
+                if bid_iv is not None and ask_iv is not None:
+                    mask = np.isfinite(bid_iv) & np.isfinite(ask_iv)
+                    if mask.any():
+                        ax.fill_between(
+                            x_obs[mask],
+                            bid_iv[mask],
+                            ask_iv[mask],
+                            color="C2",
+                            alpha=0.2,
+                            label="bid/ask",
+                        )
+                elif bid_iv is not None:
+                    mask = np.isfinite(bid_iv)
+                    if mask.any():
+                        ax.scatter(x_obs[mask], bid_iv[mask], color="C2", alpha=0.6, label="bid")
+                elif ask_iv is not None:
+                    mask = np.isfinite(ask_iv)
+                    if mask.any():
+                        ax.scatter(x_obs[mask], ask_iv[mask], color="C3", alpha=0.6, label="ask")
+
+            ax.set_xlabel("Log Moneyness" if axis_mode == "log_moneyness" else "Strike")
+            ax.set_ylabel("Implied Volatility")
             label_days = int(round(maturity * 365))
-            label = f"{label_days}d"
-            ax.plot(_axis_values(k_grid, forward), iv_curve, label=label)
+            ax.set_title(f"{label_days}d")
+            legend = ax.legend(loc="best")
+            if legend is not None:
+                for text in legend.get_texts():
+                    text.set_color("black")
+            if style_axes is not None:
+                style_axes(ax)
 
-        ax.set_xlabel("Log Moneyness" if axis_mode == "log_moneyness" else "Strike")
-        ax.set_ylabel("Implied Volatility")
-        display_title = title or "Implied Volatility Surface"
-        ax.set_title(display_title)
-        ax.legend(loc="best")
-
-        if style_axes is not None:
-            style_axes(ax)
+        if title:
+            fig.suptitle(title)
         if source and style == "publication":
             fig.text(0.99, 0.01, source, ha="right", va="bottom", fontsize=8, alpha=0.6)
 
@@ -628,6 +801,7 @@ class RNDSurface:
             summary = {
                 "objective": fit.objective,
                 "min_calendar_margin": fit.calendar_margin,
+                "calendar_margins": fit.calendar_margins,
             }
             summary.update(fit.inequality_margins)
             return summary
@@ -637,4 +811,7 @@ class RNDSurface:
             "objective": raw_fit.objective,
             "min_calendar_margin": raw_fit.min_calendar_margin,
             "min_butterfly": raw_fit.min_butterfly,
+            "alpha": raw_fit.alpha,
+            "raw_calendar_margins": raw_fit.raw_calendar_margins or [],
+            "raw_calendar_deltas": raw_fit.raw_calendar_deltas or [],
         }

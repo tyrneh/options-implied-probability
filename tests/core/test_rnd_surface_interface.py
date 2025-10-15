@@ -5,11 +5,14 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 import pytest
+import matplotlib.pyplot as plt
 
 from oipd import MarketInputs, RNDSurface, VolModel
 from oipd.core.ssvi import ssvi_total_variance
 from oipd.core.svi import SVIParameters, svi_total_variance
 from oipd.pricing.black76 import black76_call_price
+from oipd.calibration.raw_svi_surface import calibrate_raw_svi_surface
+from oipd.calibration.ssvi_surface import SSVISliceObservations
 
 
 def make_market(expiry: date | None = None) -> MarketInputs:
@@ -26,7 +29,7 @@ def make_market(expiry: date | None = None) -> MarketInputs:
 
 def build_synthetic_dataframe() -> pd.DataFrame:
     valuation = date(2024, 1, 2)
-    rho, eta, gamma = -0.35, 1.1, 0.6
+    rho, eta, gamma = -0.35, 0.9, 0.3
     maturities = [0.25, 0.5]
     thetas = [0.05, 0.08]
     expiries = [pd.Timestamp(valuation + timedelta(days=int(T * 365))) for T in maturities]
@@ -128,6 +131,8 @@ def test_surface_from_dataframe_defaults_to_ssvi():
 
     diagnostics = surface.check_no_arbitrage()
     assert diagnostics["min_calendar_margin"] >= -1e-3
+    assert len(diagnostics["calendar_margins"]) == 1
+    assert len(diagnostics["calendar_margins"]) == 1
 
 
 def test_surface_rejects_slice_only_vol_methods():
@@ -161,7 +166,7 @@ def test_surface_from_ticker_respects_horizon(monkeypatch):
             valuation = date(2024, 1, 2)
             days = (expiry_dt.date() - valuation).days
             T = max(days / 365.0, 5 / 365.0)
-            rho, eta, gamma = -0.35, 1.1, 0.6
+            rho, eta, gamma = -0.35, 0.9, 0.3
             theta = 0.04 + 0.05 * min(T, 0.7)
             k_grid = np.array([-0.4, -0.2, 0.0, 0.2, 0.4])
             strikes = 100.0 * np.exp(k_grid)
@@ -232,6 +237,61 @@ def test_raw_svi_surface_calibration():
     assert np.allclose(tv, expected, atol=5e-3)
     diagnostics = surface.check_no_arbitrage()
     assert diagnostics["min_calendar_margin"] >= -1e-2
+    assert diagnostics["alpha"] >= 0.0
+    assert len(diagnostics["raw_calendar_margins"]) == len(maturities) - 1
+
+
+def test_raw_svi_alpha_repair():
+    k_grid = np.linspace(-0.4, 0.4, 9)
+    maturities = np.array([0.25, 0.5])
+    params = [
+        SVIParameters(a=0.025, b=0.18, rho=-0.2, m=0.0, sigma=0.28),
+        SVIParameters(a=0.010, b=0.14, rho=-0.2, m=0.02, sigma=0.25),
+    ]
+
+    observations = []
+    for maturity, param in zip(maturities, params):
+        w = svi_total_variance(k_grid, param)
+        observations.append(
+            SSVISliceObservations(
+                maturity=float(maturity),
+                log_moneyness=k_grid,
+                total_variance=w,
+                weights=np.ones_like(k_grid),
+            )
+        )
+
+    vol_model = VolModel(method="raw_svi", strict_no_arbitrage=True)
+    fit = calibrate_raw_svi_surface(observations, vol_model)
+
+    assert fit.alpha > 0.0
+
+    adjusted_margins = []
+    for idx in range(len(fit.slices) - 1):
+        obs_a = observations[idx]
+        obs_b = observations[idx + 1]
+        slice_a = fit.slices[idx]
+        slice_b = fit.slices[idx + 1]
+        w_early = svi_total_variance(k_grid, slice_a.params) + fit.alpha * obs_a.maturity
+        w_late = svi_total_variance(k_grid, slice_b.params) + fit.alpha * obs_b.maturity
+        adjusted_margins.append(np.min(w_late - w_early))
+
+    assert min(adjusted_margins) >= -1e-6
+
+
+def test_surface_plot_iv_grid_and_overlay():
+    data = build_synthetic_dataframe()
+    surface = RNDSurface.from_dataframe(data, make_market())
+
+    fig_overlay = surface.plot_iv(num_points=20)
+    legend = fig_overlay.axes[0].get_legend()
+    if legend is not None:
+        assert all(text.get_color() == "black" for text in legend.get_texts())
+    plt.close(fig_overlay)
+
+    fig_grid = surface.plot_iv(view="grid", num_points=20)
+    assert len(fig_grid.axes) >= 1
+    plt.close(fig_grid)
 
 
 def test_ssvi_alpha_tilt_applied():

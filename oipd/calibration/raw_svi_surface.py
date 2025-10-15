@@ -31,21 +31,27 @@ class RawSVISurfaceFit:
     min_calendar_margin: float
     min_butterfly: float
     objective: float
+    alpha: float = 0.0
+    raw_calendar_margins: list[float] | None = None
+    raw_calendar_deltas: list[float] | None = None
 
 
-def _calendar_margin(
+def _calendar_metrics(
     slices: Sequence[RawSVISliceFit],
     *,
     grid: np.ndarray,
-) -> float:
+) -> tuple[float, list[float], list[float]]:
     if len(slices) < 2:
-        return float("inf")
-    margins = []
+        return float("inf"), [], []
+    margins: list[float] = []
+    deltas: list[float] = []
     for early, late in zip(slices[:-1], slices[1:]):
         w_early = svi_total_variance(grid, early.params)
         w_late = svi_total_variance(grid, late.params)
-        margins.append(np.min(w_late - w_early))
-    return float(np.min(margins)) if margins else float("inf")
+        margins.append(float(np.min(w_late - w_early)))
+        deltas.append(float(late.maturity - early.maturity))
+    min_margin = float(np.min(margins)) if margins else float("inf")
+    return min_margin, margins, deltas
 
 
 def _min_butterfly(
@@ -108,8 +114,24 @@ def calibrate_raw_svi_surface(
     k_max = float(np.max(all_k)) + 0.5
     k_grid = np.linspace(k_min, k_max, 201)
 
-    calendar_margin = _calendar_margin(fitted_slices, grid=k_grid)
+    calendar_margin, pair_margins, pair_deltas = _calendar_metrics(fitted_slices, grid=k_grid)
     butterfly_min = _min_butterfly(fitted_slices, grid=k_grid)
+
+    alpha_tilt = 0.0
+    if vol_model.strict_no_arbitrage and pair_margins:
+        requirements = [
+            (-margin) / delta
+            for margin, delta in zip(pair_margins, pair_deltas)
+            if margin < -1e-6 and delta > 0.0
+        ]
+        if requirements:
+            alpha_tilt = max(requirements)
+            alpha_tilt = max(alpha_tilt, 0.0)
+            adjusted_margins = [
+                margin + alpha_tilt * max(delta, 0.0)
+                for margin, delta in zip(pair_margins, pair_deltas)
+            ]
+            calendar_margin = float(np.min(adjusted_margins)) if adjusted_margins else calendar_margin
 
     if vol_model.strict_no_arbitrage and calendar_margin < -1e-3:
         raise CalculationError(
@@ -121,4 +143,7 @@ def calibrate_raw_svi_surface(
         min_calendar_margin=calendar_margin,
         min_butterfly=butterfly_min,
         objective=total_objective,
+        alpha=alpha_tilt,
+        raw_calendar_margins=pair_margins,
+        raw_calendar_deltas=pair_deltas,
     )

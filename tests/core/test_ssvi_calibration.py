@@ -27,7 +27,7 @@ def test_calibrate_ssvi_surface_recovers_parameters():
     theta_true = np.array([0.05, 0.07, 0.11])
     rho_true = -0.35
     eta_true = 1.2
-    gamma_true = 0.6
+    gamma_true = 0.3
 
     observations = make_observations(theta_true, maturities, rho_true, eta_true, gamma_true)
     vol_model = VolModel(method="ssvi", strict_no_arbitrage=True)

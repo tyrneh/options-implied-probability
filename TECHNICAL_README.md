@@ -100,7 +100,7 @@ VolModel(
 - When `method` is `None`, `RND` defaults to a raw SVI slice, while `RNDSurface` defaults to an SSVI surface.
 - Use `"svi-jw"` to seed the slice fitter in Jump-Wings parameters; `"bspline"` keeps the legacy smoothing spline.
 - On term structures, choose between theorem-backed `"ssvi"` or a penalty-stitched raw SVI surface via `"raw_svi"`.
-- `strict_no_arbitrage=True` enforces butterfly and calendar checks (SSVI inequalities, calendar margins, and the raw SVI crossedness diagnostic).
+- `strict_no_arbitrage=True` enforces butterfly and calendar checks (SSVI inequalities and monotone θ when fitting SSVI; butterfly diagnostics, calendar crossedness, and an automatic Gatheral α-tilt when stitching raw SVI slices).
 
 Diagnostics from SVI calibration, including the selected JW parameters, weights, and optimiser lineage, are attached to the fitted smile via `vol_curve.diagnostics`. You can log progress by installing handlers on the package logger exposed through `oipd.logging.configure_logging()`.
 
@@ -176,13 +176,22 @@ surface_raw = RNDSurface.from_dataframe(
     market,
     vol=VolModel(method="raw_svi"),  # penalty-stitched raw SVI
 )
+
+diagnostics = surface.check_no_arbitrage()
+diagnostics["calendar_margins"]        # per-adjacent-maturity calendar margins
+diagnostics["min_theta_phi_margin"]    # tightest Gatheral inequality margin
+
+raw_diag = surface_raw.check_no_arbitrage()
+raw_diag["alpha"]                      # α-tilt applied to repair any residual crossings
+raw_diag["raw_calendar_margins"]       # pre-tilt calendar margins between slices
 ```
 
 Key requirements:
 
 - `from_dataframe` expects an `expiry` column with actual dates (one row per quote); the loader groups maturities automatically.
 - `from_ticker` infers the maturity set from the vendor and filters by the requested `horizon`. Accepts strings like `"90D"`, `"6M"`, or floats/ints for years/days.
-- When `strict_no_arbitrage=True`, SSVI enforces the Gatheral–Jacquier inequalities and calendar monotonicity; the raw SVI mode checks butterfly diagnostics and calendar crossedness margins, raising `CalculationError` when violations exceed a small tolerance.
+- When `strict_no_arbitrage=True`, SSVI enforces the Gatheral–Jacquier inequalities and calendar monotonicity by construction; the raw SVI mode checks butterfly diagnostics and calendar crossedness margins, applying Gatheral’s α-tilt automatically and raising `CalculationError` only if the repaired surface still violates the tolerance.
+- Low-level validators are available for bespoke workflows: `check_butterfly` (raw SVI), `check_ssvi_constraints`, and `check_ssvi_calendar`. Each returns both the minimum margin and the per-slice values so you can plug the diagnostics into bespoke dashboards or alerts.
 
 ---
 
@@ -209,10 +218,10 @@ However, it's important to note that risk-neutral probabilities (what OIPD calcu
 The process of generating the PDFs and CDFs is as follows:
 
 1. For an underlying asset, options data along the full range of strike prices are read from a source file to create a DataFrame. This gives us a table of strike prices along with the last or mid price[^1] each option sold for
-2. Apply put–call parity preprocessing: estimate the forward from near‑ATM call–put pairs
-3. Based on the forward price, restrict to OTM options. Keep calls above the forward and replace in‑the‑money calls with synthetic calls constructed from OTM puts via parity, to reduce noise from illiquid ITM quotes[^2].
-4. Using the chosen pricing model (Black‑76 as it works with forward prices[^3]) we convert strike prices into implied volatilities (IV)[^4]. IV are solved using either Newton's Method or Brent's root‑finding algorithm, as specified by the `solver_method` argument
-5. Fit the implied-volatility smile using the configured surface model. For single expiries we calibrate a raw SVI slice by default, constraining the raw parameters (`b ≥ 0`, `|ρ| ≤ ρ_bound < 1`, `σ ≥ σ_min`) and enforcing the Gatheral–Jacquier minimum-variance condition `a + b σ √(1 − ρ²) ≥ 0`. After calibration we evaluate the butterfly diagnostic `g(k)` on an extended log-moneyness grid; if `min_g < 0` a `CalculationError` is raised. Users can opt into the historical cubic B-spline smoother with `surface_method="bspline"`. For term structures, the default `VolModel(method="ssvi")` calibrates a theorem-backed SSVI surface that also enforces calendar monotonicity and the Corollary 4.1 inequalities; the `method="raw_svi"` alternative fits each slice independently and penalises calendar crossedness.
+2. Filter stale quotes symmetrically across puts and calls: for each strike, if either leg is older than `max_staleness_days`, the entire strike is discarded. This removes parity-induced artefacts later in the pipeline.
+3. Apply put–call parity preprocessing: estimate the forward from near‑ATM call–put pairs and manufacture synthetic calls from puts for strikes at or below the forward[^2].
+4. Using the chosen pricing model (Black‑76 as it works with forward prices[^3]) we convert strike prices into implied volatilities (IV)[^4]. IV are solved using either Newton's Method or Brent's root‑finding algorithm, as specified by the `solver_method` argument, and each quote is assigned a vega-based weight (with an ATM boost) so calibration emphasises the most P&L-relevant strikes.
+5. Fit the implied-volatility smile using the configured surface model. For single expiries we calibrate a raw SVI slice by default, constraining the raw parameters (`b ≥ 0`, `|ρ| ≤ ρ_bound < 1`, `σ ≥ σ_min`) and enforcing the Gatheral–Jacquier minimum-variance condition `a + b σ √(1 − ρ²) ≥ 0`. After calibration we evaluate the butterfly diagnostic `g(k)` on an extended log-moneyness grid; if `min_g < 0` a `CalculationError` is raised. Users can opt into the historical cubic B-spline smoother with `surface_method="bspline"`. For term structures, the default `VolModel(method="ssvi")` calibrates a theorem-backed SSVI surface that enforces the Gatheral–Jacquier inequalities and calendar monotonicity via a rectangular parameter transform (monotone θ, bounded ρ/γ, η capped per slice). The `method="raw_svi"` alternative fits each slice independently, reports calendar margins, and when `strict_no_arbitrage=True` applies Gatheral’s α-tilt automatically if slices cross.
 6. From the volatility smile, we use the same pricing model to convert IVs back to prices. Thus, we arrive at a continuous curve of options prices along the full range of strike prices
 7. From the continuous price curve, we use numerical differentiation to get the first derivative of prices. Then we numerically differentiate again to get the second derivative of prices. The second derivative of prices multiplied by a discount factor $\exp^{r*\uptau}$, results in the probability density function [^6]
 8. Once we have the PDF, we can calculate the CDF
