@@ -9,7 +9,7 @@ import numpy as np
 from scipy import interpolate
 
 
-RHO_BOUND: float = 0.95
+RHO_BOUND: float = 0.999
 
 
 def phi_eta_gamma(theta: np.ndarray | float, eta: float, gamma: float) -> np.ndarray:

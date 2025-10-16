@@ -79,7 +79,9 @@ surface.price(K=[380], t=1.0)        # forward-measure call price via Black-76
 diagnostics = surface.check_no_arbitrage()
 diagnostics["calendar_margins"]      # per-step calendar spread margins (should be >= 0)
 diagnostics["min_theta_phi_margin"]  # Gatheral inequality margins enforced during fit
-surface.plot_iv()                    # overlay log-moneyness smiles across maturities
+surface.plot_iv()                               # overlay log-moneyness smiles across maturities
+surface.plot_iv(layout="grid")                # per-maturity grid with observed quotes
+surface.plot_iv_3d()                           # interactive 3D volatility surface (Plotly)
 
 # Prefer a penalty-stitched raw SVI surface instead of theorem-backed SSVI
 raw_surface = RNDSurface.from_dataframe(

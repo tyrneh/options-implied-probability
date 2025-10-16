@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
+
 import numpy as np
 import pandas as pd
 import pytest
-import matplotlib.pyplot as plt
 
 from oipd import MarketInputs, RNDSurface, VolModel
 from oipd.core.ssvi import ssvi_total_variance
@@ -131,7 +136,6 @@ def test_surface_from_dataframe_defaults_to_ssvi():
 
     diagnostics = surface.check_no_arbitrage()
     assert diagnostics["min_calendar_margin"] >= -1e-3
-    assert len(diagnostics["calendar_margins"]) == 1
     assert len(diagnostics["calendar_margins"]) == 1
 
 
@@ -279,21 +283,6 @@ def test_raw_svi_alpha_repair():
     assert min(adjusted_margins) >= -1e-6
 
 
-def test_surface_plot_iv_grid_and_overlay():
-    data = build_synthetic_dataframe()
-    surface = RNDSurface.from_dataframe(data, make_market())
-
-    fig_overlay = surface.plot_iv(num_points=20)
-    legend = fig_overlay.axes[0].get_legend()
-    if legend is not None:
-        assert all(text.get_color() == "black" for text in legend.get_texts())
-    plt.close(fig_overlay)
-
-    fig_grid = surface.plot_iv(view="grid", num_points=20)
-    assert len(fig_grid.axes) >= 1
-    plt.close(fig_grid)
-
-
 def test_ssvi_alpha_tilt_applied():
     data = build_synthetic_dataframe()
     surface = RNDSurface.from_dataframe(data, make_market())
@@ -316,3 +305,47 @@ def test_ssvi_alpha_tilt_applied():
     w_tilted = surface.total_variance(k_grid, t)
     expected = w_base + alpha * t
     assert np.allclose(w_tilted, expected, atol=1e-12)
+
+
+def test_surface_plot_iv_overlay_legend_text_color():
+    data = build_synthetic_dataframe()
+    surface = RNDSurface.from_dataframe(data, make_market())
+
+    fig = surface.plot_iv()
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    legend_colors = {to_hex(text.get_color()) for text in legend.get_texts()}
+    assert legend_colors == {"#333333"}
+    plt.close(fig)
+
+
+def test_surface_plot_iv_grid_layout_axes_count():
+    data = build_synthetic_dataframe()
+    surface = RNDSurface.from_dataframe(data, make_market())
+
+    fig = surface.plot_iv(layout="grid", figsize=(4.0, 3.0))
+    fitted_lines = sum(
+        1 for ax in fig.axes for line in ax.lines if line.get_label() == "Fitted IV"
+    )
+    assert fitted_lines >= len(surface.expiries)
+    plt.close(fig)
+
+
+def test_surface_plot_iv_grid_includes_observed_quotes():
+    data = build_synthetic_dataframe()
+    surface = RNDSurface.from_dataframe(data, make_market())
+
+    fig = surface.plot_iv(layout="grid")
+    assert any(ax.collections for ax in fig.axes)
+    plt.close(fig)
+
+
+def test_surface_plot_iv_3d_returns_plotly_figure():
+    plotly = pytest.importorskip("plotly.graph_objects")
+
+    data = build_synthetic_dataframe()
+    surface = RNDSurface.from_dataframe(data, make_market())
+
+    fig = surface.plot_iv_3d()
+    assert isinstance(fig, plotly.Figure)
+    assert fig.data

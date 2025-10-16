@@ -153,7 +153,7 @@ def test_plot_iv_smile_marker_style_shows_bid_ask_markers():
     result.meta["observed_iv_bid"] = bid_points
     result.meta["observed_iv_ask"] = ask_points
 
-    fig = result.plot_iv(observed_style="markers")
+    fig = result.plot_iv(observations="markers")
     ax = fig.axes[0]
 
     labels = {coll.get_label() for coll in ax.collections if coll.get_label()}
@@ -165,8 +165,8 @@ def test_plot_iv_smile_marker_style_shows_bid_ask_markers():
     plt.close(fig)
 
 
-def test_plot_iv_smile_can_hide_observed_points():
-    """Verify scatter points can be suppressed for the smile plot."""
+def test_plot_iv_smile_omits_reference_line():
+    """Ensure the smile plot omits the reference price marker."""
     chain = _build_sample_chain()
     market = _build_market_inputs()
 
@@ -174,12 +174,12 @@ def test_plot_iv_smile_can_hide_observed_points():
         chain, market, model=ModelParams(price_method="last", pricing_engine="bs")
     )
 
-    fig = result.plot_iv(include_observed=False)
+    fig = result.plot_iv()
     ax = fig.axes[0]
 
     line_labels = [line.get_label() for line in ax.lines]
     assert "Fitted IV" in line_labels
-    assert not ax.collections
+    assert len(ax.lines) == 1
 
     plt.close(fig)
 

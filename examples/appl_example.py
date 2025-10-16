@@ -52,10 +52,5 @@ plt.show()
 
 
 # fetch fitted IV smile from results object
-est_appl.plot_iv(observed_style="range", x_axis="strike")
+est_appl.plot_iv(observations="range", x_axis="log_moneyness")
 plt.show()
-
-# get the fitted IV smile as a dataframe
-# columns: strike, fitted_iv, bid_iv, ask_iv, last_iv
-# bid_iv, ask_iv, last_iv are the observed implied volatilities from the raw bids, asks, and last prices
-est_appl.iv_smile()

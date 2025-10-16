@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
-import math
 import re
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Literal
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Literal, Any
 
 import numpy as np
 import pandas as pd
@@ -31,6 +30,8 @@ from oipd.market_inputs import MarketInputs, ResolvedMarket, VendorSnapshot, res
 from oipd.pricing.black76 import black76_call_price
 from oipd.pricing.utils import prepare_dividends
 from oipd.vendor import get_reader
+from oipd.graphics.iv_plotting import plot_iv_surface
+from oipd.graphics.iv_surface_3d import plot_iv_surface_3d
 
 SSVI_WEIGHT_CAP = 50.0
 ATM_WEIGHT_MULTIPLIER = 5.0
@@ -134,11 +135,16 @@ class RNDSurface:
         self._prepared_observations: Tuple[SSVISliceObservations, ...]
         self._forwards: Dict[float, float]
         self._markets_by_maturity: Dict[float, ResolvedMarket]
+        self._observed_iv_by_maturity: Dict[float, Dict[str, pd.DataFrame]]
         self._ssvi_fit: Optional[SSVISurfaceFit] = None
         self._raw_fit: Optional[RawSVISurfaceFit] = None
         self._fit_kind: str = self.vol_model.method or "ssvi"
 
-        self._prepared_observations, self._forwards = self._prepare_observations()
+        (
+            self._prepared_observations,
+            self._forwards,
+            self._observed_iv_by_maturity,
+        ) = self._prepare_observations()
 
         if self.vol_model.method == "ssvi":
             self._ssvi_fit = calibrate_ssvi_surface(self._prepared_observations, self.vol_model)
@@ -156,7 +162,12 @@ class RNDSurface:
 
     def _prepare_single_slice(
         self, slice_data: SurfaceSliceData
-    ) -> tuple[SSVISliceObservations, float, ResolvedMarket]:
+    ) -> tuple[
+        SSVISliceObservations,
+        float,
+        ResolvedMarket,
+        Dict[str, pd.DataFrame],
+    ]:
         """Preprocess raw option quotes into total variance observations."""
 
         resolved = slice_data.market
@@ -216,41 +227,7 @@ class RNDSurface:
             effective_dividend,
         )
 
-        bid_iv = None
-        ask_iv = None
-        strikes_sorted = iv_df["strike"].to_numpy(dtype=float)
-
-        if "bid" in priced.columns:
-            bid_frame = priced.loc[(priced["bid"].notna()) & (priced["bid"] > 0.0)].copy()
-            if not bid_frame.empty:
-                bid_frame = bid_frame.assign(price=bid_frame["bid"])
-                bid_iv_df = compute_iv(
-                    bid_frame,
-                    underlying_for_iv,
-                    resolved,
-                    self.model.solver,
-                    self.model.pricing_engine,
-                    effective_dividend,
-                )
-                bid_iv_series = bid_iv_df.set_index("strike")["iv"]
-                bid_iv = bid_iv_series.reindex(strikes_sorted).to_numpy(dtype=float)
-
-        if "ask" in priced.columns:
-            ask_frame = priced.loc[(priced["ask"].notna()) & (priced["ask"] > 0.0)].copy()
-            if not ask_frame.empty:
-                ask_frame = ask_frame.assign(price=ask_frame["ask"])
-                ask_iv_df = compute_iv(
-                    ask_frame,
-                    underlying_for_iv,
-                    resolved,
-                    self.model.solver,
-                    self.model.pricing_engine,
-                    effective_dividend,
-                )
-                ask_iv_series = ask_iv_df.set_index("strike")["iv"]
-                ask_iv = ask_iv_series.reindex(strikes_sorted).to_numpy(dtype=float)
-
-        strikes = strikes_sorted
+        strikes = iv_df["strike"].to_numpy(dtype=float)
         iv_values = iv_df["iv"].to_numpy(dtype=float)
         maturity_years = resolved.days_to_expiry / 365.0
         if maturity_years <= 0:
@@ -268,11 +245,6 @@ class RNDSurface:
         total_variance = total_variance[finite_mask]
         if log_mny.size < 3:
             raise CalculationError("Insufficient viable quotes for surface calibration")
-
-        if bid_iv is not None:
-            bid_iv = bid_iv[finite_mask]
-        if ask_iv is not None:
-            ask_iv = ask_iv[finite_mask]
 
         weights_array, _ = _vega_based_weights(
             log_mny,
@@ -295,28 +267,67 @@ class RNDSurface:
         log_mny = log_mny[order]
         total_variance = total_variance[order]
         weights = weights[order]
-        if bid_iv is not None:
-            bid_iv = np.asarray(bid_iv, dtype=float)[order]
-        if ask_iv is not None:
-            ask_iv = np.asarray(ask_iv, dtype=float)[order]
 
         observation = SSVISliceObservations(
             maturity=maturity_years,
             log_moneyness=log_mny,
             total_variance=total_variance,
             weights=weights,
-            bid_iv=bid_iv,
-            ask_iv=ask_iv,
         )
 
-        return observation, float(underlying_for_iv), resolved
+        def _compute_observed_iv(price_column: str) -> pd.DataFrame | None:
+            if price_column not in parity_adjusted.columns:
+                return None
+            subset = parity_adjusted.loc[
+                parity_adjusted[price_column].notna()
+                & (parity_adjusted[price_column] > 0)
+            ].copy()
+            if subset.empty:
+                return None
+            subset["price"] = subset[price_column]
+            try:
+                observed = compute_iv(
+                    subset,
+                    underlying_for_iv,
+                    resolved,
+                    self.model.solver,
+                    self.model.pricing_engine,
+                    effective_dividend,
+                )
+            except Exception:
+                return None
 
-    def _prepare_observations(self) -> tuple[Tuple[SSVISliceObservations, ...], Dict[float, float]]:
+            columns = ["strike", "iv"]
+            if "option_type" in observed.columns:
+                columns.append("option_type")
+            return observed.loc[:, columns]
+
+        observed_payload: Dict[str, pd.DataFrame] = {}
+        bid_iv = _compute_observed_iv("bid")
+        if bid_iv is not None:
+            observed_payload["bid"] = bid_iv
+        ask_iv = _compute_observed_iv("ask")
+        if ask_iv is not None:
+            observed_payload["ask"] = ask_iv
+        last_iv = _compute_observed_iv("last_price")
+        if last_iv is not None:
+            observed_payload["last"] = last_iv
+
+        return observation, float(underlying_for_iv), resolved, observed_payload
+
+    def _prepare_observations(
+        self,
+    ) -> tuple[
+        Tuple[SSVISliceObservations, ...],
+        Dict[float, float],
+        Dict[float, Dict[str, pd.DataFrame]],
+    ]:
         """Prepare all expiries for SSVI calibration."""
 
         observations: List[SSVISliceObservations] = []
         forwards: Dict[float, float] = {}
         markets: Dict[float, ResolvedMarket] = {}
+        observed_iv_map: Dict[float, Dict[str, pd.DataFrame]] = {}
 
         sorted_slices = sorted(
             self._raw_slices,
@@ -324,16 +335,17 @@ class RNDSurface:
         )
 
         for slice_data in sorted_slices:
-            obs, forward, resolved = self._prepare_single_slice(slice_data)
+            obs, forward, resolved, observed_iv = self._prepare_single_slice(slice_data)
             observations.append(obs)
             forwards[obs.maturity] = forward
             markets[obs.maturity] = resolved
+            observed_iv_map[obs.maturity] = observed_iv
 
         if not observations:
             raise CalculationError("No valid expiries available for surface calibration")
 
         self._markets_by_maturity = markets
-        return tuple(observations), forwards
+        return tuple(observations), forwards, observed_iv_map
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -561,180 +573,85 @@ class RNDSurface:
     def plot_iv(
         self,
         *,
-        maturities: Optional[Sequence[float]] = None,
-        num_points: int = 200,
         x_axis: Literal["log_moneyness", "strike"] = "log_moneyness",
         figsize: tuple[float, float] = (10.0, 5.0),
         title: Optional[str] = None,
-        style: Literal["publication", "default"] = "publication",
-        source: Optional[str] = None,
-        view: Literal["overlay", "grid"] = "overlay",
+        layout: Literal["overlay", "grid"] = "overlay",
     ):
         """Plot implied-volatility slices across maturities.
 
         Args:
-            maturities: Optional sequence of maturities (year fractions) to plot.
-            num_points: Number of points in the evaluation grid per slice.
-            x_axis: ``"log_moneyness"`` (default) or ``"strike"`` axis.
-            figsize: Matplotlib figure size.
-            title: Optional figure title.
-            style: Plot styling configuration.
-            source: Optional footer text (publication style only).
-            view: ``"overlay"`` plots all slices on a single chart; ``"grid"`` renders
-                a matrix of subplots with bid/ask envelopes per slice.
+            x_axis: Axis definition, ``"log_moneyness"`` or ``"strike"``.
+            figsize: Matplotlib figure size in inches. When ``layout`` is set to
+                ``"grid"``, the tuple represents the per-subplot dimensions
+                before scaling by the grid arrangement.
+            title: Custom chart title.
+            layout: ``"overlay"`` to draw all smiles on one axes, or ``"grid"``
+                to allocate one subplot per maturity. Observed market IVs are
+                automatically overlaid in grid mode.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing the plotted slices.
+
+        Raises:
+            ImportError: If Matplotlib is unavailable.
+            ValueError: If invalid axis mode or sampling density is provided.
+            CalculationError: If the surface lacks calibrated observations.
+        """
+        return plot_iv_surface(
+            self._prepared_observations,
+            total_variance=self.total_variance,
+            infer_forward=lambda maturity: self._infer_forward(maturity, None),
+            axis_mode=x_axis,
+            figsize=figsize,
+            title=title,
+            layout=layout,
+            markets_by_maturity=getattr(self, "_markets_by_maturity", None),
+            include_observed=True,
+            observed_style="range",
+            scatter_kwargs=None,
+            observed_iv_by_maturity=getattr(
+                self, "_observed_iv_by_maturity", None
+            ),
+        )
+
+    def plot_iv_3d(
+        self,
+        *,
+        figsize: tuple[float, float] = (10.0, 6.0),
+        title: Optional[str] = None,
+        x_axis: Literal["log_moneyness", "strike"] = "log_moneyness",
+        show_observed: bool = False,
+    ):
+        """Render the fitted implied-volatility surface as a 3D Plotly figure.
+
+        Args:
+            figsize: Plot dimensions in inches (width, height).
+            title: Optional chart title. When omitted a default is used.
+            x_axis: Axis definition for strikes, ``"log_moneyness"`` or ``"strike"``.
+            show_observed: Whether to overlay observed implied volatilities.
+
+        Returns:
+            plotly.graph_objects.Figure: Interactive Plotly figure.
+
+        Raises:
+            ImportError: If Plotly is unavailable.
+            CalculationError: If the surface cannot be evaluated.
         """
 
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError(
-                "Matplotlib is required for plotting. Install with: pip install matplotlib"
-            ) from exc
-
-        style_axes = None
-        if style == "publication":
-            from oipd.graphics.publication import (
-                _apply_publication_style,
-                _style_publication_axes,
-            )
-
-            _apply_publication_style(plt)
-            style_axes = _style_publication_axes
-
-        observations = self._prepared_observations
-        if not observations:
-            raise CalculationError("Surface calibration has no observations to plot")
-
-        available_maturities = [obs.maturity for obs in observations]
-        if maturities is None:
-            plot_maturities = available_maturities
-        else:
-            plot_maturities = []
-            for t in maturities:
-                tolerance = 5e-3
-                matched = None
-                for available in available_maturities:
-                    if abs(available - t) < tolerance:
-                        matched = available
-                        break
-                if matched is None:
-                    matched = float(t)
-                plot_maturities.append(matched)
-
-        if num_points < 5:
-            raise ValueError("num_points must be at least 5 for plotting")
-
-        all_k = np.concatenate([obs.log_moneyness for obs in observations])
-        k_min = float(np.min(all_k))
-        k_max = float(np.max(all_k))
-        if not np.isfinite(k_min) or not np.isfinite(k_max):
-            raise CalculationError("Invalid log-moneyness range for plotting")
-        padding = 0.05 * (k_max - k_min if k_max > k_min else 1.0)
-        k_grid = np.linspace(k_min - padding, k_max + padding, num_points)
-
-        axis_mode = x_axis.lower()
-        if axis_mode not in {"log_moneyness", "strike"}:
-            raise ValueError("x_axis must be 'log_moneyness' or 'strike'")
-
-        def _axis_values(k: np.ndarray, forward: float) -> np.ndarray:
-            if axis_mode == "log_moneyness":
-                return k
-            return forward * np.exp(k)
-
-        if view == "overlay":
-            fig, ax = plt.subplots(figsize=figsize)
-
-            for maturity in plot_maturities:
-                forward = self._infer_forward(maturity, None)
-                total_var = self.total_variance(k_grid, maturity)
-                iv_curve = np.sqrt(np.maximum(total_var / max(maturity, 1e-8), 1e-12))
-                label_days = int(round(maturity * 365))
-                label = f"{label_days}d"
-                ax.plot(_axis_values(k_grid, forward), iv_curve, label=label)
-
-            ax.set_xlabel("Log Moneyness" if axis_mode == "log_moneyness" else "Strike")
-            ax.set_ylabel("Implied Volatility")
-            display_title = title or "Implied Volatility Surface"
-            ax.set_title(display_title)
-            legend = ax.legend(loc="best")
-            if legend is not None:
-                for text in legend.get_texts():
-                    text.set_color("black")
-
-            if style_axes is not None:
-                style_axes(ax)
-            if source and style == "publication":
-                fig.text(0.99, 0.01, source, ha="right", va="bottom", fontsize=8, alpha=0.6)
-
-            return fig
-
-        if view != "grid":
-            raise ValueError("view must be either 'overlay' or 'grid'")
-
-        num_slices = len(plot_maturities)
-        if num_slices == 0:
-            raise CalculationError("Surface calibration has no maturities to plot")
-
-        cols = min(3, num_slices)
-        rows = math.ceil(num_slices / cols)
-        fig, axes = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
-
-        flat_axes = axes.flatten()
-        for ax in flat_axes[num_slices:]:
-            ax.axis("off")
-
-        for ax, maturity in zip(flat_axes, plot_maturities):
-            forward = self._infer_forward(maturity, None)
-            total_var = self.total_variance(k_grid, maturity)
-            iv_curve = np.sqrt(np.maximum(total_var / max(maturity, 1e-8), 1e-12))
-            ax.plot(_axis_values(k_grid, forward), iv_curve, color="C0", label="model")
-
-            obs = None
-            for candidate in observations:
-                if abs(candidate.maturity - maturity) < 5e-3:
-                    obs = candidate
-                    break
-            if obs is not None:
-                x_obs = _axis_values(obs.log_moneyness, forward)
-                bid_iv = getattr(obs, "bid_iv", None)
-                ask_iv = getattr(obs, "ask_iv", None)
-                if bid_iv is not None and ask_iv is not None:
-                    mask = np.isfinite(bid_iv) & np.isfinite(ask_iv)
-                    if mask.any():
-                        ax.fill_between(
-                            x_obs[mask],
-                            bid_iv[mask],
-                            ask_iv[mask],
-                            color="C2",
-                            alpha=0.2,
-                            label="bid/ask",
-                        )
-                elif bid_iv is not None:
-                    mask = np.isfinite(bid_iv)
-                    if mask.any():
-                        ax.scatter(x_obs[mask], bid_iv[mask], color="C2", alpha=0.6, label="bid")
-                elif ask_iv is not None:
-                    mask = np.isfinite(ask_iv)
-                    if mask.any():
-                        ax.scatter(x_obs[mask], ask_iv[mask], color="C3", alpha=0.6, label="ask")
-
-            ax.set_xlabel("Log Moneyness" if axis_mode == "log_moneyness" else "Strike")
-            ax.set_ylabel("Implied Volatility")
-            label_days = int(round(maturity * 365))
-            ax.set_title(f"{label_days}d")
-            legend = ax.legend(loc="best")
-            if legend is not None:
-                for text in legend.get_texts():
-                    text.set_color("black")
-            if style_axes is not None:
-                style_axes(ax)
-
-        if title:
-            fig.suptitle(title)
-        if source and style == "publication":
-            fig.text(0.99, 0.01, source, ha="right", va="bottom", fontsize=8, alpha=0.6)
-
-        return fig
+        return plot_iv_surface_3d(
+            self._prepared_observations,
+            total_variance=self.total_variance,
+            infer_forward=lambda maturity: self._infer_forward(maturity, None),
+            figsize=figsize,
+            title=title,
+            x_axis=x_axis,
+            show_observed=show_observed,
+            markets_by_maturity=getattr(self, "_markets_by_maturity", None),
+            observed_iv_by_maturity=getattr(
+                self, "_observed_iv_by_maturity", None
+            ),
+        )
 
     def total_variance(self, k: np.ndarray | Iterable[float], t: float) -> np.ndarray:
         if self._fit_kind == "ssvi":

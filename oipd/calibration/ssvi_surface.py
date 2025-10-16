@@ -36,18 +36,12 @@ class SSVISliceObservations:
         log_moneyness: Array of log-moneyness coordinates.
         total_variance: Observed total variance on ``log_moneyness`` grid.
         weights: Non-negative weights for each observation.
-        bid_iv: Optional array of observed bid implied volatilities aligned with
-            ``log_moneyness``.
-        ask_iv: Optional array of observed ask implied volatilities aligned with
-            ``log_moneyness``.
     """
 
     maturity: float
     log_moneyness: np.ndarray
     total_variance: np.ndarray
     weights: np.ndarray
-    bid_iv: np.ndarray | None = None
-    ask_iv: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Protocol, Optional, Dict, Literal, Any, Mapping, Sequence, Callable
+from typing import Protocol, Optional, Dict, Literal, Any, Mapping, Sequence
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -37,6 +37,7 @@ from oipd.market_inputs import (
     resolve_market,
     FillMode,
 )
+from oipd.graphics.iv_plotting import ReferenceAnnotation, plot_iv_smile
 
 
 # ---------------------------------------------------------------------------
@@ -441,147 +442,38 @@ class RNDResult:
     def plot_iv(
         self,
         *,
-        strikes: Sequence[float] | np.ndarray | None = None,
-        num_points: int = 200,
-        include_observed: bool = True,
         figsize: tuple[float, float] = (10, 5),
         title: Optional[str] = None,
-        style: Literal["publication", "default"] = "publication",
-        source: Optional[str] = None,
-        show_reference: bool = True,
-        line_kwargs: Optional[Dict[str, Any]] = None,
-        scatter_kwargs: Optional[Dict[str, Any]] = None,
-        observed_style: Literal["range", "markers"] = "range",
+        observations: Literal["range", "markers"] = "range",
         x_axis: Literal["log_moneyness", "strike"] = "log_moneyness",
         xlim: Optional[tuple[float, float]] = None,
         ylim: Optional[tuple[float, float]] = None,
     ):
-        """Plot the implied-volatility smile with optional observed quotes.
+        """Plot the implied-volatility smile with observed quotes.
 
         Args:
-            strikes: Optional evaluation strikes for the fitted smile.
-            num_points: Number of points for an auto-generated grid when
-                ``strikes`` is omitted.
-            include_observed: Whether to display observed implied volatilities
-                alongside the fitted curve.
-            figsize: Matplotlib figure size in inches.
-            title: Optional custom title. When omitted, a default based on the
-                expiry date is used.
-            style: Visual theme matching :meth:`plot`.
-            source: Optional attribution text used by the publication style.
-            show_reference: Whether to draw a reference line (forward/spot).
-            line_kwargs: Styling overrides for the fitted curve.
-            scatter_kwargs: Styling overrides for observed points / ranges.
-            observed_style: Either ``"range"`` (default) to draw bid/ask ranges
-                or ``"markers"`` to plot individual quotes as scatter points.
-            x_axis: Coordinate system for the x-axis, ``"log_moneyness"`` by
-                default, or ``"strike"`` for the original view.
-            xlim: Optional x-axis limits.
-            ylim: Optional y-axis limits.
+            figsize: tuple[float, float], default (10, 5)
+                Matplotlib figure size in inches.
+            title: str | None, optional
+                Custom chart title. When omitted a default based on expiry metadata is
+                used.
+            observations: Literal["range", "markers"], default "range"
+                ``"range"`` displays bid/ask ranges; ``"markers"`` scatters the
+                observed quotes.
+            x_axis: Literal["log_moneyness", "strike"], default "log_moneyness"
+                Axis definition for the smile plot.
+            xlim: tuple[float, float] | None, optional
+                Bounds for the x-axis when supplied.
+            ylim: tuple[float, float] | None, optional
+                Bounds for the y-axis when supplied.
 
         Returns:
             matplotlib.figure.Figure: Figure containing the plotted smile.
 
         Raises:
-            ImportError: If Matplotlib is unavailable.
-            ValueError: If ``x_axis`` or ``observed_style`` are unsupported.
+            ValueError: If the requested axis or observed style is unsupported.
         """
-
-        line_kwargs_dict = dict(line_kwargs or {})
-
-        return self._plot_iv_smile(
-            strikes=strikes,
-            num_points=num_points,
-            include_observed=include_observed,
-            figsize=figsize,
-            title=title,
-            style=style,
-            source=source,
-            show_current_price=show_reference,
-            line_kwargs=line_kwargs_dict,
-            scatter_kwargs=scatter_kwargs,
-            observed_style=observed_style,
-            x_axis=x_axis,
-            xlim=xlim,
-            ylim=ylim,
-        )
-
-    def _plot_iv_smile(
-        self,
-        *,
-        strikes: Sequence[float] | np.ndarray | None,
-        num_points: int,
-        include_observed: bool,
-        figsize: tuple[float, float],
-        title: Optional[str],
-        style: Literal["publication", "default"],
-        source: Optional[str],
-        show_current_price: bool,
-        line_kwargs: Dict[str, Any],
-        scatter_kwargs: Optional[Dict[str, Any]],
-        observed_style: Literal["range", "markers"],
-        x_axis: Literal["log_moneyness", "strike"],
-        xlim: Optional[tuple[float, float]],
-        ylim: Optional[tuple[float, float]],
-    ):
-        """Render the implied-volatility smile with optional observed points.
-
-        Args:
-            strikes: Optional evaluation strikes for the fitted smile.
-            num_points: Number of points for an auto-generated grid when
-                ``strikes`` is omitted.
-            include_observed: Whether to display the observed implied
-                volatilities alongside the fitted curve.
-            figsize: Matplotlib figure size in inches.
-            title: Custom plot title. If ``None``, a default based on the expiry
-                date is used.
-            style: Visual theme, mirroring :meth:`plot`.
-            source: Optional attribution text for publication style.
-            show_current_price: Whether to draw a vertical reference line at the
-                current underlying price.
-            line_kwargs: Styling overrides for the fitted curve.
-            scatter_kwargs: Styling overrides for the observed points.
-            observed_style: ``"range"`` to draw vertical bid/ask ranges, or
-                ``"markers"`` to plot individual quotes as scatter points.
-            xlim: Optional x-axis limits.
-            ylim: Optional y-axis limits.
-
-        Returns:
-            matplotlib.figure.Figure: Figure containing the plotted smile.
-
-        Raises:
-            ImportError: If Matplotlib is unavailable.
-            ValueError: If the smile cannot be evaluated.
-        """
-        try:
-            import matplotlib.pyplot as plt
-            import matplotlib.ticker as ticker
-        except ImportError as exc:  # pragma: no cover - import guard
-            raise ImportError(
-                "Matplotlib is required for plotting. Install with: pip install matplotlib"
-            ) from exc
-
-        style_axes: Optional[Callable[[Any], None]] = None
-        if style == "publication":
-            from oipd.graphics.publication import (
-                _apply_publication_style,
-                _style_publication_axes,
-            )
-
-            _apply_publication_style(plt)
-            style_axes = _style_publication_axes
-
-        fig, ax = plt.subplots(1, 1, figsize=figsize)
-
-        smile_df = self.iv_smile(strikes=strikes, num_points=num_points)
-
-        line_config = dict(line_kwargs or {})
-        if "color" not in line_config:
-            line_config["color"] = "#1976D2" if style == "publication" else "tab:blue"
-        if "linewidth" not in line_config:
-            line_config["linewidth"] = 1.5
-        if "label" not in line_config:
-            line_config["label"] = "Fitted IV"
+        smile_df = self.iv_smile()
 
         forward_price = self.meta.get("forward_price")
         spot_price = (
@@ -590,377 +482,47 @@ class RNDResult:
             else None
         )
         reference_price = (
-            float(forward_price)
-            if forward_price is not None
-            else spot_price
+            float(forward_price) if forward_price is not None else spot_price
         )
 
-        axis_mode = x_axis.lower()
-        if axis_mode not in {"log_moneyness", "strike"}:
-            raise ValueError("x_axis must be 'log_moneyness' or 'strike'")
-        if axis_mode == "log_moneyness":
-            if reference_price is None or reference_price <= 0:
-                raise ValueError(
-                    "Positive reference price required for log-moneyness axis"
-                )
-
-        def _to_axis(strike_array: np.ndarray) -> np.ndarray:
-            if axis_mode == "log_moneyness":
-                return np.log(strike_array / reference_price)
-            return strike_array
-
-        strike_values = smile_df["strike"].to_numpy(dtype=float)
-        fitted_x = _to_axis(strike_values)
-        ax.plot(fitted_x, smile_df["fitted_iv"], **line_config)
-
-        if include_observed:
-            observed_kwargs = dict(scatter_kwargs or {})
-            observed_style_normalised = observed_style.lower()
-            if observed_style_normalised not in {"range", "markers"}:
-                raise ValueError("observed_style must be 'range' or 'markers'")
-
-            observed_bid = self.meta.get("observed_iv_bid")
-            observed_ask = self.meta.get("observed_iv_ask")
-            observed_last = self.meta.get("observed_iv_last")
-
-            def _prepare_observed_frame(
-                frame: pd.DataFrame | None, *, label: str
-            ) -> pd.DataFrame:
-                if frame is None or not isinstance(frame, pd.DataFrame) or frame.empty:
-                    return pd.DataFrame(columns=["strike", "iv", "option_type", "label"])
-                df = frame.copy()
-                df["strike"] = df["strike"].astype(float)
-                df = df.dropna(subset=["iv"])
-                if "option_type" in df.columns:
-                    df["option_type"] = (
-                        df["option_type"].astype(str).str.upper().str[0]
-                    )
-                else:
-                    df["option_type"] = "?"
-                df["label"] = label
-                return df.loc[:, ["strike", "iv", "option_type", "label"]]
-
-            if observed_style_normalised == "range":
-                range_color = observed_kwargs.pop(
-                    "color", "#C62828" if style == "publication" else "tab:red"
-                )
-                range_alpha = observed_kwargs.pop("alpha", 0.9)
-                linewidth = observed_kwargs.pop("linewidth", None)
-                if linewidth is None:
-                    linewidth = observed_kwargs.pop("linewidths", 1.5)
-                cap_ratio = observed_kwargs.pop("cap_ratio", 0.2)
-
-                if (
-                    isinstance(observed_bid, pd.DataFrame)
-                    and isinstance(observed_ask, pd.DataFrame)
-                    and not observed_bid.empty
-                    and not observed_ask.empty
-                ):
-                    observed_bid = observed_bid.copy()
-                    observed_ask = observed_ask.copy()
-                    observed_bid["strike"] = observed_bid["strike"].astype(float)
-                    observed_ask["strike"] = observed_ask["strike"].astype(float)
-                    observed_ranges = (
-                        observed_bid.rename(columns={"iv": "bid_iv"})
-                        .merge(
-                            observed_ask.rename(columns={"iv": "ask_iv"}),
-                            on="strike",
-                            how="inner",
-                        )
-                        .dropna()
-                    )
-                else:
-                    observed_ranges = smile_df.dropna(subset=["bid_iv", "ask_iv"])
-
-                if not observed_ranges.empty:
-                    strikes_series = observed_ranges["strike"].to_numpy(dtype=float)
-                    bid_values = observed_ranges["bid_iv"].to_numpy(dtype=float)
-                    ask_values = observed_ranges["ask_iv"].to_numpy(dtype=float)
-                    x_coords = _to_axis(strikes_series)
-
-                    vlines = ax.vlines(
-                        x_coords,
-                        bid_values,
-                        ask_values,
-                        colors=range_color,
-                        linewidth=linewidth,
-                        alpha=range_alpha,
-                    )
-                    vlines.set_label("Bid/Ask IV range")
-
-                    unique_positions = np.unique(x_coords)
-                    if unique_positions.size > 1:
-                        sorted_positions = np.sort(unique_positions)
-                        min_diff = np.min(np.diff(sorted_positions))
-                        cap_half_width = max(min_diff * cap_ratio, 1e-6)
-                    else:
-                        cap_half_width = max(abs(x_coords[0]) * 0.05, 0.1)
-
-                    left = x_coords - cap_half_width
-                    right = x_coords + cap_half_width
-                    ax.hlines(
-                        bid_values,
-                        left,
-                        right,
-                        colors=range_color,
-                        linewidth=linewidth,
-                        alpha=range_alpha,
-                    )
-                    ax.hlines(
-                        ask_values,
-                        left,
-                        right,
-                        colors=range_color,
-                        linewidth=linewidth,
-                        alpha=range_alpha,
-                    )
-
-                if (
-                    (not isinstance(observed_bid, pd.DataFrame) or observed_bid.empty)
-                    and (not isinstance(observed_ask, pd.DataFrame) or observed_ask.empty)
-                    and isinstance(observed_last, pd.DataFrame)
-                    and not observed_last.empty
-                ):
-                    last_df = observed_last.copy()
-                    last_df["strike"] = last_df["strike"].astype(float)
-                    valid_last = last_df.dropna(subset=["iv"])
-                    if not valid_last.empty:
-                        marker_kwargs = dict(scatter_kwargs or {})
-                        marker_kwargs.setdefault(
-                            "color",
-                            "#C62828" if style == "publication" else "tab:red",
-                        )
-                        marker_kwargs.setdefault("alpha", 0.9)
-                        marker_kwargs.setdefault("marker", "o")
-                        marker_kwargs.setdefault("s", 20)
-                        marker_kwargs.setdefault("label", "Observed IV")
-                        ax.scatter(
-                            _to_axis(valid_last["strike"].to_numpy(dtype=float)),
-                            valid_last["iv"],
-                            **marker_kwargs,
-                        )
-            else:
-                call_color = observed_kwargs.pop(
-                    "call_color",
-                    "#EF6C00" if style == "publication" else "tab:orange",
-                )
-                put_color = observed_kwargs.pop(
-                    "put_color",
-                    "#2E7D32" if style == "publication" else "tab:green",
-                )
-                other_color = observed_kwargs.pop(
-                    "other_color",
-                    "#5D4037" if style == "publication" else "tab:brown",
-                )
-                marker_symbol = observed_kwargs.pop("marker", "x")
-                bid_alpha = observed_kwargs.pop("bid_alpha", 0.9)
-                ask_alpha = observed_kwargs.pop("ask_alpha", 0.6)
-                marker_size = observed_kwargs.pop("s", 36)
-                observed_kwargs.pop("alpha", None)
-                observed_kwargs.pop("linewidth", None)
-                observed_kwargs.pop("linewidths", None)
-                observed_kwargs.pop("color", None)
-                observed_kwargs.pop("c", None)
-
-                def _colour_for(option_type: str) -> str:
-                    if option_type == "C":
-                        return call_color
-                    if option_type == "P":
-                        return put_color
-                    return other_color
-
-                def _label_for(option_type: str, quote: str) -> str:
-                    base = (
-                        "Call"
-                        if option_type == "C"
-                        else "Put"
-                        if option_type == "P"
-                        else "Quote"
-                    )
-                    if quote == "bid":
-                        return f"{base} bids"
-                    if quote == "ask":
-                        return f"{base} asks"
-                    return f"{base} IV"
-
-                def _scatter_points(frame: pd.DataFrame, *, alpha: float):
-                    if frame.empty:
-                        return
-                    plotted_labels: set[tuple[str, str]] = set()
-                    for option_type, grouped in frame.groupby("option_type"):
-                        for quote_kind, quote_df in grouped.groupby("label"):
-                            if quote_df.empty:
-                                continue
-                            label_key = (option_type, quote_kind)
-                            label = (
-                                _label_for(option_type, quote_kind)
-                                if label_key not in plotted_labels
-                                else None
-                            )
-                            plotted_labels.add(label_key)
-                            ax.scatter(
-                                _to_axis(quote_df["strike"].to_numpy(dtype=float)),
-                                quote_df["iv"],
-                                color=_colour_for(option_type),
-                                marker=marker_symbol,
-                                s=marker_size,
-                                alpha=alpha,
-                                label=label,
-                                **observed_kwargs,
-                            )
-
-                bid_frame = _prepare_observed_frame(observed_bid, label="bid")
-                if bid_frame.empty and "bid_iv" in smile_df.columns:
-                    fallback_bid = (
-                        smile_df.loc[:, ["strike", "bid_iv"]]
-                        .rename(columns={"bid_iv": "iv"})
-                        .dropna()
-                    )
-                    fallback_bid["option_type"] = "?"
-                    fallback_bid["label"] = "bid"
-                    bid_frame = fallback_bid
-
-                ask_frame = _prepare_observed_frame(observed_ask, label="ask")
-                if ask_frame.empty and "ask_iv" in smile_df.columns:
-                    fallback_ask = (
-                        smile_df.loc[:, ["strike", "ask_iv"]]
-                        .rename(columns={"ask_iv": "iv"})
-                        .dropna()
-                    )
-                    fallback_ask["option_type"] = "?"
-                    fallback_ask["label"] = "ask"
-                    ask_frame = fallback_ask
-
-                _scatter_points(bid_frame, alpha=bid_alpha)
-                _scatter_points(ask_frame, alpha=ask_alpha)
-
-                if (
-                    bid_frame.empty
-                    and ask_frame.empty
-                    and isinstance(observed_last, pd.DataFrame)
-                    and not observed_last.empty
-                ):
-                    last_df = observed_last.copy()
-                    last_df["strike"] = last_df["strike"].astype(float)
-                    valid_last = last_df.dropna(subset=["iv"])
-                    if not valid_last.empty:
-                        marker_kwargs = dict(observed_kwargs)
-                        marker_kwargs.setdefault(
-                            "color",
-                            "#C62828" if style == "publication" else "tab:red",
-                        )
-                        marker_kwargs.setdefault("alpha", 0.9)
-                        marker_kwargs.setdefault("marker", "o")
-                        marker_kwargs.setdefault("s", 20)
-                        marker_kwargs.setdefault("label", "Observed IV")
-                        ax.scatter(
-                            _to_axis(valid_last["strike"].to_numpy(dtype=float)),
-                            valid_last["iv"],
-                            **marker_kwargs,
-                        )
-
-        if axis_mode == "log_moneyness":
-            ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
-        else:
-            ax.set_xlabel("Strike", fontsize=11)
-        ax.set_ylabel("Implied Volatility", fontsize=11)
-        ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
-
-        if style_axes is not None:
-            style_axes(ax)
-
-        ax.relim()
-        ax.autoscale_view()
-
-        if xlim is not None:
-            ax.set_xlim(xlim)
-
-        if ylim is not None:
-            ax.set_ylim(ylim)
-        else:
-            iv_arrays: list[np.ndarray] = [
-                smile_df["fitted_iv"].to_numpy(dtype=float)
-            ]
-            for col in ("bid_iv", "ask_iv", "last_iv"):
-                if col in smile_df.columns:
-                    iv_arrays.append(smile_df[col].to_numpy(dtype=float))
-            iv_values = np.concatenate(
-                [arr[np.isfinite(arr)] for arr in iv_arrays if arr.size]
-            )
-            if iv_values.size == 0:
-                max_iv = 1.0
-            else:
-                max_iv = float(np.max(iv_values))
-            if not np.isfinite(max_iv) or max_iv <= 0:
-                max_iv = 1.0
-            ax.set_ylim(0.0, max_iv * 1.05)
-
-        if show_current_price and reference_price is not None:
-            ref_axis_value = 0.0 if axis_mode == "log_moneyness" else reference_price
-            ax.axvline(
-                x=ref_axis_value,
-                color="#555555",
-                linestyle="--",
-                linewidth=1.0,
-                alpha=0.7,
-            )
-            y_min, y_max = ax.get_ylim()
+        reference_annotation = None
+        if reference_price is not None:
             valuation_date = self.market.valuation_date.strftime("%b %d, %Y")
-            label_text = (
-                f"Parity forward on {valuation_date}\n${reference_price:,.2f}"
-                if forward_price is not None
-                else f"Price on {valuation_date}\n${reference_price:,.2f}"
-            )
-            ax.annotate(
-                label_text,
-                xy=(ref_axis_value, y_min),
-                xytext=(5, 15),
-                textcoords="offset points",
-                fontsize=10,
-                color="#555555",
-                ha="left",
-                va="bottom",
+            label_prefix = "Parity forward on" if forward_price is not None else "Price on"
+            reference_annotation = ReferenceAnnotation(
+                value=float(reference_price),
+                label=f"{label_prefix} {valuation_date}\n${reference_price:,.2f}",
             )
 
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            legend = ax.legend(frameon=False, loc="best")
-            if style == "publication":
-                for text in legend.get_texts():
-                    text.set_color("#333333")
-
-        resolved_title = title
-        if resolved_title is None:
-            expiry_obj = self.market.expiry_date
-            if expiry_obj is not None:
-                resolved_title = f"Implied Volatility Smile (Expiry {expiry_obj.strftime('%b %d, %Y')})"
-            else:
-                resolved_title = "Implied Volatility Smile"
-
-        if style == "publication":
-            plt.subplots_adjust(top=0.85, bottom=0.08 if source else 0.06)
-            fig.suptitle(
-                resolved_title,
-                fontsize=16,
-                fontweight="bold",
-                y=0.92,
-                color="#333333",
-            )
-            if source:
-                fig.text(
-                    0.99,
-                    0.02,
-                    source,
-                    ha="right",
-                    fontsize=9,
-                    color="#666666",
-                    style="italic",
-                )
+        if title is not None:
+            resolved_title = title
         else:
-            fig.suptitle(resolved_title, fontsize=14, fontweight="bold")
-            fig.tight_layout()
+            expiry_obj = self.market.expiry_date
+            resolved_title = (
+                f"Implied Volatility Smile (Expiry {expiry_obj.strftime('%b %d, %Y')})"
+                if expiry_obj is not None
+                else None
+            )
 
-        return fig
+        figure = plot_iv_smile(
+            smile_df,
+            include_observed=True,
+            observed_bid=self.meta.get("observed_iv_bid"),
+            observed_ask=self.meta.get("observed_iv_ask"),
+            observed_last=self.meta.get("observed_iv_last"),
+            figsize=figsize,
+            title=resolved_title,
+            style="publication",
+            source=None,
+            show_reference=False,
+            reference=reference_annotation,
+            axis_mode=x_axis,
+            observed_style=observations,
+            xlim=xlim,
+            ylim=ylim,
+        )
+
+        return figure
 
 
 # ---------------------------------------------------------------------------
