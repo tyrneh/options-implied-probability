@@ -54,7 +54,7 @@ class SVICalibrationOptions:
     polish_solver: str = "lbfgsb"
     n_starts: int = 5
     random_seed: int | None = 1
-    weighting_mode: str = "vega"
+    weighting_mode: str = "vega+spread"
     weight_cap: float = 25.0
     huber_delta: float | None = None
     huber_beta: float = 0.01
@@ -134,13 +134,14 @@ class SVICalibrationDiagnostics:
     global_solver: str = "none"
     polish_solver: str = "lbfgsb"
     n_starts: int = 0
-    weighting_mode: str = "vega"
+    weighting_mode: str = "vega+spread"
     huber_delta: float = 0.0
     callspread_step: float = 0.0
     weights_min: float = 0.0
     weights_max: float = 0.0
     envelope_weight: float = 0.0
     weights_volume_used: bool = False
+    weights_measurement_used: bool = False
     qe_seed_count: int = 0
     random_seed: int | None = None
     global_status: str | None = None

@@ -246,7 +246,7 @@ class RNDSurface:
         if log_mny.size < 3:
             raise CalculationError("Insufficient viable quotes for surface calibration")
 
-        weights_array, _ = _vega_based_weights(
+        weights_array, _, _ = _vega_based_weights(
             log_mny,
             total_variance,
             maturity_years,

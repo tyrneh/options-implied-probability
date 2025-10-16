@@ -23,7 +23,7 @@ surface_nvda = RNDSurface.from_ticker(
     market,
     model=model,
     horizon="1Y",
-    vol=VolModel(method="ssvi"),
+    vol=VolModel(method="raw_svi"),
 )
 
 fig = surface_nvda.plot_iv(layout="grid")

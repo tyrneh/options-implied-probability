@@ -170,10 +170,11 @@ def test_calibration_reports_weighting_stats():
     )
 
     assert isinstance(params, SVIParameters)
-    assert diagnostics.weighting_mode == "vega"
+    assert diagnostics.weighting_mode == "vega+spread"
     assert diagnostics.weights_max > diagnostics.weights_min
     assert diagnostics.weights_min > 0
     assert diagnostics.weights_volume_used is False
+    assert diagnostics.weights_measurement_used is False
     assert diagnostics.callspread_step > 0
     assert diagnostics.rmse_unweighted >= 0
     assert diagnostics.rmse_weighted >= 0
@@ -218,6 +219,7 @@ def test_envelope_penalty_within_spread():
 
     assert isinstance(params, SVIParameters)
     assert diagnostics.envelope_weight == pytest.approx(1e3)
+    assert diagnostics.weights_measurement_used is True
     assert diagnostics.envelope_violations_pct == pytest.approx(0.0)
     assert diagnostics.random_seed == 1
 
@@ -296,6 +298,32 @@ def test_huber_delta_scales_with_slice():
     expected_delta = max(1e-4, 0.01 * expected_scale)
     assert diagnostics.huber_delta == pytest.approx(expected_delta, rel=1e-6)
     assert diagnostics.random_seed == 1
+
+
+def test_huber_delta_respects_bid_ask_spread():
+    params_true = SVIParameters(a=0.03, b=0.2, rho=-0.1, m=0.0, sigma=0.25)
+    maturity = 0.75
+    k = np.linspace(-0.4, 0.4, 11)
+    total_var = svi_total_variance(k, params_true)
+    base_iv = from_total_variance(total_var, maturity)
+    bid_iv = base_iv - 0.015
+    ask_iv = base_iv + 0.015
+
+    _, diagnostics = calibrate_svi_parameters(
+        k,
+        total_var,
+        maturity,
+        None,
+        bid_iv=bid_iv,
+        ask_iv=ask_iv,
+    )
+
+    tv_bid = np.square(bid_iv) * maturity
+    tv_ask = np.square(ask_iv) * maturity
+    measurement_scale = 0.5 * np.median(np.abs(tv_ask - tv_bid))
+
+    assert diagnostics.huber_delta + 1e-12 >= measurement_scale
+    assert diagnostics.weights_measurement_used is True
 
 
 def test_callspread_step_adapts_to_spacing():

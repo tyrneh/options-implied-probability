@@ -709,7 +709,12 @@ def _adaptive_call_spread_step(
 
 
 def _compute_huber_delta(
-    total_variance: np.ndarray | Iterable[float], options: SVICalibrationOptions
+    total_variance: np.ndarray | Iterable[float],
+    options: SVICalibrationOptions,
+    *,
+    bid_iv: np.ndarray | None = None,
+    ask_iv: np.ndarray | None = None,
+    maturity_years: float | None = None,
 ) -> float:
     """Determine the Huber loss transition scale in total variance space.
 
@@ -739,7 +744,25 @@ def _compute_huber_delta(
 
     if not np.isfinite(typical_scale) or typical_scale <= 0.0:
         typical_scale = 1.0
+
     delta = max(floor, beta * typical_scale)
+
+    if (
+        bid_iv is not None
+        and ask_iv is not None
+        and maturity_years is not None
+        and maturity_years > 0.0
+    ):
+        bid_arr = np.asarray(bid_iv, dtype=float)
+        ask_arr = np.asarray(ask_iv, dtype=float)
+        if bid_arr.shape == ask_arr.shape == np.asarray(total_variance, dtype=float).shape:
+            spread = np.abs((ask_arr**2) - (bid_arr**2)) * float(maturity_years)
+            valid = np.isfinite(spread) & (spread > 0.0)
+            if valid.any():
+                measurement_scale = float(np.median(spread[valid]) * 0.5)
+                if np.isfinite(measurement_scale) and measurement_scale > 0.0:
+                    delta = max(delta, measurement_scale, floor)
+
     return delta
 
 
@@ -794,16 +817,18 @@ def _vega_based_weights(
     mode: str,
     weight_cap: float,
     volumes: np.ndarray | None = None,
-) -> tuple[np.ndarray, bool]:
+    bid_iv: np.ndarray | None = None,
+    ask_iv: np.ndarray | None = None,
+) -> tuple[np.ndarray, bool, bool]:
     """Construct weighting vector for the calibration objective."""
 
     size = k.shape[0]
     if size == 0 or maturity_years <= 0:
-        return np.ones(size, dtype=float), False
+        return np.ones(size, dtype=float), False, False
 
     mode_normalised = mode.lower()
     if mode_normalised in {"none", "off", "disabled"}:
-        return np.ones(size, dtype=float), False
+        return np.ones(size, dtype=float), False, False
 
     total_var_arr = np.asarray(total_variance, dtype=float)
     total_var_arr = np.maximum(total_var_arr, 1e-12)
@@ -811,7 +836,7 @@ def _vega_based_weights(
     sqrt_t = np.sqrt(max(maturity_years, 1e-12))
 
     if not np.isfinite(sqrt_t):
-        return np.ones(size, dtype=float)
+        return np.ones(size, dtype=float), False, False
 
     strikes = np.exp(np.asarray(k, dtype=float))
     ln_fk = -np.log(np.maximum(strikes, 1e-12))
@@ -822,6 +847,21 @@ def _vega_based_weights(
 
     weights = np.maximum(vega, 1e-8)
     volume_used = False
+    measurement_used = False
+
+    measurement_weights: np.ndarray | None = None
+    if bid_iv is not None and ask_iv is not None:
+        bid_arr = np.asarray(bid_iv, dtype=float)
+        ask_arr = np.asarray(ask_iv, dtype=float)
+        if bid_arr.shape != weights.shape or ask_arr.shape != weights.shape:
+            raise ValueError("bid_iv and ask_iv must have the same shape as k")
+        spread = ask_arr - bid_arr
+        mask = np.isfinite(spread) & (spread > 0.0)
+        if mask.any():
+            spread_safe = np.maximum(spread, 1e-4)
+            measurement_weights = np.ones_like(weights)
+            measurement_weights[mask] = 1.0 / spread_safe[mask]
+            measurement_used = True
 
     if volumes is not None:
         vol_arr = np.asarray(volumes, dtype=float)
@@ -834,6 +874,17 @@ def _vega_based_weights(
             weights *= vol_weights
             volume_used = True
 
+    if mode_normalised in {"spread", "measurement"}:
+        if measurement_weights is None:
+            return np.ones(size, dtype=float), volume_used, False
+        weights = measurement_weights.copy()
+    elif mode_normalised in {"vega+spread", "spread+vega", "vega_spread"}:
+        if measurement_weights is not None:
+            weights = weights * measurement_weights
+        measurement_used = measurement_used and measurement_weights is not None
+    else:
+        measurement_used = measurement_used and mode_normalised != "vega"
+
     mean_weight = float(np.mean(weights))
     if mean_weight > 0:
         weights = weights / mean_weight
@@ -841,7 +892,7 @@ def _vega_based_weights(
     if np.isfinite(weight_cap) and weight_cap > 0:
         weights = np.clip(weights, 1e-6, weight_cap)
 
-    return weights, volume_used
+    return weights, volume_used, measurement_used
 
 
 def _qe_split_seeds(
@@ -1136,7 +1187,7 @@ def calibrate_svi_parameters(
     butterfly_weight = float(options.butterfly_weight)
     callspread_weight = float(options.callspread_weight)
     envelope_weight = float(options.envelope_weight or 0.0)
-    weighting_mode = str(options.weighting_mode or "vega")
+    weighting_mode = str(options.weighting_mode or "vega+spread")
     weight_cap = float(options.weight_cap or 25.0)
 
     if maturity_years <= 0:
@@ -1146,12 +1197,6 @@ def calibrate_svi_parameters(
     if k.ndim != 1 or k.size < 5:
         raise ValueError("Need at least 5 strikes for SVI calibration")
 
-    callspread_step = _adaptive_call_spread_step(k, maturity_years, options)
-    huber_delta = _compute_huber_delta(total_variance, options)
-
-    heuristic_guess = _initial_guess(k, total_variance)
-    bounds = _build_bounds(k, maturity_years, options)
-
     volumes_arr: np.ndarray | None
     if volumes is None:
         volumes_arr = None
@@ -1159,14 +1204,6 @@ def calibrate_svi_parameters(
         volumes_arr = np.asarray(volumes, dtype=float)
         if volumes_arr.shape != k.shape:
             raise ValueError("volumes must have the same shape as k")
-
-    weights_array, volume_used = _vega_based_weights(
-        k, total_variance, maturity_years, weighting_mode, weight_cap, volumes_arr
-    )
-    weights = np.asarray(weights_array, dtype=float)
-    if weights.shape != k.shape:
-        raise ValueError("weights must have the same shape as k")
-    sqrt_weights = np.sqrt(weights)
 
     bid_iv_arr: np.ndarray | None
     if bid_iv is None:
@@ -1183,6 +1220,33 @@ def calibrate_svi_parameters(
         ask_iv_arr = np.asarray(ask_iv, dtype=float)
         if ask_iv_arr.shape != k.shape:
             raise ValueError("ask_iv must have the same shape as k")
+
+    callspread_step = _adaptive_call_spread_step(k, maturity_years, options)
+    huber_delta = _compute_huber_delta(
+        total_variance,
+        options,
+        bid_iv=bid_iv_arr,
+        ask_iv=ask_iv_arr,
+        maturity_years=maturity_years,
+    )
+
+    heuristic_guess = _initial_guess(k, total_variance)
+    bounds = _build_bounds(k, maturity_years, options)
+
+    weights_array, volume_used, measurement_used = _vega_based_weights(
+        k,
+        total_variance,
+        maturity_years,
+        weighting_mode,
+        weight_cap,
+        volumes_arr,
+        bid_iv_arr,
+        ask_iv_arr,
+    )
+    weights = np.asarray(weights_array, dtype=float)
+    if weights.shape != k.shape:
+        raise ValueError("weights must have the same shape as k")
+    sqrt_weights = np.sqrt(weights)
 
     k_min, k_max = float(np.min(k)), float(np.max(k))
     diagnostic_grid = np.linspace(
@@ -1337,6 +1401,7 @@ def calibrate_svi_parameters(
         weights_max=float(weights.max()),
         envelope_weight=float(envelope_weight),
         weights_volume_used=bool(volume_used),
+        weights_measurement_used=bool(measurement_used),
         qe_seed_count=len(qe_seeds),
     )
     diagnostics.random_seed = random_seed if random_seed is not None else None

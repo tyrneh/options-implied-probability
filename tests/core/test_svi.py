@@ -225,7 +225,7 @@ def test_objective_gradient_matches_numeric():
         }
     )
 
-    weights, _ = _vega_based_weights(
+    weights, _, _ = _vega_based_weights(
         k,
         total_var,
         maturity,
@@ -234,7 +234,7 @@ def test_objective_gradient_matches_numeric():
         None,
     )
     callspread_step = _adaptive_call_spread_step(k, maturity, options)
-    huber_delta = _compute_huber_delta(total_var, options)
+    huber_delta = _compute_huber_delta(total_var, options, maturity_years=maturity)
     diagnostic_grid = np.linspace(
         k.min() - options.diagnostic_grid_pad,
         k.max() + options.diagnostic_grid_pad,
