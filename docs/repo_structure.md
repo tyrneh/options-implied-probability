@@ -8,88 +8,90 @@
     MANIFEST.in
     README.md
     TECHNICAL_README.md
-    example.png
     pyproject.toml
     requirements-dev.txt
     requirements.txt
     setup.py
-    svi_surface_fix_2.md
-    examples
-        OIPD_colab_demo.ipynb
+    examples/
         appl_example.py
-        example.ipynb
         surface_example.py
-    data
+        OIPD_colab_demo.ipynb
+        example.ipynb
+    data/
         WTIfutures_date250908exp251216_spot6169.csv
         bitcoin_date20250830_strike20251226_price108864.csv
         ussteel_date20250128_strike20251219_price3629.csv
-    .meta
-        images
-            OIPD Logo.png
-            OIPDwalkthrough.gif
-            nvidia_output.png
-            probabilistic_example_input.png
-            probabilistic_example_output.png
-            spy.png
-            spy_output.png
-            ussteel.png
-            ussteel_output.png
-            ussteel_table.png
-    oipd
+    oipd/
         __init__.py
         estimator.py
-        logging.py
         market_inputs.py
-        surface.py
-        core
+        pipelines/
             __init__.py
-            density.py
-            errors.py
-            iv.py
-            parity.py
-            prep.py
-            ssvi.py
-            surface_fitting.py
-            svi.py
-            svi_types.py
-            vol_model.py
-        pricing
+            rnd_slice.py
+            rnd_surface.py
+        data_access/
             __init__.py
-            black76.py
-            black_scholes.py
-            utils.py
-        calibration
-            __init__.py
-            raw_svi_surface.py
-            ssvi_surface.py
-        io
-            __init__.py
-            csv_reader.py
-            dataframe_reader.py
-            reader.py
-        graphics
+            readers/
+                __init__.py
+                base.py
+                csv_reader.py
+                dataframe_reader.py
+            vendors/
+                __init__.py
+                yfinance/
+                    __init__.py
+                    reader.py
+        presentation/
             __init__.py
             iv_plotting.py
             iv_surface_3d.py
             matplot.py
             plot_rnd.py
             publication.py
-        vendor
+        core/
             __init__.py
-            yfinance
+            errors.py
+            iv.py
+            parity.py
+            data_processing/
                 __init__.py
-                reader.py
-    .vscode
-        launch.json
-        settings.json
-    tests
-        __init__.py
-        test_finite_diff.py
-        test_iv_smile.py
-        test_price_method.py
-        test_rate_mode.py
-        core
+                dividends.py
+                iv_inversion.py
+                moneyness.py
+                parity.py
+                selection.py
+                validation.py
+            probability_density_conversion/
+                __init__.py
+                finite_diff.py
+                price_curve.py
+                rnd.py
+            vol_surface_fitting/
+                __init__.py
+                api.py
+                facade.py
+                registry.py
+                algorithms/
+                    __init__.py
+                    bspline/
+                        __init__.py
+                        fitter.py
+                    svi/
+                        __init__.py
+                        fitter.py
+            shared/
+                    __init__.py
+                    vol_model.py
+                    svi.py
+                    ssvi.py
+                    svi_types.py
+        pricing/
             __init__.py
+            black76.py
+            black_scholes.py
+            utils.py
+    tests/
+        core/
             test_black76_integration.py
             test_parity.py
             test_prep.py
@@ -99,13 +101,15 @@
             test_surface_fitting.py
             test_svi.py
             test_svi_calibration.py
-        pricing
-            test_pricing.py
-        io
-            __init__.py
+        io/
             test_csv_reader.py
-            resources
+            resources/
                 sample.csv
+        pricing/test_pricing.py
+        test_finite_diff.py
+        test_iv_smile.py
+        test_price_method.py
+        test_rate_mode.py
 ```
 
 ## 2. Plain-English tour
@@ -134,55 +138,18 @@
   - PNGs and GIFs referenced by README and tutorials.
 
 - `oipd/` – the main library.
-  - `__init__.py` – re-exports the public API so users import `RND`, `RNDSurface`, etc.
-  - `estimator.py` – orchestrates single-expiry calibration from raw quotes to risk-neutral densities.
-  - `logging.py` – helper to configure package-wide logging format and levels.
-  - `market_inputs.py` – validates user-provided market settings and resolved vendor data.
-  - `surface.py` – orchestrates multi-expiry (term structure) calibration and plotting.
-
-  - `oipd/core/` – maths and data-prep utilities shared across orchestrators.
-    - `__init__.py` – convenience exports for downstream imports.
-    - `density.py` – converts fitted implied vols into price curves, PDFs, and CDFs.
-    - `errors.py` – custom exception hierarchy so callers catch domain-specific failures.
-    - `iv.py` – implied volatility helpers and transformations.
-    - `parity.py` – put-call parity checks and enforcement logic.
-    - `prep.py` – filters, selects, and cleans option data before fitting.
-    - `ssvi.py` – SSVI formulae and constraints.
-    - `surface_fitting.py` – shared surface fitters (SVI, b-splines, etc.).
-    - `svi.py` – SVI parameterisation and calibration routines.
-    - `svi_types.py` – dataclasses/typed containers for SVI parameters and diagnostics.
-    - `vol_model.py` – user-facing configuration object that selects which volatility model to fit.
-
-  - `oipd/pricing/` – pricing engines and helper maths.
-    - `__init__.py` – exposes pricing utilities.
-    - `black76.py` – forward-measure Black-76 option pricing.
-    - `black_scholes.py` – spot-measure Black-Scholes pricing.
-    - `utils.py` – dividend and rate utilities shared by pricing modules.
-
-  - `oipd/calibration/` – higher-level surface calibration implementations.
-    - `__init__.py` – exports calibrators.
-    - `raw_svi_surface.py` – penalty-stitched raw SVI surface fitter.
-    - `ssvi_surface.py` – arbitrage-free SSVI surface fitter.
-
-  - `oipd/io/` – ingest helpers.
-    - `__init__.py` – exposes readers.
-    - `csv_reader.py` – reads vendor CSV files into standardised DataFrames.
-    - `dataframe_reader.py` – accepts in-memory DataFrames.
-    - `reader.py` – common base and validation logic for readers.
-
-  - `oipd/graphics/` – plotting utilities.
-    - `__init__.py` – exposes plotting API.
-    - `iv_plotting.py` – 2D implied-volatility plots (smiles, grids).
-    - `iv_surface_3d.py` – interactive 3D surfaces using Plotly.
-    - `matplot.py` – Matplotlib figure helpers.
-    - `plot_rnd.py` – RND PDF/CDF plotting routines.
-    - `publication.py` – styling presets for publications.
-
-  - `oipd/vendor/` – third-party data fetchers.
-    - `__init__.py` – loader for vendor modules.
-    - `yfinance/` – Yahoo Finance integration.
-      - `__init__.py` – exposes the reader factory.
-      - `reader.py` – fetches quotes and dividend data from Yahoo Finance.
+  - `__init__.py` – re-exports the public API, now backed by the `pipelines/` package.
+  - `pipelines/` – orchestration entry points. `rnd_slice.py` implements the single-expiry pipeline (and the `RND` façade). `rnd_surface.py` implements the multi-expiry pipeline and the `RNDSurface` façade.
+  - `core/` – maths, data-prep, and calibration primitives.
+    - `data_processing/` – parity application, price selection, IV inversion, normalization utilities, and staleness filtering.
+    - `probability_density_conversion/` – price-curve generation, finite differences, and PDF/CDF utilities (formerly `core/density.py`).
+    - `vol_surface_fitting/` – registry-based SVI/bspline implementations with shared constraints, objectives, and transforms, including SSVI and stitched raw-SVI surface calibrators.
+  - `data_access/` – ingestion and vendor access.
+    - `readers/` – `AbstractReader` base class plus CSV/DataFrame implementations.
+    - `vendors/` – registry of vendor readers (Yahoo Finance moved here).
+  - `presentation/` – plotting utilities (`iv_plotting`, `plot_rnd`, `iv_surface_3d`, etc.).
+  - `estimator.py` – retains the low-level `_estimate` routine and data-source wrappers consumed by the pipeline.
+  - `pricing/` – quantitative pricing engines (Black-76/Black-Scholes) and utilities.
 
 - `.vscode/` – editor settings for contributors using VS Code.
   - `launch.json` – debugger presets.
@@ -199,7 +166,7 @@
 Your pipeline naturally splits by responsibility. Keep the code grouped by domain responsibilities, then expose end‑to‑end “pipelines” that orchestrate the steps.
 
 1) Preprocessing of data (before calibration)
-   - Already in: `oipd/core/prep.py`, `oipd/core/parity.py`, `oipd/core/iv.py`.
+  - Already in: `oipd/core/data_processing/` (parity, IV extraction); `oipd/core/parity.py` now exists as a compatibility shim.
    - Typical tasks (beyond the bullets you listed):
      - Schema normalization and column mapping (vendor → standard), option type unification.
      - Time to expiry resolution and discount factor computation; day‑count consistency.
@@ -213,21 +180,19 @@ Your pipeline naturally splits by responsibility. Keep the code grouped by domai
 2) Fitting the IV smile/surface
    - Single expiry (slice): SVI (preferred), b‑spline (legacy/backstop).
    - Surface (term structure): SSVI (arbitrage‑aware) or stitched raw SVI (penalty‑based).
-   - Already in: `oipd/core/svi.py`, `oipd/core/surface_fitting.py`, `oipd/calibration/ssvi_surface.py`, `oipd/calibration/raw_svi_surface.py`.
+  - Already in: `oipd/core/vol_surface_fitting/` (shared SVI/SSVI maths and surface calibrators).
    - Practicalities: initialize on log‑moneyness grids; enforce bounds; optionally weight by bid‑ask/volume; add regularization; check butterfly/calendar conditions.
 
 3) Converting the fitted IV smile into a PDF
    - Deterministic: evaluate prices on a strike grid, then apply Breeden‑Litzenberger via stable finite differences.
-   - Already in: `oipd/core/density.py` (`price_curve_from_iv`, `pdf_from_price_curve`, `calculate_cdf_from_pdf`).
+  - Already in: `oipd/core/probability_density_conversion/` (`price_curve_from_iv`, `pdf_from_price_curve`, `calculate_cdf_from_pdf`).
    - Practicalities: choose grid/spacing, smooth before differentiation (e.g., cubic splines), handle tails and boundary conditions, renormalize for numerical drift.
 
 ## 6. Should `interface` be a single file or a folder?
 - If you only expose one or two façade classes (e.g., `RND`, `RNDSurface`) and they stay small, a single file can work.
 - As soon as orchestration grows (multiple façades, CLI helpers, presets), prefer a small `interface/` package to keep responsibilities crisp:
   - `oipd/interface/__init__.py` — public exports.
-  - `oipd/interface/rnd_slice.py` — façade over the single‑expiry pipeline.
-  - `oipd/interface/rnd_surface.py` — façade over the surface pipeline.
-  - Keep `oipd/__init__.py` re‑exporting these for backward compatibility.
+  - (Optional) If the interface grows, introduce dedicated modules under `oipd/interface/`; currently the package simply re-exports from `pipelines`.
 
 This mirrors how `pipelines/` would hold the orchestration (imperative flow), while `interface/` keeps user‑facing APIs tidy and stable.
 
@@ -282,12 +247,7 @@ This is the concrete layout we will move toward. The existing modules map cleanl
   - Move `oipd/graphics/*` here (re‑export under old path for compatibility during migration).
 
 - `interface.py` or `interface/`
-  - Start as a single module if small; promote to a package when multiple façades/CLI helpers appear.
-  - If package:
-    - `interface/__init__.py` — exports `RND`, `RNDSurface`, key types.
-    - `interface/rnd_slice.py` — thin façade over `pipelines/rnd_slice.py`.
-    - `interface/rnd_surface.py` — thin façade over `pipelines/rnd_surface.py`.
-  - Keep `oipd/__init__.py` re‑exporting these for backward compatibility.
+  - Currently re-exports the pipeline façades; expand only if additional presentation helpers are needed.
 
 ## 9. Vol surface fitting (final structure)
 Organize by algorithm and shared math. Keep the public API stable through a façade and a registry. Avoid a generic “utils” module — use a focused `shared/` package instead.
@@ -337,13 +297,10 @@ Organize by algorithm and shared math. Keep the public API stable through a faç
   - Keep `oipd/core/surface_fitting.py` as a thin façade forwarding to `facade.py` until callers/tests are updated.
 
 ## 10. Migration mapping (minimal churn)
-- `oipd/core/parity.py` → `core/data_processing/parity.py`
-- `oipd/core/prep.py` → split into `core/data_processing/selection.py` (+ callers updated) and keep IV parts in `iv_inversion.py`.
-- `oipd/core/iv.py` → `core/data_processing/iv_inversion.py`
-- `oipd/core/svi.py` → split across `vol_surface_fitting/parametrizations.py`, `transforms.py`, `slice_fit.py`
+- `oipd/core/parity.py` → `core/data_processing/parity.py` *(shim retained for compatibility)*
+- `oipd/core/data_processing/iv.py` houses the IV solvers (former `core/iv.py`).
+- `oipd/core/vol_surface_fitting/shared/svi.py` houses single-slice SVI maths and calibration helpers; see `algorithms/svi/` for orchestrators.
 - `oipd/core/surface_fitting.py` → `vol_surface_fitting/slice_fit.py` + `bspline.py` (+ façade for `fit_surface`)
-- `oipd/calibration/ssvi_surface.py` → `vol_surface_fitting/surface_fit.py`
-- `oipd/calibration/raw_svi_surface.py` → `vol_surface_fitting/surface_fit.py`
 - `oipd/core/density.py` → `probability_density_conversion/{price_curve.py, finite_diff.py, rnd.py}`
 - `oipd/io/*` → `data_access/readers/*`; `oipd/vendor/*` → `data_access/vendors/*`
 - `oipd/graphics/*` → `presentation/*` (with re‑exports during transition)

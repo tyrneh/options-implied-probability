@@ -4,12 +4,12 @@ import pytest
 import warnings
 from datetime import date
 
-from oipd.estimator import RND, ModelParams
+from oipd import RND, ModelParams
 from oipd.market_inputs import MarketInputs
-from oipd.core.prep import select_price_column
+from oipd.core.data_processing.selection import select_price_column
 from oipd.core.errors import CalculationError
-from oipd.io.csv_reader import CSVReader
-from oipd.io.dataframe_reader import DataFrameReader
+from oipd.data_access.readers.csv_reader import CSVReader
+from oipd.data_access.readers.dataframe_reader import DataFrameReader
 
 
 class TestPriceMethodCalculation:

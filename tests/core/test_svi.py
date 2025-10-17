@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from oipd.core.svi import (
+from oipd.core.vol_surface_fitting.shared.svi import (
     SVICalibrationOptions,
     SVIParameters,
     _CallSpreadContext,

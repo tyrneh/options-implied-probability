@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from oipd.core.svi import (
+from oipd.core.vol_surface_fitting.shared.svi import (
     SVICalibrationDiagnostics,
     SVIParameters,
     from_total_variance,
@@ -11,7 +11,7 @@ from oipd.core.svi import (
     svi_options,
     svi_total_variance,
 )
-from oipd.core.surface_fitting import (
+from oipd.core.vol_surface_fitting import (
     AVAILABLE_SURFACE_FITS,
     available_surface_fits,
     fit_surface,

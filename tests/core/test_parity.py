@@ -5,9 +5,9 @@ import pandas as pd
 import numpy as np
 import warnings
 
-from oipd.core.parity import (
+from oipd.core.data_processing.parity import (
     infer_forward_from_atm,
-    apply_put_call_parity,
+    apply_put_call_parity_to_quotes,
     detect_parity_opportunity,
     preprocess_with_parity,
 )
@@ -174,7 +174,7 @@ class TestApplyPutCallParity:
         forward_price = 100.0
         discount_factor = 0.99
 
-        result = apply_put_call_parity(
+        result = apply_put_call_parity_to_quotes(
             balanced_options_data, forward_price, discount_factor
         )
 
@@ -198,7 +198,7 @@ class TestApplyPutCallParity:
         forward_price = 100.0  # Exactly at 100 strike
         discount_factor = 0.99
 
-        result = apply_put_call_parity(
+        result = apply_put_call_parity_to_quotes(
             balanced_options_data, forward_price, discount_factor
         )
 
@@ -257,7 +257,9 @@ class TestPreprocessWithParity:
         def boom(*args, **kwargs):
             raise ValueError("boom")
 
-        monkeypatch.setattr("oipd.core.parity.infer_forward_from_atm", boom)
+        monkeypatch.setattr(
+            "oipd.core.data_processing.parity.infer_forward_from_atm", boom
+        )
 
         with warnings.catch_warnings(record=True) as w:
             result = preprocess_with_parity(df, spot_price, discount_factor)

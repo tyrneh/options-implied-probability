@@ -1,5 +1,5 @@
 from oipd import RND, MarketInputs, ModelParams
-from oipd.core.svi import svi_options
+from oipd.core.vol_surface_fitting.shared.svi import svi_options
 
 import matplotlib.pyplot as plt
 from datetime import date
@@ -13,7 +13,7 @@ import time
 df_appl = pd.read_csv("data/AAPL_data.csv")
 
 # filter appl for 2026-01-16 expiration date
-df_appl = df_appl[df_appl["expiration"] == "2026-01-16"]
+df_appl = df_appl[df_appl["expiration"] == "2025-10-10"]
 
 
 # 3 INPUTS:
@@ -52,5 +52,5 @@ plt.show()
 
 
 # fetch fitted IV smile from results object
-est_appl.plot_iv(observations="range", x_axis="log_moneyness")
+est_appl.plot_iv(observations="range", x_axis="strike")
 plt.show()

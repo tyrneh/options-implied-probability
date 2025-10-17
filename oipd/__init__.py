@@ -8,13 +8,15 @@ from oipd.core import (
     CalculationError,
 )
 
-from oipd.io import CSVReader, DataFrameReader, CSVReadError
+from oipd.data_access.readers import CSVReader, DataFrameReader
+from oipd.data_access.readers.csv_reader import CSVReadError
 
 # Optional: explicitly re-export vendor-specific errors later if needed
 
-from oipd.estimator import RND, ModelParams, RNDResult
-from oipd.core.vol_model import VolModel
-from oipd.surface import RNDSurface
+from oipd.estimator import ModelParams, RNDResult
+from oipd.pipelines.rnd_slice import RND
+from oipd.core.vol_surface_fitting.shared.vol_model import VolModel
+from oipd.pipelines.rnd_surface import RNDSurface
 from oipd.market_inputs import (
     MarketInputs,
     VendorSnapshot,

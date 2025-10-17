@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from oipd.calibration.ssvi_surface import SSVISliceObservations, calibrate_ssvi_surface
-from oipd.core.ssvi import ssvi_total_variance
-from oipd.core.vol_model import VolModel
+from oipd.core.vol_surface_fitting.algorithms.ssvi import (
+    SSVISliceObservations,
+    calibrate_ssvi_surface,
+)
+from oipd.core.vol_surface_fitting.shared.ssvi import ssvi_total_variance
+from oipd.core.vol_surface_fitting.shared.vol_model import VolModel
 
 
 def make_observations(theta_values, maturities, rho, eta, gamma):

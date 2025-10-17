@@ -4,15 +4,18 @@ from datetime import date, timedelta
 
 from oipd.pricing.black_scholes import black_scholes_call_price
 from oipd.pricing.black76 import black76_call_price
-from oipd.core.iv import (
+from oipd.core.data_processing.iv import (
     compute_iv,
     bs_iv_brent_method,
     bs_iv_newton_method,
     black76_iv_brent_method,
     smooth_iv,
 )
-from oipd.core.prep import select_price_column
-from oipd.core.density import price_curve_from_iv, pdf_from_price_curve
+from oipd.core.data_processing.selection import select_price_column
+from oipd.core.probability_density_conversion import (
+    price_curve_from_iv,
+    pdf_from_price_curve,
+)
 
 
 def test_european_price_with_yield():

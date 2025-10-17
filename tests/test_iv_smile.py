@@ -8,7 +8,7 @@ import pytest
 import pandas as pd
 from datetime import date
 
-from oipd.estimator import RND, ModelParams
+from oipd import RND, ModelParams
 from oipd.market_inputs import MarketInputs
 from oipd.core.errors import CalculationError
 

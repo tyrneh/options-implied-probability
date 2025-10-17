@@ -4,9 +4,12 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
-from oipd.core.ssvi import check_ssvi_calendar, check_ssvi_constraints
-from oipd.core.svi import SVIParameters, check_butterfly
-from oipd.estimator import ModelParams, RND
+from oipd.core.vol_surface_fitting.shared.ssvi import (
+    check_ssvi_calendar,
+    check_ssvi_constraints,
+)
+from oipd.core.vol_surface_fitting.shared.svi import SVIParameters, check_butterfly
+from oipd import ModelParams, RND
 from oipd.market_inputs import MarketInputs
 from oipd.pricing.black_scholes import black_scholes_call_price
 

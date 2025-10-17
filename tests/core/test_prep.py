@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from oipd.core.prep import filter_stale_options
+from oipd.core.data_processing.selection import filter_stale_options
 
 
 def test_filter_stale_options_drops_entire_strike_when_any_leg_is_stale():

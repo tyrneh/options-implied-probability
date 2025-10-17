@@ -7,13 +7,13 @@ This test file validates the fix for Issue 1.1: Numerical Instability in Second 
 import numpy as np
 import pytest
 
-from oipd.core.density import (
+from oipd.core.probability_density_conversion import (
     finite_diff_second_derivative,
     pdf_from_price_curve,
     price_curve_from_iv,
 )
-from oipd.core.prep import select_price_column
-from oipd.core.iv import compute_iv, smooth_iv
+from oipd.core.data_processing.selection import select_price_column
+from oipd.core.data_processing.iv import compute_iv, smooth_iv
 
 
 def _compute_pdf_pipeline(

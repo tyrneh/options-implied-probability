@@ -1,7 +1,7 @@
 from pathlib import Path
 import numpy as np
 import pytest
-from oipd.io import CSVReader
+from oipd.data_access.readers import CSVReader
 
 
 @pytest.fixture

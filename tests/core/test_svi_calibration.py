@@ -5,8 +5,8 @@ import pytest
 
 from dataclasses import astuple
 
-from oipd.core.surface_fitting import fit_surface
-from oipd.core.svi import (
+from oipd.core.vol_surface_fitting import fit_surface
+from oipd.core.vol_surface_fitting.shared.svi import (
     SVICalibrationDiagnostics,
     SVIParameters,
     calibrate_svi_parameters,

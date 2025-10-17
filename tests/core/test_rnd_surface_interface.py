@@ -13,11 +13,11 @@ import pandas as pd
 import pytest
 
 from oipd import MarketInputs, RNDSurface, VolModel
-from oipd.core.ssvi import ssvi_total_variance
-from oipd.core.svi import SVIParameters, svi_total_variance
+from oipd.core.vol_surface_fitting.shared.ssvi import ssvi_total_variance
+from oipd.core.vol_surface_fitting.shared.svi import SVIParameters, svi_total_variance
 from oipd.pricing.black76 import black76_call_price
-from oipd.calibration.raw_svi_surface import calibrate_raw_svi_surface
-from oipd.calibration.ssvi_surface import SSVISliceObservations
+from oipd.core.vol_surface_fitting.algorithms.stitched_svi import calibrate_raw_svi_surface
+from oipd.core.vol_surface_fitting.algorithms.ssvi import SSVISliceObservations
 
 
 def make_market(expiry: date | None = None) -> MarketInputs:
@@ -208,7 +208,9 @@ def test_surface_from_ticker_respects_horizon(monkeypatch):
             df.attrs["dividend_schedule"] = None
             return df
 
-    monkeypatch.setattr("oipd.surface.get_reader", lambda vendor: DummyReader)
+    monkeypatch.setattr(
+        "oipd.pipelines.rnd_surface.get_reader", lambda vendor: DummyReader
+    )
 
     market = make_market()
     surface = RNDSurface.from_ticker(

@@ -1,6 +1,9 @@
 from oipd import RND, MarketInputs, ModelParams, RNDSurface, VolModel
-from oipd.core.svi import check_butterfly
-from oipd.core.ssvi import check_ssvi_constraints, check_ssvi_calendar
+from oipd.core.vol_surface_fitting.shared.svi import check_butterfly
+from oipd.core.vol_surface_fitting.shared.ssvi import (
+    check_ssvi_constraints,
+    check_ssvi_calendar,
+)
 
 import matplotlib.pyplot as plt
 from datetime import date

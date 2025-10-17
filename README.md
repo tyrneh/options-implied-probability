@@ -99,7 +99,7 @@ OIPD also **supports manual CSV or DataFrame uploads**.
 #### Diagnostics & validators
 
 - `RNDSurface.check_no_arbitrage()` now reports the optimiser objective, per-interval calendar margins, and SSVI inequality margins.
-- `check_butterfly`, `check_ssvi_constraints`, and `check_ssvi_calendar` (under `oipd.core.svi` / `oipd.core.ssvi`) expose low-level diagnostics when you need bespoke grids or custom reporting.
+- `check_butterfly`, `check_ssvi_constraints`, and `check_ssvi_calendar` (under `oipd.core.vol_surface_fitting.shared.svi` / `oipd.core.vol_surface_fitting.shared.ssvi`) expose low-level diagnostics when you need bespoke grids or custom reporting.
 - Raw SVI surfaces return an automatic Gatheral α-tilt (`alpha`) and the pre-repair calendar margins so you can see how much was nudged.
 
 See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details, and the academic theory behind the technique. 
