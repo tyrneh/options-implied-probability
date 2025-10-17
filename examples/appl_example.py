@@ -102,5 +102,3 @@ prob_surface.head()
 # plot probability of prices over time as 2D plot
 appl_surface.plot()
 plt.show()
-
-# return dataframe of SVI parameters over time
