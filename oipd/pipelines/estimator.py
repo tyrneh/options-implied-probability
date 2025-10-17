@@ -30,7 +30,7 @@ from oipd.pricing.utils import (
     prepare_dividends,
     implied_dividend_yield_from_forward,
 )
-from oipd.market_inputs import (
+from oipd.pipelines.market_inputs import (
     MarketInputs,
     VendorSnapshot,
     ResolvedMarket,
@@ -439,6 +439,40 @@ class RNDResult:
         # Ensure column ordering
         return smile_df.loc[:, ["strike", "fitted_iv", "bid_iv", "ask_iv", "last_iv"]]
 
+    def svi_params(self) -> Dict[str, float]:
+        """Return calibrated SVI parameters when available.
+
+        Returns:
+            dict[str, float]: Dictionary containing the raw SVI parameters
+            ``a``, ``b``, ``rho``, ``m``, and ``sigma``.
+
+        Raises:
+            ValueError: If the fitted smile did not use the SVI methodology or
+                the parameters are unavailable.
+        """
+
+        vol_curve = self.meta.get("vol_curve")
+        params_info = getattr(vol_curve, "params", None)
+        if not isinstance(params_info, Mapping):
+            raise ValueError("SVI parameters are unavailable for the fitted smile.")
+
+        method = params_info.get("method")
+        if method != "svi":
+            raise ValueError(
+                "SVI parameters are only available when the SVI smile fitter was used."
+            )
+
+        try:
+            return {
+                "a": float(params_info["a"]),
+                "b": float(params_info["b"]),
+                "rho": float(params_info["rho"]),
+                "m": float(params_info["m"]),
+                "sigma": float(params_info["sigma"]),
+            }
+        except KeyError as exc:  # pragma: no cover - defensive guard
+            raise ValueError("Incomplete SVI parameter set in vol_curve metadata.") from exc
+
     def plot_iv(
         self,
         *,
@@ -709,10 +743,11 @@ def _estimate(
     options_with_calculated_iv = compute_iv(
         options_with_selected_price,
         underlying_price,
-        resolved_market,
-        model.solver,
-        model.pricing_engine,
-        effective_dividend_yield,
+        days_to_expiry=resolved_market.days_to_expiry,
+        risk_free_rate=resolved_market.risk_free_rate,
+        solver_method=model.solver,
+        pricing_engine=model.pricing_engine,
+        dividend_yield=effective_dividend_yield,
     )
 
     # Smooth the implied vol smile so we can evaluate it anywhere we need
@@ -745,10 +780,11 @@ def _estimate(
             iv_df = compute_iv(
                 priced,
                 underlying_price,
-                resolved_market,
-                model.solver,
-                model.pricing_engine,
-                effective_dividend_yield,
+                days_to_expiry=resolved_market.days_to_expiry,
+                risk_free_rate=resolved_market.risk_free_rate,
+                solver_method=model.solver,
+                pricing_engine=model.pricing_engine,
+                dividend_yield=effective_dividend_yield,
             )
         except Exception:
             return None
@@ -926,4 +962,3 @@ def _resolve_slice_vol_model(
 # ---------------------------------------------------------------------------
 # Public façade – what casual users will interact with
 # ---------------------------------------------------------------------------
-

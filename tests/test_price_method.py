@@ -5,7 +5,7 @@ import warnings
 from datetime import date
 
 from oipd import RND, ModelParams
-from oipd.market_inputs import MarketInputs
+from oipd.pipelines.market_inputs import MarketInputs
 from oipd.core.data_processing.selection import select_price_column
 from oipd.core.errors import CalculationError
 from oipd.data_access.readers.csv_reader import CSVReader

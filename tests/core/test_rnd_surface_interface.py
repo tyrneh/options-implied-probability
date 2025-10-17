@@ -139,6 +139,36 @@ def test_surface_from_dataframe_defaults_to_ssvi():
     assert len(diagnostics["calendar_margins"]) == 1
 
 
+def test_surface_from_dataframe_supports_column_mapping():
+    data = build_synthetic_dataframe()
+    renamed = data.rename(
+        columns={
+            "expiry": "expiration",
+            "last_price": "settlement",
+            "bid": "bid_px",
+            "ask": "ask_px",
+            "option_type": "call_put",
+        }
+    )
+
+    mapping = {
+        "expiration": "expiry",
+        "settlement": "last_price",
+        "bid_px": "bid",
+        "ask_px": "ask",
+        "call_put": "option_type",
+    }
+
+    surface = RNDSurface.from_dataframe(
+        renamed,
+        make_market(),
+        column_mapping=mapping,
+    )
+
+    assert surface.vol_model.method == "ssvi"
+    assert len(surface.expiries) == len(data["expiry"].unique())
+
+
 def test_surface_rejects_slice_only_vol_methods():
     data = pd.DataFrame(
         {
@@ -154,6 +184,38 @@ def test_surface_rejects_slice_only_vol_methods():
 
     with pytest.raises(ValueError):
         RNDSurface.from_dataframe(data, make_market(), vol=VolModel(method="svi"))
+
+
+def test_surface_from_csv_supports_column_mapping(tmp_path):
+    data = build_synthetic_dataframe()
+    renamed = data.rename(
+        columns={
+            "expiry": "expiration",
+            "last_price": "settlement",
+            "bid": "bid_px",
+            "ask": "ask_px",
+            "option_type": "call_put",
+        }
+    )
+    csv_path = tmp_path / "options.csv"
+    renamed.to_csv(csv_path, index=False)
+
+    mapping = {
+        "expiration": "expiry",
+        "settlement": "last_price",
+        "bid_px": "bid",
+        "ask_px": "ask",
+        "call_put": "option_type",
+    }
+
+    surface = RNDSurface.from_csv(
+        str(csv_path),
+        make_market(),
+        column_mapping=mapping,
+    )
+
+    assert surface.vol_model.method == "ssvi"
+    assert len(surface.expiries) == len(data["expiry"].unique())
 
 
 def test_surface_from_ticker_respects_horizon(monkeypatch):

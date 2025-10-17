@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import date
 
 from oipd import RND, ModelParams
-from oipd.market_inputs import MarketInputs
+from oipd.pipelines.market_inputs import MarketInputs
 from oipd.core.errors import CalculationError
 
 
@@ -220,7 +220,7 @@ def test_svi_fallback_to_bspline(monkeypatch):
         curve.grid = (grid_x, grid_y)  # type: ignore[attr-defined]
         return curve
 
-    monkeypatch.setattr("oipd.estimator.fit_surface", fake_fit_surface)
+    monkeypatch.setattr("oipd.pipelines.estimator.fit_surface", fake_fit_surface)
 
     with pytest.warns(UserWarning, match="SVI calibration failed"):
         result = RND.from_dataframe(

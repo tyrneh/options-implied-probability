@@ -12,7 +12,7 @@ import pandas as pd
 
 from oipd.core.vol_surface_fitting.shared.vol_model import VolModel
 from oipd.data_access.vendors import get_reader
-from oipd.estimator import (
+from oipd.pipelines.estimator import (
     ModelParams,
     RNDResult,
     CSVSource,
@@ -22,7 +22,7 @@ from oipd.estimator import (
     _estimate,
     _resolve_slice_vol_model,
 )
-from oipd.market_inputs import (
+from oipd.pipelines.market_inputs import (
     MarketInputs,
     VendorSnapshot,
     ResolvedMarket,
@@ -260,6 +260,18 @@ class RND:
 
     def plot(self, **kwargs):
         return self.result.plot(**kwargs)
+
+    def svi_params(self) -> Dict[str, float]:
+        """Return calibrated SVI parameters for the fitted slice.
+
+        Returns:
+            dict[str, float]: Dictionary of raw SVI parameters ``(a, b, rho, m, sigma)``.
+
+        Raises:
+            ValueError: If SVI calibration was not used for the smile fit.
+        """
+
+        return self.result.svi_params()
 
     def iv_smile(
         self,

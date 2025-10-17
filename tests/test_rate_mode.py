@@ -1,7 +1,7 @@
 import math
 from datetime import date, timedelta
 
-from oipd.market_inputs import MarketInputs, resolve_market
+from oipd.pipelines.market_inputs import MarketInputs, resolve_market
 
 
 def test_risk_free_rate_mode_annualized_to_continuous():

@@ -23,10 +23,10 @@
         ussteel_date20250128_strike20251219_price3629.csv
     oipd/
         __init__.py
-        estimator.py
-        market_inputs.py
         pipelines/
             __init__.py
+            estimator.py
+            market_inputs.py
             rnd_slice.py
             rnd_surface.py
         data_access/
@@ -148,7 +148,7 @@
     - `readers/` – `AbstractReader` base class plus CSV/DataFrame implementations.
     - `vendors/` – registry of vendor readers (Yahoo Finance moved here).
   - `presentation/` – plotting utilities (`iv_plotting`, `plot_rnd`, `iv_surface_3d`, etc.).
-  - `estimator.py` – retains the low-level `_estimate` routine and data-source wrappers consumed by the pipeline.
+  - `pipelines/estimator.py` – retains the low-level `_estimate` routine and data-source wrappers consumed by the pipeline.
   - `pricing/` – quantitative pricing engines (Black-76/Black-Scholes) and utilities.
 
 - `.vscode/` – editor settings for contributors using VS Code.
@@ -166,7 +166,7 @@
 Your pipeline naturally splits by responsibility. Keep the code grouped by domain responsibilities, then expose end‑to‑end “pipelines” that orchestrate the steps.
 
 1) Preprocessing of data (before calibration)
-  - Already in: `oipd/core/data_processing/` (parity, IV extraction); `oipd/core/parity.py` now exists as a compatibility shim.
+  - Already in: `oipd/core/data_processing/` (parity, IV extraction).
    - Typical tasks (beyond the bullets you listed):
      - Schema normalization and column mapping (vendor → standard), option type unification.
      - Time to expiry resolution and discount factor computation; day‑count consistency.
@@ -297,7 +297,7 @@ Organize by algorithm and shared math. Keep the public API stable through a faç
   - Keep `oipd/core/surface_fitting.py` as a thin façade forwarding to `facade.py` until callers/tests are updated.
 
 ## 10. Migration mapping (minimal churn)
-- `oipd/core/parity.py` → `core/data_processing/parity.py` *(shim retained for compatibility)*
+- `oipd/core/parity.py` → `core/data_processing/parity.py`
 - `oipd/core/data_processing/iv.py` houses the IV solvers (former `core/iv.py`).
 - `oipd/core/vol_surface_fitting/shared/svi.py` houses single-slice SVI maths and calibration helpers; see `algorithms/svi/` for orchestrators.
 - `oipd/core/surface_fitting.py` → `vol_surface_fitting/slice_fit.py` + `bspline.py` (+ façade for `fit_surface`)

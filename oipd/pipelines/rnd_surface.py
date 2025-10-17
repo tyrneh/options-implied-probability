@@ -1,4 +1,4 @@
-"""High-level interface for multi-maturity Implied Volatility surfaces."""
+"""High-level interface for multi-maturity Implied Volatility and RND surfaces."""
 
 from __future__ import annotations
 
@@ -34,13 +34,24 @@ from oipd.core.vol_surface_fitting.shared.svi import (
 )
 from oipd.core.vol_surface_fitting.shared.svi_types import SVICalibrationOptions
 from oipd.core.vol_surface_fitting.shared.vol_model import SURFACE_METHODS, VolModel
-from oipd.estimator import ModelParams
-from oipd.market_inputs import MarketInputs, ResolvedMarket, VendorSnapshot, resolve_market
+from oipd.pipelines.estimator import ModelParams
+from oipd.pipelines.market_inputs import (
+    MarketInputs,
+    ResolvedMarket,
+    VendorSnapshot,
+    resolve_market,
+)
 from oipd.pricing.black76 import black76_call_price
 from oipd.pricing.utils import prepare_dividends
+from oipd.data_access.readers import CSVReader, DataFrameReader
 from oipd.data_access.vendors import get_reader
 from oipd.presentation.iv_plotting import plot_iv_surface
 from oipd.presentation.iv_surface_3d import plot_iv_surface_3d
+from oipd.core.probability_density_conversion import (
+    pdf_from_price_curve,
+    calculate_cdf_from_pdf,
+)
+from oipd.pipelines.estimator import RNDResult
 
 SSVI_WEIGHT_CAP = 50.0
 ATM_WEIGHT_MULTIPLIER = 5.0
@@ -120,7 +131,13 @@ def _resolve_horizon_end(valuation: date, horizon: str | int | float | timedelta
 
 
 class RNDSurface:
-    """Term-structure volatility surface built from multiple expiries."""
+    """Term-structure volatility surface built from multiple expiries.
+
+    In addition to pricing and implied-volatility evaluation, this class can
+    extract risk-neutral density (RND) slices at a given maturity via the
+    Breeden–Litzenberger relationship and assemble a probability surface over
+    maturities.
+    """
 
     def __init__(
         self,
@@ -230,10 +247,11 @@ class RNDSurface:
         iv_df = compute_iv(
             priced,
             underlying_for_iv,
-            resolved,
-            self.model.solver,
-            self.model.pricing_engine,
-            effective_dividend,
+            days_to_expiry=resolved.days_to_expiry,
+            risk_free_rate=resolved.risk_free_rate,
+            solver_method=self.model.solver,
+            pricing_engine=self.model.pricing_engine,
+            dividend_yield=effective_dividend,
         )
 
         strikes = iv_df["strike"].to_numpy(dtype=float)
@@ -298,10 +316,11 @@ class RNDSurface:
                 observed = compute_iv(
                     subset,
                     underlying_for_iv,
-                    resolved,
-                    self.model.solver,
-                    self.model.pricing_engine,
-                    effective_dividend,
+                    days_to_expiry=resolved.days_to_expiry,
+                    risk_free_rate=resolved.risk_free_rate,
+                    solver_method=self.model.solver,
+                    pricing_engine=self.model.pricing_engine,
+                    dividend_yield=effective_dividend,
                 )
             except Exception:
                 return None
@@ -366,22 +385,48 @@ class RNDSurface:
         df: pd.DataFrame,
         market: MarketInputs,
         *,
-        expiry_col: str = "expiry",
-        strike_col: str = "strike",
-        price_cols: Sequence[str] | None = ("bid", "ask"),
+        column_mapping: Optional[Dict[str, str]] = None,
         model: Optional[ModelParams] = None,
         vol: Optional[VolModel] = None,
     ) -> "RNDSurface":
-        if expiry_col not in df.columns:
-            raise ValueError(f"DataFrame must contain an '{expiry_col}' column")
+        """Construct an implied-volatility surface from an in-memory DataFrame.
 
-        expiry_series = _ensure_datetime_series(df[expiry_col], expiry_col)
+        Args:
+            df: Option quotes spanning multiple expiries.
+            market: Base market snapshot used for all expiries in ``df``.
+            column_mapping: Optional mapping of input column names to the canonical
+                names expected by OIPD (e.g., ``{\"expiration\": \"expiry\"}``).
+            model: Optional model overrides applied to the surface calibration.
+            vol: Optional volatility model configuration. When omitted the default
+                SSVI surface model is used.
+
+        Returns:
+            An ``RNDSurface`` instance calibrated from the provided quotes.
+
+        Raises:
+            ValueError: If the DataFrame lacks an ``"expiry"`` column after
+                applying the column mapping.
+        """
+
+        working_df = df.copy()
+        if column_mapping:
+            working_df = working_df.rename(columns=column_mapping)
+
+        if "expiry" not in working_df.columns:
+            raise ValueError(
+                "DataFrame must contain an 'expiry' column. Use column_mapping to "
+                "rename your expiry column to 'expiry'."
+            )
+
+        reader = DataFrameReader()
+        cleaned_df = reader.read(working_df, column_mapping=None)
+        expiry_series = _ensure_datetime_series(cleaned_df["expiry"], "expiry")
         valuation = market.valuation_date
         slices: List[SurfaceSliceData] = []
 
         vol_model = _resolve_surface_vol_model(vol)
 
-        for expiry_value, group in df.groupby(expiry_series.dt.date):
+        for expiry_value, group in cleaned_df.groupby(expiry_series.dt.date):
             if not isinstance(expiry_value, date):
                 expiry_value = expiry_value.to_pydatetime().date()  # type: ignore[assignment]
 
@@ -415,6 +460,41 @@ class RNDSurface:
             model=model,
             source="dataframe",
             horizon=None,
+        )
+
+    @classmethod
+    def from_csv(
+        cls,
+        path: str,
+        market: MarketInputs,
+        *,
+        column_mapping: Optional[Dict[str, str]] = None,
+        model: Optional[ModelParams] = None,
+        vol: Optional[VolModel] = None,
+    ) -> "RNDSurface":
+        """Construct an implied-volatility surface from a CSV file on disk.
+
+        Args:
+            path: Filesystem path to the CSV containing option quotes.
+            market: Base market snapshot used for all expiries in the CSV.
+            column_mapping: Optional mapping of input column names to canonical
+                names expected by OIPD (e.g., ``{\"expiration\": \"expiry\"}``).
+            model: Optional model overrides applied to the surface calibration.
+            vol: Optional volatility model configuration. When omitted the default
+                SSVI surface model is used.
+
+        Returns:
+            An ``RNDSurface`` instance calibrated from the provided CSV data.
+        """
+
+        reader = CSVReader()
+        dataframe = reader.read(path, column_mapping=column_mapping or {})
+        return cls.from_dataframe(
+            dataframe,
+            market,
+            column_mapping=None,
+            model=model,
+            vol=vol,
         )
 
     @classmethod
@@ -624,6 +704,69 @@ class RNDSurface:
             ),
         )
 
+    def plot(
+        self,
+        *,
+        include_median: bool = False,
+        lower_percentile: float = 25.0,
+        upper_percentile: float = 75.0,
+        maturities: Optional[Sequence[float | date]] = None,
+        num_maturities: int = 12,
+        moneyness_min: float = 0.5,
+        moneyness_max: float = 1.5,
+        n_strikes: int = 201,
+        figsize: tuple[float, float] = (10.0, 5.5),
+        title: Optional[str] = None,
+    ):
+        """Plot forward price and percentile bands over expiry dates.
+
+        Args:
+            include_median: When ``True`` overlay the implied median price path
+                derived from the CDF.
+            lower_percentile: Lower percentile bound for the shaded region.
+            upper_percentile: Upper percentile bound for the shaded region.
+            maturities: Optional maturities to evaluate. Passed through to
+                :meth:`density_surface`.
+            num_maturities: Number of maturities sampled when ``maturities`` is
+                omitted.
+            moneyness_min: Lower bound of the moneyness grid.
+            moneyness_max: Upper bound of the moneyness grid.
+            n_strikes: Number of strike points per slice.
+            figsize: Matplotlib figure size in inches ``(width, height)``.
+            title: Optional chart title. When omitted a default is used.
+
+        Returns:
+            matplotlib.figure.Figure: Figure showing the forward path, optional
+            median, and percentile band over expiry dates.
+
+        Raises:
+            ImportError: If Matplotlib is unavailable.
+            InvalidInputError: If percentile bounds are invalid or the surface
+                lacks sufficient data.
+        """
+
+        density_df = self.density_surface(
+            maturities=maturities,
+            num_maturities=num_maturities,
+            moneyness_min=moneyness_min,
+            moneyness_max=moneyness_max,
+            n_strikes=n_strikes,
+            as_dataframe=True,
+        )
+
+        from oipd.presentation.probability_surface_plot import (
+            plot_probability_summary as _plot_probability_summary,
+        )
+
+        return _plot_probability_summary(
+            density_df,
+            include_median=include_median,
+            lower_percentile=lower_percentile,
+            upper_percentile=upper_percentile,
+            figsize=figsize,
+            title=title,
+        )
+
     def plot_iv_3d(
         self,
         *,
@@ -660,6 +803,61 @@ class RNDSurface:
             observed_iv_by_maturity=getattr(
                 self, "_observed_iv_by_maturity", None
             ),
+        )
+
+    def plot_probability_3d(
+        self,
+        *,
+        value: Literal["pdf", "cdf"] = "pdf",
+        figsize: tuple[float, float] = (10.0, 6.0),
+        title: Optional[str] = None,
+        colorscale: str = "Viridis",
+        maturities: Optional[Sequence[float | date]] = None,
+        num_maturities: int = 12,
+        moneyness_min: float = 0.5,
+        moneyness_max: float = 1.5,
+        n_strikes: int = 201,
+    ):
+        """Plot the implied risk-neutral density surface as a 3D figure.
+
+        Args:
+            value: Select ``"pdf"`` for density or ``"cdf"`` for cumulative
+                probability values on the Z axis.
+            figsize: Plot dimensions in inches ``(width, height)``.
+            title: Optional chart title. When omitted a default is used.
+            colorscale: Plotly colorscale name applied to the surface.
+            maturities: Optional maturities to evaluate. Passed through to
+                :meth:`density_surface`.
+            num_maturities: Number of maturities sampled when ``maturities`` is
+                omitted.
+            moneyness_min: Lower bound of the moneyness grid.
+            moneyness_max: Upper bound of the moneyness grid.
+            n_strikes: Number of strike points per slice.
+
+        Returns:
+            plotly.graph_objects.Figure: Interactive Plotly figure displaying
+            the requested probability surface.
+        """
+
+        density_df = self.density_surface(
+            maturities=maturities,
+            num_maturities=num_maturities,
+            moneyness_min=moneyness_min,
+            moneyness_max=moneyness_max,
+            n_strikes=n_strikes,
+            as_dataframe=True,
+        )
+
+        from oipd.presentation.probability_surface_3d import (
+            plot_probability_3d as _plot_probability_3d,
+        )
+
+        return _plot_probability_3d(
+            density_df,
+            value=value,
+            figsize=figsize,
+            title=title,
+            colorscale=colorscale,
         )
 
     def total_variance(self, k: np.ndarray | Iterable[float], t: float) -> np.ndarray:
@@ -717,8 +915,238 @@ class RNDSurface:
         df = np.exp(-self.base_market.risk_free_rate * float(t))
         return prices - df * (forward - strikes)
 
-    def slice(self, t: float | date) -> "RND":  # type: ignore[name-defined]
-        raise NotImplementedError("Slice extraction is not yet implemented")
+    def slice(
+        self,
+        t: float | date,
+        *,
+        moneyness_min: float = 0.5,
+        moneyness_max: float = 1.5,
+        n_strikes: int = 201,
+        F_t: Optional[float] = None,
+    ) -> RNDResult:
+        """Extract a single-maturity risk-neutral density from the surface.
+
+        This applies the Breeden–Litzenberger relation on a uniform strike grid
+        built as ``K = m * F(t)`` where ``m`` is a uniform moneyness grid and
+        ``F(t)`` is the forward inferred from the calibrated surface.
+
+        Args:
+            t: Target maturity. Provide as year fraction (float) or as an
+                absolute ``date``. When a ``date`` is supplied, maturity is
+                computed against the surface valuation date.
+            moneyness_min: Lower bound of the moneyness grid (e.g., 0.5 for 50% of forward).
+            moneyness_max: Upper bound of the moneyness grid (e.g., 1.5 for 150% of forward).
+            n_strikes: Number of strike points in the uniform grid. Must be >= 5.
+            F_t: Optional explicit forward override for the maturity ``t``.
+
+        Returns:
+            RNDResult: Container with ``prices`` (strike grid), ``pdf`` and
+                ``cdf`` arrays, resolved market snapshot for this maturity, and
+                metadata including the forward level and moneyness grid.
+
+        Raises:
+            ValueError: If the grid specification is invalid or no forward is available.
+            CalculationError: If pricing or density conversion fails.
+        """
+        if n_strikes < 5:
+            raise ValueError("n_strikes must be at least 5 for finite differences")
+
+        # Resolve maturity in years and corresponding days / expiry date
+        valuation = self.base_market.valuation_date
+        if isinstance(t, date):
+            days = (t - valuation).days
+            if days <= 0:
+                raise ValueError("Target maturity date must be after valuation date")
+            T = days / 365.0
+            expiry_date = t
+        else:
+            T = float(t)
+            if T <= 0:
+                raise ValueError("Target maturity must be positive")
+            days = int(round(T * 365))
+            expiry_date = valuation + timedelta(days=days)
+
+        # Infer forward and construct a uniform moneyness grid → uniform strike grid per T
+        forward = self._infer_forward(T, F_t)
+        m_grid = np.linspace(float(moneyness_min), float(moneyness_max), int(n_strikes))
+        strikes = forward * m_grid
+
+        # Compute call prices from the calibrated surface (Black-76 engine)
+        call_prices = self.price(strikes, T, forward)
+
+        # Resolve a market snapshot aligned to this maturity for downstream helpers/plotting
+        aligned_inputs = MarketInputs(
+            risk_free_rate=self.base_market.risk_free_rate,
+            valuation_date=valuation,
+            risk_free_rate_mode=self.base_market.risk_free_rate_mode,
+            underlying_price=self.base_market.underlying_price,
+            dividend_yield=self.base_market.dividend_yield,
+            dividend_schedule=self.base_market.dividend_schedule,
+            expiry_date=expiry_date,
+        )
+        resolved_market = resolve_market(aligned_inputs, vendor=None, mode="strict")
+
+        # Apply Breeden–Litzenberger: pdf(K) = e^{rT} ∂²C/∂K²
+        price_grid, pdf = pdf_from_price_curve(
+            np.asarray(strikes, dtype=float),
+            np.asarray(call_prices, dtype=float),
+            risk_free_rate=resolved_market.risk_free_rate,
+            days_to_expiry=resolved_market.days_to_expiry,
+        )
+        # Integrate to CDF
+        _, cdf = calculate_cdf_from_pdf(price_grid, pdf)
+
+        meta: Dict[str, Any] = {
+            "forward_price": float(forward),
+            "moneyness_grid": m_grid,
+            "surface_method": self.vol_model.method,
+            "pricing_engine": self.model.pricing_engine,
+        }
+
+        return RNDResult(
+            prices=np.asarray(price_grid, dtype=float),
+            pdf=np.asarray(pdf, dtype=float),
+            cdf=np.asarray(cdf, dtype=float),
+            market=resolved_market,
+            meta=meta,
+        )
+
+    def density_surface(
+        self,
+        *,
+        maturities: Optional[Sequence[float | date]] = None,
+        num_maturities: int = 12,
+        moneyness_min: float = 0.5,
+        moneyness_max: float = 1.5,
+        n_strikes: int = 201,
+        as_dataframe: bool = True,
+    ) -> Dict[str, Any] | pd.DataFrame:
+        """Compute the implied risk-neutral density surface over maturities.
+
+        The surface is evaluated on a uniform moneyness grid for each maturity
+        which ensures a uniform strike grid per-slice (``K = m * F(t)``),
+        yielding stable finite-difference estimates of the density.
+
+        Args:
+            maturities: Optional explicit list of maturities to evaluate. Items
+                may be year fractions or ``date`` objects. When omitted, a
+                uniform grid spanning the calibrated maturity range is used.
+            num_maturities: Number of maturities in the uniform grid when
+                ``maturities`` is not provided. Must be at least 2.
+            moneyness_min: Lower bound for the moneyness grid.
+            moneyness_max: Upper bound for the moneyness grid.
+            n_strikes: Number of strike points per slice (>= 5).
+            as_dataframe: When ``True`` (default), return a tidy DataFrame with
+                one row per (maturity, moneyness) cell. When ``False``, return a
+                dictionary of numpy arrays, matching the previous structure.
+
+        Returns:
+            Union[Dict[str, Any], pandas.DataFrame]: Either a dict payload with
+            grids and surfaces, or a tidy DataFrame with columns:
+            ``maturity``, ``moneyness``, ``strike``, ``pdf``, ``cdf``,
+            ``forward``, ``days_to_expiry``, ``expiry_date``.
+
+        Raises:
+            ValueError: If inputs are invalid or the surface lacks forwards.
+        """
+        if n_strikes < 5:
+            raise ValueError("n_strikes must be at least 5 for finite differences")
+
+        # Build the maturity grid in years
+        if maturities is None:
+            observed = sorted(self._forwards.keys())
+            if len(observed) == 0:
+                raise ValueError("Surface has no calibrated maturities")
+            t_min, t_max = observed[0], observed[-1]
+            if num_maturities < 2:
+                raise ValueError("num_maturities must be at least 2 when maturities are not provided")
+            t_grid = np.linspace(float(t_min), float(t_max), int(num_maturities))
+        else:
+            t_vals: list[float] = []
+            for item in maturities:
+                if isinstance(item, date):
+                    days = (item - self.base_market.valuation_date).days
+                    if days <= 0:
+                        continue
+                    t_vals.append(days / 365.0)
+                else:
+                    t_val = float(item)
+                    if t_val > 0:
+                        t_vals.append(t_val)
+            if not t_vals:
+                raise ValueError("No positive maturities provided")
+            t_grid = np.asarray(sorted(t_vals), dtype=float)
+
+        # Fixed moneyness grid shared across maturities → uniform K grid per slice
+        m_grid = np.linspace(float(moneyness_min), float(moneyness_max), int(n_strikes))
+
+        M = int(len(t_grid))
+        N = int(len(m_grid))
+        K_surface = np.empty((M, N), dtype=float)
+        pdf_surface = np.empty((M, N), dtype=float)
+        cdf_surface = np.empty((M, N), dtype=float)
+        f_map: Dict[float, float] = {}
+
+        for i, T in enumerate(t_grid):
+            # Per-slice evaluation using the same approach as in `slice`
+            forward = self._infer_forward(float(T), None)
+            f_map[float(T)] = float(forward)
+            strikes = forward * m_grid
+            call_prices = self.price(strikes, float(T), forward)
+            K_surface[i, :] = strikes
+            price_grid, pdf = pdf_from_price_curve(
+                np.asarray(strikes, dtype=float),
+                np.asarray(call_prices, dtype=float),
+                risk_free_rate=self.base_market.risk_free_rate,
+                days_to_expiry=int(round(float(T) * 365)),
+            )
+            # The returned `price_grid` equals `strikes`; align shapes defensively
+            if price_grid.shape[0] != N:
+                # Simple alignment if any trimming occurred
+                pdf_row = np.zeros((N,), dtype=float)
+                take = min(N, pdf.shape[0])
+                pdf_row[:take] = pdf[:take]
+                pdf_surface[i, :] = pdf_row
+                # Integrate to CDF using the aligned grid
+                _, cdf_vals = calculate_cdf_from_pdf(K_surface[i, :], pdf_row)
+                cdf_surface[i, :] = cdf_vals
+            else:
+                pdf_surface[i, :] = pdf
+                _, cdf_vals = calculate_cdf_from_pdf(price_grid, pdf)
+                cdf_surface[i, :] = cdf_vals
+
+        if not as_dataframe:
+            return {
+                "t_grid": np.asarray(t_grid, dtype=float),
+                "m_grid": np.asarray(m_grid, dtype=float),
+                "K_surface": K_surface,
+                "pdf_surface": pdf_surface,
+                "cdf_surface": cdf_surface,
+                "forwards": f_map,
+            }
+
+        # Build tidy DataFrame: one row per (T, m) cell
+        rows: list[dict[str, Any]] = []
+        valuation = self.base_market.valuation_date
+        for i, T in enumerate(t_grid):
+            forward = float(f_map[float(T)])
+            days = int(round(float(T) * 365))
+            expiry_date = valuation + timedelta(days=days)
+            for j, m in enumerate(m_grid):
+                rows.append(
+                    {
+                        "maturity": float(T),
+                        "moneyness": float(m),
+                        "strike": float(K_surface[i, j]),
+                        "pdf": float(pdf_surface[i, j]),
+                        "cdf": float(cdf_surface[i, j]),
+                        "forward": forward,
+                        "days_to_expiry": days,
+                        "expiry_date": expiry_date,
+                    }
+                )
+
+        return pd.DataFrame.from_records(rows)
 
     def check_no_arbitrage(self) -> Dict[str, float]:
         """Return diagnostic margins for the calibrated surface."""
