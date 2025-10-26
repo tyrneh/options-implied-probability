@@ -1,10 +1,17 @@
-from oipd import RND, MarketInputs, ModelParams, RNDSurface
-from oipd.core.vol_surface_fitting.shared.svi import svi_options
+from oipd import (
+    RND,
+    MarketInputs,
+    ModelParams,
+    RNDSurface,
+    rebuild_slice_from_svi,
+    rebuild_surface_from_ssvi,
+)
 
 import matplotlib.pyplot as plt
 from datetime import date
 import pandas as pd
 import time
+import numpy as np
 
 
 # read in csv and convert to dataframe
@@ -57,6 +64,28 @@ plt.show()
 svi_params = est_appl.svi_params()
 print(svi_params)
 
+# reconstruct vol curve and RND from SVI parameters
+rebuild = rebuild_slice_from_svi(
+    svi_params,
+    forward_price=float(est_appl.meta["forward_price"]),
+    days_to_expiry=est_appl.market.days_to_expiry,
+    risk_free_rate=float(est_appl.market.risk_free_rate),
+    strike_grid=est_appl.meta["vol_curve"].grid[0],
+)
+rebuild_df = rebuild.data  # THIS CONTAINS THE VOL, PDF, AND CDF
+rebuild_df.head()
+
+# optional -> check that the reconstructed vol curve matches the original
+original_vol = est_appl.meta["vol_curve"](rebuild_df["strike"].to_numpy())
+reconstructed_vol = rebuild.vol_curve(rebuild_df["strike"].to_numpy())
+print(
+    "Reconstructed vol matches original:", np.allclose(original_vol, reconstructed_vol)
+)
+print(
+    "Reconstructed PDF matches original:",
+    np.allclose(rebuild_df["pdf"].to_numpy(), est_appl.pdf),
+)
+
 
 # --- Example 2 - AAPL surface (multiple expiries) --- #
 
@@ -102,3 +131,38 @@ prob_surface.head()
 # plot probability of prices over time as 2D plot
 appl_surface.plot()
 plt.show()
+
+# return SSVI parameters
+ssvi_params = appl_surface.ssvi_params()
+
+# rebuild the surface from the SSVI parameters
+# Rebuild every stored maturity slice from the SSVI parameter table
+surface_rebuild = rebuild_surface_from_ssvi(
+    ssvi_params,
+    forwards=appl_surface.forward_levels(),
+    risk_free_rate=float(market.risk_free_rate),
+)
+
+# Select the first calibrated maturity (expressed in year fractions)
+first_maturity = float(ssvi_params["maturity"].iloc[0])
+
+# Retrieve both the original surface slice and the reconstructed slice
+original_surface_slice = appl_surface.slice(first_maturity)
+rebuilt_surface_slice = surface_rebuild.slice(first_maturity)
+
+# Confirm the reconstructed implied-vol curve matches the calibrated surface
+print(
+    "SSVI slice vol match:",
+    np.allclose(
+        rebuilt_surface_slice.vol_curve(original_surface_slice.prices),
+        appl_surface.iv(original_surface_slice.prices, first_maturity),
+    ),
+)
+# Confirm the reconstructed density reproduces the original PDF samples
+print(
+    "SSVI slice PDF match:",
+    np.allclose(
+        rebuilt_surface_slice.data["pdf"].to_numpy(),
+        original_surface_slice.pdf,
+    ),
+)

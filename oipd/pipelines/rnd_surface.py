@@ -605,6 +605,15 @@ class RNDSurface:
     def expiries(self) -> List[date]:
         return [slice_data.expiry for slice_data in self._raw_slices]
 
+    def forward_levels(self) -> Dict[float, float]:
+        """Return forward levels keyed by maturity.
+
+        Returns:
+            dict[float, float]: Mapping of maturity in years to the calibrated
+            forward price used for each slice.
+        """
+        return dict(self._forwards)
+
     def _ensure_ssvi_fit(self) -> SSVISurfaceFit:
         if self._ssvi_fit is None:
             raise CalculationError("SSVI calibration has not been executed")
@@ -1169,3 +1178,119 @@ class RNDSurface:
             "raw_calendar_margins": raw_fit.raw_calendar_margins or [],
             "raw_calendar_deltas": raw_fit.raw_calendar_deltas or [],
         }
+
+    # ------------------------------------------------------------------
+    # Parameter export helpers
+    # ------------------------------------------------------------------
+
+    def ssvi_params(self) -> pd.DataFrame:
+        """Return calibrated SSVI surface parameters as a DataFrame.
+
+        Returns:
+            DataFrame: Tabular summary with columns ``maturity`` (years),
+            ``days_to_expiry``, ``expiry_date``, ``theta``, ``rho``, ``eta``,
+            ``gamma``, and ``alpha``. Parameters other than ``theta`` repeat per
+            maturity because they are global surface coefficients.
+
+        Raises:
+            ValueError: If the calibrated surface is not SSVI.
+        """
+
+        if self._fit_kind != "ssvi":
+            raise ValueError("SSVI parameters are only available for SSVI-calibrated surfaces.")
+
+        fit = self._ensure_ssvi_fit()
+        params = fit.params
+
+        maturities = [float(t) for t in params.maturities]
+        theta_vals = [float(x) for x in params.theta]
+        rho_val = float(params.rho)
+        eta_val = float(params.eta)
+        gamma_val = float(params.gamma)
+        alpha_val = float(getattr(params, "alpha", 0.0))
+
+        valuation = self.base_market.valuation_date
+        days_to_expiry = [int(round(m * 365)) for m in maturities]
+        expiry_dates = [valuation + timedelta(days=d) for d in days_to_expiry]
+
+        data = {
+            "maturity": maturities,
+            "days_to_expiry": days_to_expiry,
+            "expiry_date": expiry_dates,
+            "theta": theta_vals,
+            "rho": [rho_val] * len(maturities),
+            "eta": [eta_val] * len(maturities),
+            "gamma": [gamma_val] * len(maturities),
+            "alpha": [alpha_val] * len(maturities),
+        }
+
+        return pd.DataFrame(data, columns=[
+            "maturity",
+            "days_to_expiry",
+            "expiry_date",
+            "theta",
+            "rho",
+            "eta",
+            "gamma",
+            "alpha",
+        ])
+
+    def raw_svi_params(self) -> Dict[str, Any]:
+        """Return calibrated raw-SVI parameters per maturity.
+
+        Returns:
+            dict[str, Any]: Dictionary with keys:
+                - ``method``: Always ``"raw_svi"``.
+                - ``alpha``: Gatheral-style linear tilt applied across maturities.
+                - ``slices``: List of dicts, one per maturity, each containing
+                  ``maturity`` (years) and the raw SVI parameters ``a``, ``b``,
+                  ``rho``, ``m``, ``sigma``.
+
+        Raises:
+            ValueError: If the calibrated surface is not raw SVI.
+        """
+
+        if self._fit_kind != "raw_svi":
+            raise ValueError("Raw SVI parameters are only available for raw-SVI-calibrated surfaces.")
+
+        fit = self._ensure_raw_fit()
+        payload = {
+            "method": "raw_svi",
+            "alpha": float(getattr(fit, "alpha", 0.0)),
+            "slices": [],
+        }
+        for s in sorted(fit.slices, key=lambda x: x.maturity):
+            payload["slices"].append(
+                {
+                    "maturity": float(s.maturity),
+                    "a": float(s.params.a),
+                    "b": float(s.params.b),
+                    "rho": float(s.params.rho),
+                    "m": float(s.params.m),
+                    "sigma": float(s.params.sigma),
+                }
+            )
+        return payload
+
+    def svi_params(self) -> Dict[str, Any]:
+        """Return surface parameters in SVI form when applicable.
+
+        This mirrors :meth:`oipd.pipelines.rnd_slice.RND.svi_params` but for a
+        term structure. For raw-SVI surfaces, returns the per-maturity SVI
+        parameters and the global ``alpha`` tilt. For SSVI surfaces, raises a
+        helpful error directing callers to :meth:`ssvi_params`.
+
+        Returns:
+            dict[str, Any]: See :meth:`raw_svi_params` for structure when the
+            surface is calibrated with raw SVI.
+
+        Raises:
+            ValueError: If the surface is SSVI-calibrated. Use
+                :meth:`ssvi_params` in that case.
+        """
+
+        if self._fit_kind == "raw_svi":
+            return self.raw_svi_params()
+        raise ValueError(
+            "Surface used SSVI. Call `ssvi_params()` to retrieve SSVI parameters."
+        )

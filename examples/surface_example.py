@@ -26,7 +26,7 @@ surface_nvda = RNDSurface.from_ticker(
     market,
     model=model,
     horizon="1Y",
-    vol=VolModel(method="raw_svi"),
+    vol=VolModel(method="ssvi"),
 )
 
 fig = surface_nvda.plot_iv(layout="grid")
@@ -34,6 +34,9 @@ plt.show()
 
 fig = surface_nvda.plot_iv_3d()
 fig.show()
+
+surface_nvda.plot()
+plt.show()
 
 # # Interactive 3D surface (requires Plotly)
 # fig_3d = surface_nvda.plot_iv_3d()

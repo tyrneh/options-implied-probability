@@ -17,6 +17,12 @@ from oipd.pipelines.estimator import ModelParams, RNDResult
 from oipd.pipelines.rnd_slice import RND
 from oipd.core.vol_surface_fitting.shared.vol_model import VolModel
 from oipd.pipelines.rnd_surface import RNDSurface
+from oipd.pipelines.reconstruct import (
+    RebuiltSlice,
+    RebuiltSurface,
+    rebuild_slice_from_svi,
+    rebuild_surface_from_ssvi,
+)
 from oipd.pipelines.market_inputs import (
     MarketInputs,
     VendorSnapshot,
@@ -48,4 +54,8 @@ __all__ = [
     "RNDResult",
     "VolModel",
     "RNDSurface",
+    "RebuiltSlice",
+    "RebuiltSurface",
+    "rebuild_slice_from_svi",
+    "rebuild_surface_from_ssvi",
 ]
