@@ -7,6 +7,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
+from scipy import interpolate
 
 from oipd.core.probability_density_conversion import (
     calculate_cdf_from_pdf,
@@ -19,7 +20,7 @@ from oipd.core.vol_surface_fitting.shared.svi import (
     log_moneyness,
     svi_total_variance,
 )
-from oipd.core.vol_surface_fitting.shared.ssvi import ssvi_total_variance
+from oipd.core.vol_surface_fitting.shared.ssvi import SSVISurfaceParams, ssvi_total_variance
 
 
 @dataclass(frozen=True)
@@ -30,29 +31,153 @@ class RebuiltSlice:
     data: pd.DataFrame
 
 
-@dataclass(frozen=True)
+@dataclass
 class RebuiltSurface:
-    """Bundle of reconstructed slices keyed by maturity (years)."""
+    """Reconstructed SSVI surface capable of interpolating maturities."""
 
-    slices: dict[float, RebuiltSlice]
+    theta_interpolator: interpolate.PchipInterpolator
+    rho: float
+    eta: float
+    gamma: float
+    alpha: float
+    risk_free_rate: float
+    forward_map: dict[float, float]
+    strike_grids: dict[float, np.ndarray]
+    _cache: dict[float, RebuiltSlice]
 
-    def slice(self, maturity: float) -> RebuiltSlice:
-        """Return the reconstructed slice for a maturity.
+    def available_maturities(self) -> tuple[float, ...]:
+        """Return maturities for which parameters were provided."""
+
+        return tuple(sorted(self.forward_map))
+
+    def slice(
+        self,
+        maturity: float,
+        *,
+        strike_grid: Sequence[float] | None = None,
+    ) -> RebuiltSlice:
+        """Return a reconstructed slice at an arbitrary maturity.
 
         Args:
             maturity: float
-                Target maturity expressed in year fractions.
+                Target year-fraction maturity.
+            strike_grid: optional sequence of strikes. When omitted the helper
+                reuses the stored grid for matching maturities or falls back to
+                a symmetric 50–150% moneyness grid.
 
         Returns:
             RebuiltSlice: Reconstructed smile and density for ``maturity``.
-
-        Raises:
-            KeyError: If the requested maturity is not available.
         """
-        try:
-            return self.slices[maturity]
-        except KeyError as exc:  # pragma: no cover - defensive
-            raise KeyError(f"No reconstructed slice for maturity {maturity!r}") from exc
+
+        t = float(maturity)
+        if strike_grid is None and t in self._cache:
+            return self._cache[t]
+
+        slice_obj = self._build_slice(t, strike_grid=strike_grid)
+        if strike_grid is None:
+            self._cache[t] = slice_obj
+        return slice_obj
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_slice(
+        self,
+        maturity: float,
+        *,
+        strike_grid: Sequence[float] | None,
+    ) -> RebuiltSlice:
+        theta_t = float(self.theta_interpolator(maturity))
+        theta_t = max(theta_t, 1e-6)
+        forward = self._infer_forward(maturity)
+
+        strikes = self._resolve_strike_grid(maturity, forward, strike_grid)
+
+        def vol_curve(eval_strikes: Iterable[float] | np.ndarray) -> np.ndarray:
+            eval_array = np.asarray(eval_strikes, dtype=float)
+            log_mny = log_moneyness(eval_array, forward)
+            total_var = ssvi_total_variance(log_mny, theta_t, self.rho, self.eta, self.gamma)
+            if self.alpha:
+                total_var = total_var + float(self.alpha) * maturity
+            return np.sqrt(np.maximum(total_var / max(maturity, 1e-8), 1e-12))
+
+        implied_vol = vol_curve(strikes)
+        vol_curve.grid = (strikes.copy(), implied_vol.copy())  # type: ignore[attr-defined]
+
+        strike_pricing, call_prices = price_curve_from_iv(
+            vol_curve,
+            forward,
+            strike_grid=strikes,
+            days_to_expiry=self._days_from_maturity(maturity),
+            risk_free_rate=self.risk_free_rate,
+            pricing_engine="black76",
+        )
+
+        prices, pdf = pdf_from_price_curve(
+            strike_pricing,
+            call_prices,
+            risk_free_rate=self.risk_free_rate,
+            days_to_expiry=self._days_from_maturity(maturity),
+        )
+        _, cdf = calculate_cdf_from_pdf(prices, pdf)
+
+        data = pd.DataFrame(
+            {
+                "strike": prices,
+                "fitted_vol": vol_curve(prices),
+                "call_price": np.interp(prices, strike_pricing, call_prices),
+                "pdf": pdf,
+                "cdf": cdf,
+                "maturity": maturity,
+            }
+        )
+
+        return RebuiltSlice(vol_curve=vol_curve, data=data)
+
+    def _infer_forward(self, maturity: float) -> float:
+        if not self.forward_map:
+            raise ValueError("Forward map is empty; cannot infer forward level")
+
+        items = sorted(self.forward_map.items())
+        for t, fwd in items:
+            if abs(t - maturity) <= 1e-6:
+                return float(fwd)
+        if maturity <= items[0][0]:
+            return float(items[0][1])
+        if maturity >= items[-1][0]:
+            return float(items[-1][1])
+        for (t0, f0), (t1, f1) in zip(items[:-1], items[1:]):
+            if t0 <= maturity <= t1:
+                weight = (maturity - t0) / (t1 - t0)
+                return float((1.0 - weight) * f0 + weight * f1)
+        return float(items[-1][1])
+
+    def _resolve_strike_grid(
+        self,
+        maturity: float,
+        forward: float,
+        strike_grid: Sequence[float] | None,
+    ) -> np.ndarray:
+        if strike_grid is not None:
+            return np.asarray(strike_grid, dtype=float)
+
+        candidates = [
+            grid
+            for key, grid in self.strike_grids.items()
+            if abs(key - maturity) <= 1e-6
+        ]
+        if candidates:
+            return candidates[0].copy()
+
+        strike_min = forward * 0.5
+        strike_max = forward * 1.5
+        return np.linspace(strike_min, strike_max, 201)
+
+    @staticmethod
+    def _days_from_maturity(maturity: float) -> int:
+        days = int(round(float(maturity) * 365.0))
+        return max(days, 1)
 
 
 def rebuild_slice_from_svi(
@@ -207,84 +332,50 @@ def rebuild_surface_from_ssvi(
     if missing_cols:
         raise ValueError(f"SSVI params missing required columns: {sorted(missing_cols)}")
 
-    slices: dict[float, RebuiltSlice] = {}
     rho = float(df.iloc[0]["rho"])
     eta = float(df.iloc[0]["eta"])
     gamma = float(df.iloc[0]["gamma"])
     alpha = float(df.iloc[0]["alpha"])
 
+    maturities = df["maturity"].astype(float).to_numpy()
+    theta_values = df["theta"].astype(float).to_numpy()
+
+    params = SSVISurfaceParams(
+        maturities=np.asarray(maturities, dtype=float),
+        theta=np.asarray(theta_values, dtype=float),
+        rho=float(rho),
+        eta=float(eta),
+        gamma=float(gamma),
+        alpha=float(alpha),
+    )
+    theta_interp = params.interpolator()
+
     forward_lookup = {float(k): float(v) for k, v in forwards.items()}
-    strike_lookup = {float(k): tuple(map(float, v)) for k, v in (strike_grids or {}).items()}
+    strike_lookup = {
+        float(k): np.asarray(v, dtype=float)
+        for k, v in (strike_grids or {}).items()
+    }
 
-    for _, row in df.iterrows():
-        maturity = float(row["maturity"])
-        theta_val = float(row["theta"])
-        days = int(row["days_to_expiry"])
+    surface = RebuiltSurface(
+        theta_interpolator=theta_interp,
+        rho=float(rho),
+        eta=float(eta),
+        gamma=float(gamma),
+        alpha=float(alpha),
+        risk_free_rate=float(risk_free_rate),
+        forward_map=forward_lookup,
+        strike_grids=strike_lookup,
+        _cache={},
+    )
 
-        forward = forward_lookup.get(maturity)
-        if forward is None:
-            forward = _match_with_tolerance(maturity, forward_lookup)
-        forward_val = float(forward)
-
-        strikes = strike_lookup.get(maturity)
-        if strikes is None:
-            strike_min = forward_val * 0.5
-            strike_max = forward_val * 1.5
-            strikes = tuple(np.linspace(strike_min, strike_max, 201))
-
-        def _vol_curve(
-            eval_strikes: Iterable[float] | np.ndarray,
-            *,
-            _theta: float = theta_val,
-            _forward: float = forward_val,
-            _maturity: float = maturity,
-            _rho: float = rho,
-            _eta: float = eta,
-            _gamma: float = gamma,
-            _alpha: float = alpha,
-        ) -> np.ndarray:
-            eval_array = np.asarray(eval_strikes, dtype=float)
-            log_mny = log_moneyness(eval_array, _forward)
-            total_var = ssvi_total_variance(log_mny, _theta, _rho, _eta, _gamma)
-            if _alpha:
-                total_var = total_var + float(_alpha) * _maturity
-            return np.sqrt(np.maximum(total_var / max(_maturity, 1e-8), 1e-12))
-
-        implied_vol = _vol_curve(strikes)
-        _vol_curve.grid = (np.asarray(strikes, dtype=float).copy(), implied_vol.copy())  # type: ignore[attr-defined]
-
-        strike_arr = np.asarray(strikes, dtype=float)
-        strike_pricing, call_prices = price_curve_from_iv(
-            _vol_curve,
-            forward_val,
-            strike_grid=strike_arr,
-            days_to_expiry=days,
-            risk_free_rate=float(risk_free_rate),
-            pricing_engine="black76",
+    for maturity in maturities:
+        default_grid = strike_lookup.get(float(maturity))
+        surface._cache[float(maturity)] = surface._build_slice(
+            float(maturity),
+            strike_grid=default_grid,
         )
 
-        prices, pdf = pdf_from_price_curve(
-            strike_pricing,
-            call_prices,
-            risk_free_rate=float(risk_free_rate),
-            days_to_expiry=days,
-        )
-        _, cdf = calculate_cdf_from_pdf(prices, pdf)
-
-        data = pd.DataFrame(
-            {
-                "strike": prices,
-                "fitted_vol": _vol_curve(prices),
-                "call_price": np.interp(prices, strike_pricing, call_prices),
-                "pdf": pdf,
-                "cdf": cdf,
-                "maturity": maturity,
-            }
-        )
-
-        slices[maturity] = RebuiltSlice(vol_curve=_vol_curve, data=data)
-
-    return RebuiltSurface(slices)
+    return surface
 
 
 def _match_with_tolerance(target: float, table: Mapping[float, float], tol: float = 1e-6) -> float:

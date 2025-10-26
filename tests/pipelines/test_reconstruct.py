@@ -160,7 +160,8 @@ def test_rebuild_surface_from_ssvi_matches_surface_result() -> None:
         strike_grids=strike_grids,
     )
 
-    for maturity, rebuilt_slice in rebuilt_surface.slices.items():
+    for maturity in rebuilt_surface.available_maturities():
+        rebuilt_slice = rebuilt_surface.slice(maturity)
         forward = forward_map[maturity]
         strike_grid = rebuilt_slice.data["strike"].to_numpy()
         original_vol = surface.iv(strike_grid, maturity, forward)
@@ -180,3 +181,28 @@ def test_rebuild_surface_from_ssvi_matches_surface_result() -> None:
             rtol=1e-5,
             atol=1e-5,
         )
+
+    # Arbitrary maturity interpolation
+    maturities = sorted(rebuilt_surface.available_maturities())
+    mid_maturity = float(np.mean(maturities))
+    original_mid_slice = surface.slice(mid_maturity)
+    rebuilt_mid_slice = rebuilt_surface.slice(
+        mid_maturity,
+        strike_grid=original_mid_slice.prices,
+    )
+    np.testing.assert_allclose(
+        rebuilt_mid_slice.vol_curve(original_mid_slice.prices),
+        surface.iv(original_mid_slice.prices, mid_maturity),
+    )
+    np.testing.assert_allclose(
+        rebuilt_mid_slice.data["pdf"].to_numpy(),
+        original_mid_slice.pdf,
+        rtol=1e-5,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        rebuilt_mid_slice.data["cdf"].to_numpy(),
+        original_mid_slice.cdf,
+        rtol=1e-5,
+        atol=1e-5,
+    )
