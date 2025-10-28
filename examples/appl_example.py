@@ -127,19 +127,16 @@ ssvi_params = appl_surface.ssvi_params()
 # Rebuild every stored maturity slice from the SSVI parameter table
 surface_rebuild = rebuild_surface_from_ssvi(
     ssvi_params,
-    forwards=appl_surface.forward_levels(),
+    forward_prices=appl_surface.forward_levels(),
     risk_free_rate=float(market.risk_free_rate),
 )
 
-# Select the first calibrated maturity (expressed in year fractions)
-first_maturity = float(ssvi_params["maturity"].iloc[0])
-
-# Get the reconstructed data for the first maturity
-first_rebuilt_slice = surface_rebuild.slice(first_maturity)
+# Select the first slice maturity
+first_days = int(ssvi_params["days_to_expiry"].iloc[0])
+first_rebuilt_slice = surface_rebuild.slice(days_to_expiry=first_days)
 first_maturity_data = first_rebuilt_slice.data
 first_maturity_data.head()
 
-# get the reconstructed data for an arbitrary maturity
-arbitrary_maturity = 0.3
-arbitrary_rebuilt_data = surface_rebuild.slice(arbitrary_maturity).data
-arbitrary_rebuilt_data.head()
+# Select an arbitrary maturity 
+rebuilt_slice_df = surface_rebuild.slice(days_to_expiry=100).data
+rebuilt_slice_df.head()

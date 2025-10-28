@@ -43,39 +43,47 @@ class RebuiltSurface:
     risk_free_rate: float
     forward_map: dict[float, float]
     strike_grids: dict[float, np.ndarray]
+    days_map: dict[float, int]
     _cache: dict[float, RebuiltSlice]
 
-    def available_maturities(self) -> tuple[float, ...]:
-        """Return maturities for which parameters were provided."""
+    def available_days(self) -> tuple[int, ...]:
+        """Return calendar days to expiry available in the snapshot."""
 
-        return tuple(sorted(self.forward_map))
+        return tuple(sorted(set(self.days_map.values())))
 
     def slice(
         self,
-        maturity: float,
         *,
+        days_to_expiry: int,
         strike_grid: Sequence[float] | None = None,
     ) -> RebuiltSlice:
         """Return a reconstructed slice at an arbitrary maturity.
 
         Args:
-            maturity: float
-                Target year-fraction maturity.
+            days_to_expiry: int
+                Calendar days to expiry for the requested slice.
             strike_grid: optional sequence of strikes. When omitted the helper
                 reuses the stored grid for matching maturities or falls back to
                 a symmetric 50–150% moneyness grid.
 
         Returns:
-            RebuiltSlice: Reconstructed smile and density for ``maturity``.
+            RebuiltSlice: Reconstructed smile and density for the requested
+            maturity.
         """
 
-        t = float(maturity)
-        if strike_grid is None and t in self._cache:
-            return self._cache[t]
+        maturity = max(float(days_to_expiry) / 365.0, 1e-8)
+        days_override = int(days_to_expiry)
 
-        slice_obj = self._build_slice(t, strike_grid=strike_grid)
+        if strike_grid is None and maturity in self._cache:
+            return self._cache[maturity]
+
+        slice_obj = self._build_slice(
+            maturity,
+            strike_grid=strike_grid,
+            days_override=days_override,
+        )
         if strike_grid is None:
-            self._cache[t] = slice_obj
+            self._cache[maturity] = slice_obj
         return slice_obj
 
     # ------------------------------------------------------------------
@@ -87,6 +95,7 @@ class RebuiltSurface:
         maturity: float,
         *,
         strike_grid: Sequence[float] | None,
+        days_override: int | None,
     ) -> RebuiltSlice:
         theta_t = float(self.theta_interpolator(maturity))
         theta_t = max(theta_t, 1e-6)
@@ -105,11 +114,13 @@ class RebuiltSurface:
         implied_vol = vol_curve(strikes)
         vol_curve.grid = (strikes.copy(), implied_vol.copy())  # type: ignore[attr-defined]
 
+        days_to_expiry = days_override if days_override is not None else self._days_from_maturity(maturity)
+
         strike_pricing, call_prices = price_curve_from_iv(
             vol_curve,
             forward,
             strike_grid=strikes,
-            days_to_expiry=self._days_from_maturity(maturity),
+            days_to_expiry=days_to_expiry,
             risk_free_rate=self.risk_free_rate,
             pricing_engine="black76",
         )
@@ -118,7 +129,7 @@ class RebuiltSurface:
             strike_pricing,
             call_prices,
             risk_free_rate=self.risk_free_rate,
-            days_to_expiry=self._days_from_maturity(maturity),
+            days_to_expiry=days_to_expiry,
         )
         _, cdf = calculate_cdf_from_pdf(prices, pdf)
 
@@ -130,6 +141,7 @@ class RebuiltSurface:
                 "pdf": pdf,
                 "cdf": cdf,
                 "maturity": maturity,
+                "days_to_expiry": days_to_expiry,
             }
         )
 
@@ -298,7 +310,7 @@ def rebuild_slice_from_svi(
 def rebuild_surface_from_ssvi(
     ssvi_params: pd.DataFrame | Mapping[str, Sequence[float]],
     *,
-    forwards: Mapping[float, float],
+    forward_prices: Mapping[float, float],
     risk_free_rate: float,
     strike_grids: Mapping[float, Sequence[float]] | None = None,
 ) -> RebuiltSurface:
@@ -309,7 +321,7 @@ def rebuild_surface_from_ssvi(
             Table produced by :meth:`RNDSurface.ssvi_params` or an equivalent
             mapping containing the columns ``maturity``, ``theta``,
             ``days_to_expiry``, ``rho``, ``eta``, ``gamma``, and ``alpha``.
-        forwards: Mapping[float, float]
+        forward_prices: Mapping[float, float]
             Dictionary mapping maturity (years) to the forward level used for
             pricing each slice during calibration.
         risk_free_rate: float
@@ -350,10 +362,14 @@ def rebuild_surface_from_ssvi(
     )
     theta_interp = params.interpolator()
 
-    forward_lookup = {float(k): float(v) for k, v in forwards.items()}
+    forward_lookup = {float(k): float(v) for k, v in forward_prices.items()}
     strike_lookup = {
         float(k): np.asarray(v, dtype=float)
         for k, v in (strike_grids or {}).items()
+    }
+    days_lookup = {
+        float(row_maturity): int(row_days)
+        for row_maturity, row_days in zip(df["maturity"].astype(float), df["days_to_expiry"].astype(int))
     }
 
     surface = RebuiltSurface(
@@ -365,14 +381,20 @@ def rebuild_surface_from_ssvi(
         risk_free_rate=float(risk_free_rate),
         forward_map=forward_lookup,
         strike_grids=strike_lookup,
+        days_map=days_lookup,
         _cache={},
     )
 
     for maturity in maturities:
         default_grid = strike_lookup.get(float(maturity))
-        surface._cache[float(maturity)] = surface._build_slice(
-            float(maturity),
+        maturity_float = float(maturity)
+        override_days = days_lookup.get(maturity_float)
+        if override_days is None:
+            override_days = max(int(round(maturity_float * 365.0)), 1)
+        surface._cache[maturity_float] = surface._build_slice(
+            maturity_float,
             strike_grid=default_grid,
+            days_override=override_days,
         )
 
     return surface

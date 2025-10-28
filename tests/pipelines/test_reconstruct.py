@@ -14,6 +14,7 @@ from oipd import (
     rebuild_slice_from_svi,
     rebuild_surface_from_ssvi,
 )
+from oipd.pipelines.reconstruct import _match_with_tolerance
 from oipd.pricing.black76 import black76_call_price
 
 
@@ -155,14 +156,15 @@ def test_rebuild_surface_from_ssvi_matches_surface_result() -> None:
 
     rebuilt_surface = rebuild_surface_from_ssvi(
         ssvi_df,
-        forwards=forward_map,
+        forward_prices=forward_map,
         risk_free_rate=float(market.risk_free_rate),
         strike_grids=strike_grids,
     )
 
-    for maturity in rebuilt_surface.available_maturities():
-        rebuilt_slice = rebuilt_surface.slice(maturity)
-        forward = forward_map[maturity]
+    for days in rebuilt_surface.available_days():
+        maturity = float(days) / 365.0
+        rebuilt_slice = rebuilt_surface.slice(days_to_expiry=days)
+        forward = _match_with_tolerance(maturity, forward_map)
         strike_grid = rebuilt_slice.data["strike"].to_numpy()
         original_vol = surface.iv(strike_grid, maturity, forward)
         np.testing.assert_allclose(rebuilt_slice.vol_curve(strike_grid), original_vol)
@@ -183,11 +185,12 @@ def test_rebuild_surface_from_ssvi_matches_surface_result() -> None:
         )
 
     # Arbitrary maturity interpolation
-    maturities = sorted(rebuilt_surface.available_maturities())
-    mid_maturity = float(np.mean(maturities))
+    available_days = sorted(rebuilt_surface.available_days())
+    mid_days = int(np.mean(available_days))
+    mid_maturity = mid_days / 365.0
     original_mid_slice = surface.slice(mid_maturity)
     rebuilt_mid_slice = rebuilt_surface.slice(
-        mid_maturity,
+        days_to_expiry=mid_days,
         strike_grid=original_mid_slice.prices,
     )
     np.testing.assert_allclose(
