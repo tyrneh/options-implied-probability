@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 
-VolMethod = Literal["svi", "svi-jw", "bspline", "ssvi", "raw_svi"]
+VolMethod = Literal["svi", "svi-jw", "bspline", "ssvi"]
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,7 @@ class VolModel:
             the appropriate default (``"svi"`` for single-expiry smiles and
             ``"ssvi"`` for term structures). Slice-compatible methods are
             ``"svi"``, ``"svi-jw"``, and ``"bspline"``; surface-compatible
-            methods are ``"ssvi"`` and ``"raw_svi"``.
+            methods are ``"ssvi"``.
         strict_no_arbitrage: Whether to enforce the strongest available
             no-arbitrage checks for the selected method.
     """
@@ -28,5 +28,4 @@ class VolModel:
 
 
 SLICE_METHODS: tuple[str, ...] = ("svi", "svi-jw", "bspline")
-SURFACE_METHODS: tuple[str, ...] = ("ssvi", "raw_svi")
-
+SURFACE_METHODS: tuple[str, ...] = ("ssvi",)

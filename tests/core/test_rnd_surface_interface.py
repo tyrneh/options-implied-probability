@@ -14,10 +14,7 @@ import pytest
 
 from oipd import MarketInputs, RNDSurface, VolModel
 from oipd.core.vol_surface_fitting.shared.ssvi import ssvi_total_variance
-from oipd.core.vol_surface_fitting.shared.svi import SVIParameters, svi_total_variance
 from oipd.pricing.black76 import black76_call_price
-from oipd.core.vol_surface_fitting.algorithms.stitched_svi import calibrate_raw_svi_surface
-from oipd.core.vol_surface_fitting.algorithms.ssvi import SSVISliceObservations
 
 
 def make_market(expiry: date | None = None) -> MarketInputs:
@@ -73,49 +70,6 @@ def build_synthetic_dataframe() -> pd.DataFrame:
             )
     return pd.DataFrame(rows)
 
-
-def build_raw_svi_dataframe():
-    valuation = date(2024, 1, 2)
-    maturities = [0.25, 0.5]
-    params_list = [
-        SVIParameters(a=0.02, b=0.15, rho=-0.2, m=0.0, sigma=0.28),
-        SVIParameters(a=0.045, b=0.25, rho=-0.25, m=0.03, sigma=0.32),
-    ]
-    expiries = [pd.Timestamp(valuation + timedelta(days=int(T * 365))) for T in maturities]
-    rows = []
-    F = 100.0
-
-    for expiry, T, params in zip(expiries, maturities, params_list):
-        k_grid = np.linspace(-0.4, 0.4, 5)
-        strikes = F * np.exp(k_grid)
-        w = svi_total_variance(k_grid, params)
-        sigma = np.sqrt(w / T)
-        call_prices = black76_call_price(F, strikes, sigma, T, 0.0)
-        put_prices = call_prices - (F - strikes)
-        for strike, call_price, put_price in zip(strikes, call_prices, put_prices):
-            rows.append(
-                {
-                    "expiry": expiry,
-                    "strike": strike,
-                    "option_type": "C",
-                    "bid": call_price,
-                    "ask": call_price,
-                    "last_price": call_price,
-                    "last_trade_date": pd.Timestamp(valuation),
-                }
-            )
-            rows.append(
-                {
-                    "expiry": expiry,
-                    "strike": strike,
-                    "option_type": "P",
-                    "bid": put_price,
-                    "ask": put_price,
-                    "last_price": put_price,
-                    "last_trade_date": pd.Timestamp(valuation),
-                }
-            )
-    return pd.DataFrame(rows), params_list, maturities
 
 
 def test_surface_from_dataframe_defaults_to_ssvi():
@@ -288,63 +242,6 @@ def test_surface_from_ticker_respects_horizon(monkeypatch):
 
     diagnostics = surface.check_no_arbitrage()
     assert "objective" in diagnostics
-
-
-def test_raw_svi_surface_calibration():
-    data, params_list, maturities = build_raw_svi_dataframe()
-    surface = RNDSurface.from_dataframe(
-        data,
-        make_market(),
-        vol=VolModel(method="raw_svi"),
-    )
-
-    assert surface.vol_model.method == "raw_svi"
-    first_maturity = 0.25
-    tv = surface.total_variance(np.array([0.0]), first_maturity)
-    expected = svi_total_variance(np.array([0.0]), params_list[0])
-    assert np.allclose(tv, expected, atol=5e-3)
-    diagnostics = surface.check_no_arbitrage()
-    assert diagnostics["min_calendar_margin"] >= -1e-2
-    assert diagnostics["alpha"] >= 0.0
-    assert len(diagnostics["raw_calendar_margins"]) == len(maturities) - 1
-
-
-def test_raw_svi_alpha_repair():
-    k_grid = np.linspace(-0.4, 0.4, 9)
-    maturities = np.array([0.25, 0.5])
-    params = [
-        SVIParameters(a=0.025, b=0.18, rho=-0.2, m=0.0, sigma=0.28),
-        SVIParameters(a=0.010, b=0.14, rho=-0.2, m=0.02, sigma=0.25),
-    ]
-
-    observations = []
-    for maturity, param in zip(maturities, params):
-        w = svi_total_variance(k_grid, param)
-        observations.append(
-            SSVISliceObservations(
-                maturity=float(maturity),
-                log_moneyness=k_grid,
-                total_variance=w,
-                weights=np.ones_like(k_grid),
-            )
-        )
-
-    vol_model = VolModel(method="raw_svi", strict_no_arbitrage=True)
-    fit = calibrate_raw_svi_surface(observations, vol_model)
-
-    assert fit.alpha > 0.0
-
-    adjusted_margins = []
-    for idx in range(len(fit.slices) - 1):
-        obs_a = observations[idx]
-        obs_b = observations[idx + 1]
-        slice_a = fit.slices[idx]
-        slice_b = fit.slices[idx + 1]
-        w_early = svi_total_variance(k_grid, slice_a.params) + fit.alpha * obs_a.maturity
-        w_late = svi_total_variance(k_grid, slice_b.params) + fit.alpha * obs_b.maturity
-        adjusted_margins.append(np.min(w_late - w_early))
-
-    assert min(adjusted_margins) >= -1e-6
 
 
 def test_ssvi_alpha_tilt_applied():

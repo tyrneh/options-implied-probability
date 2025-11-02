@@ -15,10 +15,6 @@ from oipd.core.vol_surface_fitting.algorithms.ssvi import (
     SSVISurfaceFit,
     calibrate_ssvi_surface,
 )
-from oipd.core.vol_surface_fitting.algorithms.stitched_svi import (
-    RawSVISurfaceFit,
-    calibrate_raw_svi_surface,
-)
 from oipd.core.errors import CalculationError
 from oipd.core.data_processing import (
     apply_put_call_parity,
@@ -26,13 +22,11 @@ from oipd.core.data_processing import (
     filter_stale_options,
     select_price_column,
 )
-from oipd.core.vol_surface_fitting.shared.ssvi import phi_eta_gamma, ssvi_total_variance
+from oipd.core.vol_surface_fitting.shared.ssvi import ssvi_total_variance
 from oipd.core.vol_surface_fitting.shared.svi import (
     log_moneyness,
-    svi_total_variance,
     _vega_based_weights,
 )
-from oipd.core.vol_surface_fitting.shared.svi_types import SVICalibrationOptions
 from oipd.core.vol_surface_fitting.shared.vol_model import SURFACE_METHODS, VolModel
 from oipd.pipelines.estimator import ModelParams
 from oipd.pipelines.market_inputs import (
@@ -73,7 +67,7 @@ def _resolve_surface_vol_model(vol: Optional[VolModel]) -> VolModel:
     method = resolved.method or "ssvi"
     if method not in SURFACE_METHODS:
         raise ValueError(
-            "VolModel.method must be one of {'ssvi', 'raw_svi'} for term surfaces"
+            "VolModel.method must be 'ssvi' for term surfaces"
         )
     return replace(resolved, method=method)
 
@@ -163,8 +157,6 @@ class RNDSurface:
         self._markets_by_maturity: Dict[float, ResolvedMarket]
         self._observed_iv_by_maturity: Dict[float, Dict[str, pd.DataFrame]]
         self._ssvi_fit: Optional[SSVISurfaceFit] = None
-        self._raw_fit: Optional[RawSVISurfaceFit] = None
-        self._fit_kind: str = self.vol_model.method or "ssvi"
 
         (
             self._prepared_observations,
@@ -174,15 +166,6 @@ class RNDSurface:
 
         if self.vol_model.method == "ssvi":
             self._ssvi_fit = calibrate_ssvi_surface(self._prepared_observations, self.vol_model)
-        elif self.vol_model.method == "raw_svi":
-            options = None
-            if isinstance(self.model.surface_options, SVICalibrationOptions):  # type: ignore[name-defined]
-                options = self.model.surface_options
-            self._raw_fit = calibrate_raw_svi_surface(
-                self._prepared_observations,
-                self.vol_model,
-                options=options,
-            )
         else:  # pragma: no cover - guarded by VolModel validation
             raise NotImplementedError(f"Unsupported surface method {self.vol_model.method}")
 
@@ -619,11 +602,6 @@ class RNDSurface:
             raise CalculationError("SSVI calibration has not been executed")
         return self._ssvi_fit
 
-    def _ensure_raw_fit(self) -> RawSVISurfaceFit:
-        if self._raw_fit is None:
-            raise CalculationError("Raw SVI calibration has not been executed")
-        return self._raw_fit
-
     def _infer_forward(self, t: float, override: Optional[float]) -> float:
         if override is not None:
             return float(override)
@@ -643,30 +621,6 @@ class RNDSurface:
                 weight = (t - t0) / (t1 - t0)
                 return (1.0 - weight) * f0 + weight * f1
         return items[-1][1]
-
-    def _total_variance_raw(self, k: np.ndarray, t: float) -> np.ndarray:
-        raw_fit = self._ensure_raw_fit()
-        slices = sorted(raw_fit.slices, key=lambda s: s.maturity)
-        if not slices:
-            raise CalculationError("Surface contains no raw SVI slices")
-        alpha = float(getattr(raw_fit, "alpha", 0.0))
-        if len(slices) == 1:
-            return svi_total_variance(k, slices[0].params) + alpha * float(t)
-
-        if t <= slices[0].maturity:
-            return svi_total_variance(k, slices[0].params) + alpha * float(t)
-        if t >= slices[-1].maturity:
-            return svi_total_variance(k, slices[-1].params) + alpha * float(t)
-
-        for left, right in zip(slices[:-1], slices[1:]):
-            if left.maturity <= t <= right.maturity:
-                weight = (t - left.maturity) / (right.maturity - left.maturity)
-                w_left = svi_total_variance(k, left.params)
-                w_right = svi_total_variance(k, right.params)
-                blended = (1.0 - weight) * w_left + weight * w_right
-                return blended + alpha * float(t)
-
-        return svi_total_variance(k, slices[-1].params) + alpha * float(t)
 
     def plot_iv(
         self,
@@ -870,24 +824,20 @@ class RNDSurface:
         )
 
     def total_variance(self, k: np.ndarray | Iterable[float], t: float) -> np.ndarray:
-        if self._fit_kind == "ssvi":
-            fit = self._ensure_ssvi_fit()
-            theta_t = max(float(fit.theta_interpolator(t)), 1e-6)
-            w = ssvi_total_variance(
-                np.asarray(k, dtype=float),
-                theta_t,
-                fit.params.rho,
-                fit.params.eta,
-                fit.params.gamma,
-            )
-            # Apply Gatheral–Jacquier Theorem 4.3 alpha-tilt if provided
-            alpha = getattr(fit.params, "alpha", 0.0)
-            if alpha:
-                w = w + float(alpha) * float(t)
-            return w
-        if self._fit_kind == "raw_svi":
-            return self._total_variance_raw(np.asarray(k, dtype=float), float(t))
-        raise CalculationError(f"Unknown surface fit kind {self._fit_kind}")
+        fit = self._ensure_ssvi_fit()
+        theta_t = max(float(fit.theta_interpolator(t)), 1e-6)
+        w = ssvi_total_variance(
+            np.asarray(k, dtype=float),
+            theta_t,
+            fit.params.rho,
+            fit.params.eta,
+            fit.params.gamma,
+        )
+        # Apply Gatheral–Jacquier Theorem 4.3 alpha-tilt if provided
+        alpha = getattr(fit.params, "alpha", 0.0)
+        if alpha:
+            w = w + float(alpha) * float(t)
+        return w
 
     def iv(
         self,
@@ -1159,25 +1109,14 @@ class RNDSurface:
 
     def check_no_arbitrage(self) -> Dict[str, float]:
         """Return diagnostic margins for the calibrated surface."""
-        if self._fit_kind == "ssvi":
-            fit = self._ensure_ssvi_fit()
-            summary = {
-                "objective": fit.objective,
-                "min_calendar_margin": fit.calendar_margin,
-                "calendar_margins": fit.calendar_margins,
-            }
-            summary.update(fit.inequality_margins)
-            return summary
-
-        raw_fit = self._ensure_raw_fit()
-        return {
-            "objective": raw_fit.objective,
-            "min_calendar_margin": raw_fit.min_calendar_margin,
-            "min_butterfly": raw_fit.min_butterfly,
-            "alpha": raw_fit.alpha,
-            "raw_calendar_margins": raw_fit.raw_calendar_margins or [],
-            "raw_calendar_deltas": raw_fit.raw_calendar_deltas or [],
+        fit = self._ensure_ssvi_fit()
+        summary = {
+            "objective": fit.objective,
+            "min_calendar_margin": fit.calendar_margin,
+            "calendar_margins": fit.calendar_margins,
         }
+        summary.update(fit.inequality_margins)
+        return summary
 
     # ------------------------------------------------------------------
     # Parameter export helpers
@@ -1192,13 +1131,7 @@ class RNDSurface:
             ``gamma``, and ``alpha``. Parameters other than ``theta`` repeat per
             maturity because they are global surface coefficients.
 
-        Raises:
-            ValueError: If the calibrated surface is not SSVI.
         """
-
-        if self._fit_kind != "ssvi":
-            raise ValueError("SSVI parameters are only available for SSVI-calibrated surfaces.")
-
         fit = self._ensure_ssvi_fit()
         params = fit.params
 
@@ -1235,62 +1168,13 @@ class RNDSurface:
             "alpha",
         ])
 
-    def raw_svi_params(self) -> Dict[str, Any]:
-        """Return calibrated raw-SVI parameters per maturity.
-
-        Returns:
-            dict[str, Any]: Dictionary with keys:
-                - ``method``: Always ``"raw_svi"``.
-                - ``alpha``: Gatheral-style linear tilt applied across maturities.
-                - ``slices``: List of dicts, one per maturity, each containing
-                  ``maturity`` (years) and the raw SVI parameters ``a``, ``b``,
-                  ``rho``, ``m``, ``sigma``.
-
-        Raises:
-            ValueError: If the calibrated surface is not raw SVI.
-        """
-
-        if self._fit_kind != "raw_svi":
-            raise ValueError("Raw SVI parameters are only available for raw-SVI-calibrated surfaces.")
-
-        fit = self._ensure_raw_fit()
-        payload = {
-            "method": "raw_svi",
-            "alpha": float(getattr(fit, "alpha", 0.0)),
-            "slices": [],
-        }
-        for s in sorted(fit.slices, key=lambda x: x.maturity):
-            payload["slices"].append(
-                {
-                    "maturity": float(s.maturity),
-                    "a": float(s.params.a),
-                    "b": float(s.params.b),
-                    "rho": float(s.params.rho),
-                    "m": float(s.params.m),
-                    "sigma": float(s.params.sigma),
-                }
-            )
-        return payload
-
     def svi_params(self) -> Dict[str, Any]:
         """Return surface parameters in SVI form when applicable.
 
-        This mirrors :meth:`oipd.pipelines.rnd_slice.RND.svi_params` but for a
-        term structure. For raw-SVI surfaces, returns the per-maturity SVI
-        parameters and the global ``alpha`` tilt. For SSVI surfaces, raises a
-        helpful error directing callers to :meth:`ssvi_params`.
-
-        Returns:
-            dict[str, Any]: See :meth:`raw_svi_params` for structure when the
-            surface is calibrated with raw SVI.
-
         Raises:
-            ValueError: If the surface is SSVI-calibrated. Use
-                :meth:`ssvi_params` in that case.
+            ValueError: Always instructs callers to use :meth:`ssvi_params`.
         """
 
-        if self._fit_kind == "raw_svi":
-            return self.raw_svi_params()
         raise ValueError(
             "Surface used SSVI. Call `ssvi_params()` to retrieve SSVI parameters."
         )

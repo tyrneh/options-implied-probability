@@ -71,7 +71,6 @@ plt.show()
 #     market,
 #     model=model,
 #     horizon="1M",
-#     vol=VolModel(method="raw_svi"),
 # )
 # raw_diag = surface_nvda_raw.check_no_arbitrage()
 # print("Raw SVI diagnostics:")

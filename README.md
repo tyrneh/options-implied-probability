@@ -82,16 +82,6 @@ diagnostics["min_theta_phi_margin"]  # Gatheral inequality margins enforced duri
 surface.plot_iv()                               # overlay log-moneyness smiles across maturities
 surface.plot_iv(layout="grid")                # per-maturity grid with observed quotes
 surface.plot_iv_3d()                           # interactive 3D volatility surface (Plotly)
-
-# Prefer a penalty-stitched raw SVI surface instead of theorem-backed SSVI
-raw_surface = RNDSurface.from_dataframe(
-    custom_df,
-    market,
-    vol=VolModel(method="raw_svi"),
-)
-# When strict_no_arbitrage=True (default) a Gatheral α-tilt is applied automatically
-# if independent slices cross; inspect the returned alpha and repaired margins:
-raw_surface.check_no_arbitrage()
 ```
 
 OIPD also **supports manual CSV or DataFrame uploads**. 
@@ -100,7 +90,6 @@ OIPD also **supports manual CSV or DataFrame uploads**.
 
 - `RNDSurface.check_no_arbitrage()` now reports the optimiser objective, per-interval calendar margins, and SSVI inequality margins.
 - `check_butterfly`, `check_ssvi_constraints`, and `check_ssvi_calendar` (under `oipd.core.vol_surface_fitting.shared.svi` / `oipd.core.vol_surface_fitting.shared.ssvi`) expose low-level diagnostics when you need bespoke grids or custom reporting.
-- Raw SVI surfaces return an automatic Gatheral α-tilt (`alpha`) and the pre-repair calendar margins so you can see how much was nudged.
 
 See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details, and the academic theory behind the technique. 
 

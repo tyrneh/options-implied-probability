@@ -143,7 +143,7 @@
   - `core/` – maths, data-prep, and calibration primitives.
     - `data_processing/` – parity application, price selection, IV inversion, normalization utilities, and staleness filtering.
     - `probability_density_conversion/` – price-curve generation, finite differences, and PDF/CDF utilities (formerly `core/density.py`).
-    - `vol_surface_fitting/` – registry-based SVI/bspline implementations with shared constraints, objectives, and transforms, including SSVI and stitched raw-SVI surface calibrators.
+    - `vol_surface_fitting/` – registry-based SVI/bspline implementations with shared constraints, objectives, and transforms, including the SSVI surface calibrator.
   - `data_access/` – ingestion and vendor access.
     - `readers/` – `AbstractReader` base class plus CSV/DataFrame implementations.
     - `vendors/` – registry of vendor readers (Yahoo Finance moved here).
@@ -179,7 +179,7 @@ Your pipeline naturally splits by responsibility. Keep the code grouped by domai
 
 2) Fitting the IV smile/surface
    - Single expiry (slice): SVI (preferred), b‑spline (legacy/backstop).
-   - Surface (term structure): SSVI (arbitrage‑aware) or stitched raw SVI (penalty‑based).
+   - Surface (term structure): SSVI (arbitrage‑aware).
   - Already in: `oipd/core/vol_surface_fitting/` (shared SVI/SSVI maths and surface calibrators).
    - Practicalities: initialize on log‑moneyness grids; enforce bounds; optionally weight by bid‑ask/volume; add regularization; check butterfly/calendar conditions.
 
