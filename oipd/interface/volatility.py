@@ -24,8 +24,7 @@ class VolCurve:
     """Single-expiry implied-volatility estimator with sklearn-style API.
 
     Configure once, call ``fit`` to calibrate, then evaluate the fitted smile via
-    ``__call__``. Heavy lifting is delegated to the stateless pipeline to keep
-    behavior identical to the legacy implementation and the golden master.
+    ``__call__``. Heavy lifting is delegated to the stateless pipeline.
     """
 
     def __init__(
@@ -96,7 +95,13 @@ class VolCurve:
         if column_mapping:
             chain_input = chain_input.rename(columns=column_mapping)
 
+        # resolved_market: A complete snapshot of market conditions (rates, spot, dividends)
+        # derived by merging user inputs with vendor data (if provided).
         resolved_market = resolve_market(market, vendor, mode=fill_mode)
+
+        # vol_curve: The fitted volatility model (callable) that maps strikes to implied vols.
+        # metadata: A dictionary containing fit diagnostics (RMSE), the implied forward price,
+        # and other artifacts from the calibration process.
         vol_curve, metadata = fit_vol_curve_internal(
             chain_input,
             resolved_market,
@@ -234,7 +239,7 @@ class VolSurface:
         pricing_engine: str = "black76",
         price_method: str = "mid",
         max_staleness_days: int = 3,
-        expiration_column: str = "expiration",
+        expiry_column: str = "expiry",
     ) -> None:
         """Initialize a VolSurface with calibration configuration.
 
@@ -245,7 +250,7 @@ class VolSurface:
             pricing_engine: Pricing engine (``"black76"`` or ``"bs"``).
             price_method: Price selection strategy (``"mid"`` or ``"last"``).
             max_staleness_days: Maximum allowed quote age before filtering.
-            expiration_column: Column name holding option expiry values.
+            expiry_column: Column name holding option expiry values.
         """
 
         self.method = method
@@ -254,7 +259,7 @@ class VolSurface:
         self.pricing_engine = pricing_engine
         self.price_method = price_method
         self.max_staleness_days = max_staleness_days
-        self.expiration_column = expiration_column
+        self.expiry_column = expiry_column
 
         self._slices: dict[pd.Timestamp, dict[str, Any]] = {}
         self._resolved_markets: dict[pd.Timestamp, ResolvedMarket] = {}
@@ -284,32 +289,32 @@ class VolSurface:
             VolSurface: The fitted surface instance.
 
         Raises:
-            CalculationError: If calibration fails for any expiry or expiration column is missing.
+            CalculationError: If calibration fails for any expiry or expiry column is missing.
         """
 
         chain_input = chain.copy()
         if column_mapping:
             chain_input = chain_input.rename(columns=column_mapping)
 
-        if self.expiration_column not in chain_input.columns:
+        if self.expiry_column not in chain_input.columns:
             raise CalculationError(
-                f"Expiration column '{self.expiration_column}' not found in input data"
+                f"Expiry column '{self.expiry_column}' not found in input data"
             )
 
-        expiries = pd.to_datetime(chain_input[self.expiration_column], errors="coerce")
+        expiries = pd.to_datetime(chain_input[self.expiry_column], errors="coerce")
         if expiries.isna().any():
-            raise CalculationError("Invalid expiration values encountered during parsing")
+            raise CalculationError("Invalid expiry values encountered during parsing")
         expiries = expiries.dt.tz_localize(None)
-        chain_input[self.expiration_column] = expiries
+        chain_input[self.expiry_column] = expiries
 
         unique_expiries = sorted(expiries.unique())
         self._slices.clear()
         self._resolved_markets.clear()
         self._slice_chains.clear()
 
-        for expiry_ts in unique_expiries:
-            expiry_date = expiry_ts.date()
-            slice_df = chain_input[chain_input[self.expiration_column] == expiry_ts]
+        for expiry_timestamp in unique_expiries:
+            expiry_date = expiry_timestamp.date()
+            slice_df = chain_input[chain_input[self.expiry_column] == expiry_timestamp]
 
             slice_market = MarketInputs(
                 risk_free_rate=market.risk_free_rate,
@@ -333,12 +338,12 @@ class VolSurface:
                 method_options=method_options or self.method_options,
             )
 
-            self._slices[expiry_ts] = {
+            self._slices[expiry_timestamp] = {
                 "curve": vol_curve,
                 "metadata": metadata,
             }
-            self._resolved_markets[expiry_ts] = resolved
-            self._slice_chains[expiry_ts] = slice_df
+            self._resolved_markets[expiry_timestamp] = resolved
+            self._slice_chains[expiry_timestamp] = slice_df
 
         return self
 
@@ -358,13 +363,13 @@ class VolSurface:
         if not self._slices:
             raise ValueError("Call fit before slicing the surface")
 
-        expiry_ts = pd.to_datetime(expiry).tz_localize(None)
-        if expiry_ts not in self._slices:
+        expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
+        if expiry_timestamp not in self._slices:
             raise ValueError(f"Expiry {expiry} not found in fitted surface")
 
-        entry = self._slices[expiry_ts]
-        resolved_market = self._resolved_markets[expiry_ts]
-        chain_df = self._slice_chains[expiry_ts]
+        entry = self._slices[expiry_timestamp]
+        resolved_market = self._resolved_markets[expiry_timestamp]
+        chain_df = self._slice_chains[expiry_timestamp]
 
         vc = VolCurve(
             method=self.method,
@@ -402,15 +407,15 @@ class VolSurface:
         distributions = {}
         
         # Iterate over fitted slices and derive distribution for each
-        for expiry_ts in self.expiries:
+        for expiry_timestamp in self.expiries:
             # We can use the slice() method to get a VolCurve, then ask it for distribution
             # This is slightly inefficient as it creates a VolCurve object just to discard it,
             # but it ensures consistent logic.
             # Alternatively, we can manually construct the VolCurve from stored state.
             
             # Let's use the slice() method for correctness and simplicity
-            vc = self.slice(expiry_ts)
-            distributions[expiry_ts] = vc.implied_distribution()
+            vc = self.slice(expiry_timestamp)
+            distributions[expiry_timestamp] = vc.implied_distribution()
 
         return DistributionSurface(distributions)
 

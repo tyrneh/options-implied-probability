@@ -21,7 +21,7 @@ def from_csv(
         path: Path to the CSV file.
         column_mapping: Optional mapping from CSV columns to OIPD standard names.
             Standard names: 'strike', 'last_price', 'bid', 'ask', 'volume', 
-            'open_interest', 'expiration', 'option_type'.
+            'open_interest', 'expiry', 'option_type'.
 
     Returns:
         pd.DataFrame: Cleaned and normalized DataFrame.

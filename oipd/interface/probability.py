@@ -159,10 +159,10 @@ class DistributionSurface:
         if not self._distributions:
             raise ValueError("Call fit before slicing the distribution surface")
 
-        expiry_ts = pd.to_datetime(expiry).tz_localize(None)
-        if expiry_ts not in self._distributions:
+        expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
+        if expiry_timestamp not in self._distributions:
             raise ValueError(f"Expiry {expiry} not found in fitted distribution surface")
-        return self._distributions[expiry_ts]
+        return self._distributions[expiry_timestamp]
 
     @property
     def expiries(self) -> tuple[pd.Timestamp, ...]:
