@@ -17,9 +17,7 @@ from oipd.interface import VolCurve, VolSurface, Distribution, DistributionSurfa
 # Optional: explicitly re-export vendor-specific errors later if needed
 
 from oipd.pipelines.estimator import ModelParams, RNDResult
-from oipd.pipelines.rnd_slice import RND
 from oipd.core.vol_surface_fitting.shared.vol_model import VolModel
-from oipd.pipelines.rnd_surface import RNDSurface
 from oipd.pipelines.reconstruct import (
     RebuiltSlice,
     RebuiltSurface,
@@ -49,8 +47,6 @@ __all__ = [
     "DataFrameReader",
     "sources",
     # High-level API
-    "RND",
-    "RNDSurface",
     "VolCurve",
     "VolSurface",
     "Distribution",
@@ -62,7 +58,6 @@ __all__ = [
     "ModelParams",
     "RNDResult",
     "VolModel",
-    "RNDSurface",
     "RebuiltSlice",
     "RebuiltSurface",
     "rebuild_slice_from_svi",

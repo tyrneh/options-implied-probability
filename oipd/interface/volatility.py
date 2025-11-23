@@ -17,6 +17,7 @@ from oipd.pipelines.market_inputs import (
     resolve_market,
 )
 from oipd.pipelines.vol_estimation import fit_vol_curve_internal
+from oipd.pipelines.prob_estimation import derive_distribution_from_curve
 
 
 class VolCurve:
@@ -199,29 +200,22 @@ class VolCurve:
         if self._chain is None or self._resolved_market is None or self._metadata is None:
             raise ValueError("Call fit before deriving the distribution")
 
-        dist = Distribution(
-            method=self.method,
-            method_options=self.method_options,
-            solver=self.solver,
+        # Delegate to the stateless pipeline
+        prices, pdf, cdf, metadata = derive_distribution_from_curve(
+            self._vol_curve,
+            self._resolved_market,
             pricing_engine=self.pricing_engine,
-            price_method=self.price_method,
-            max_staleness_days=self.max_staleness_days,
+            vol_metadata=self._metadata,
         )
-        dist.fit(
-            self._chain,
-            MarketInputs(
-                valuation_date=self._resolved_market.valuation_date,
-                expiry_date=self._resolved_market.expiry_date,
-                risk_free_rate=self._resolved_market.source_meta["risk_free_rate_input"],
-                risk_free_rate_mode=self._resolved_market.source_meta["risk_free_rate_mode"],
-                underlying_price=self._resolved_market.underlying_price,
-                dividend_yield=self._resolved_market.dividend_yield,
-                dividend_schedule=self._resolved_market.dividend_schedule,
-            ),
-            vendor=None,
-            fill_mode="strict",
+
+        # Return Result Container
+        return Distribution(
+            prices=prices,
+            pdf=pdf,
+            cdf=cdf,
+            market=self._resolved_market,
+            metadata=metadata,
         )
-        return dist
 
 
 class VolSurface:
@@ -405,42 +399,20 @@ class VolSurface:
         if not self._slice_chains:
             raise ValueError("Call fit before deriving the distribution surface")
 
-        dist_surface = DistributionSurface(
-            method=self.method,
-            method_options=self.method_options,
-            solver=self.solver,
-            pricing_engine=self.pricing_engine,
-            price_method=self.price_method,
-            max_staleness_days=self.max_staleness_days,
-            expiration_column=self.expiration_column,
-        )
+        distributions = {}
+        
+        # Iterate over fitted slices and derive distribution for each
+        for expiry_ts in self.expiries:
+            # We can use the slice() method to get a VolCurve, then ask it for distribution
+            # This is slightly inefficient as it creates a VolCurve object just to discard it,
+            # but it ensures consistent logic.
+            # Alternatively, we can manually construct the VolCurve from stored state.
+            
+            # Let's use the slice() method for correctness and simplicity
+            vc = self.slice(expiry_ts)
+            distributions[expiry_ts] = vc.implied_distribution()
 
-        combined = []
-        for expiry_ts, df_slice in self._slice_chains.items():
-            df = df_slice.copy()
-            df[self.expiration_column] = expiry_ts
-            combined.append(df)
-        all_chain = pd.concat(combined, ignore_index=True)
-
-        sample_resolved = next(iter(self._resolved_markets.values()))
-        base_market = MarketInputs(
-            valuation_date=sample_resolved.valuation_date,
-            expiry_date=None,
-            risk_free_rate=sample_resolved.source_meta["risk_free_rate_input"],
-            risk_free_rate_mode=sample_resolved.source_meta["risk_free_rate_mode"],
-            underlying_price=sample_resolved.underlying_price,
-            dividend_yield=sample_resolved.dividend_yield,
-            dividend_schedule=sample_resolved.dividend_schedule,
-        )
-
-        dist_surface.fit(
-            all_chain,
-            base_market,
-            vendor=None,
-            fill_mode="strict",
-            column_mapping=None,
-        )
-        return dist_surface
+        return DistributionSurface(distributions)
 
 
 __all__ = ["VolCurve", "VolSurface"]

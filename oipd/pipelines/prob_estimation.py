@@ -62,10 +62,38 @@ def derive_distribution_internal(
         method_options=method_options,
     )
     
-    # 2. Prepare Pricing Inputs
-    # We need to replicate the dividend logic for the pricing step
+    # 2. Derive Distribution from Fitted Curve
+    # We delegate the rest of the process to the dedicated pipeline function
+    return derive_distribution_from_curve(
+        vol_curve,
+        resolved_market,
+        pricing_engine=pricing_engine,
+        vol_metadata=vol_meta,
+    )
+
+
+def derive_distribution_from_curve(
+    vol_curve: Any,
+    resolved_market: ResolvedMarket,
+    *,
+    pricing_engine: str = "black76",
+    vol_metadata: Optional[Dict[str, Any]] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Derive PDF/CDF from a pre-fitted volatility curve.
+
+    Args:
+        vol_curve: Fitted volatility curve object (callable).
+        resolved_market: Fully resolved market inputs.
+        pricing_engine: Pricing engine (``"black76"`` or ``"bs"``).
+        vol_metadata: Optional metadata from the vol fit (for diagnostics).
+
+    Returns:
+        Tuple of ``(prices, pdf, cdf, metadata)``.
+    """
+    vol_meta = vol_metadata or {}
     valuation_date = resolved_market.valuation_date
-    
+
+    # 1. Prepare Pricing Inputs
     if pricing_engine == "bs":
         effective_spot, effective_dividend = prepare_dividends(
             underlying=resolved_market.underlying_price,
@@ -76,13 +104,11 @@ def derive_distribution_internal(
         )
         pricing_underlying = effective_spot
     else:
-        # For Black76, we use the forward price inferred during vol fitting
-        # or fallback to spot if not available (though fit_vol_curve_internal should ensure it)
+        # For Black76, use forward price from vol fit or fallback to spot
         pricing_underlying = vol_meta.get("forward_price", resolved_market.underlying_price)
         effective_dividend = None
 
-    # 3. Generate Price Curve from Vol
-    # This creates a dense grid of call prices
+    # 2. Generate Price Curve from Vol
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
         vol_curve,
         pricing_underlying,
@@ -92,18 +118,16 @@ def derive_distribution_internal(
         dividend_yield=effective_dividend,
     )
 
-    # 4. Determine Observation Bounds
-    # We clip the PDF generation to the observed strike range to avoid extrapolation artifacts
+    # 3. Determine Observation Bounds
     observed_iv = vol_meta.get("observed_iv")
     if observed_iv is not None and not observed_iv.empty:
         observed_min_strike = float(observed_iv["strike"].min())
         observed_max_strike = float(observed_iv["strike"].max())
     else:
-        # Fallback if no observed IVs (unlikely if fit succeeded)
         observed_min_strike = float(pricing_strike_grid.min())
         observed_max_strike = float(pricing_strike_grid.max())
 
-    # 5. Derive PDF (Breeden-Litzenberger)
+    # 4. Derive PDF
     pdf_prices, pdf_values = pdf_from_price_curve(
         pricing_strike_grid,
         pricing_call_prices,
@@ -113,16 +137,13 @@ def derive_distribution_internal(
         max_strike=observed_max_strike,
     )
 
-    # 6. Derive CDF
+    # 5. Derive CDF
     try:
         _, cdf_values = calculate_cdf_from_pdf(pdf_prices, pdf_values)
     except Exception as exc:
         raise CalculationError(f"Failed to compute CDF: {exc}") from exc
 
-    # 7. Assemble Metadata
-    # We merge the vol metadata with any additional info
+    # 6. Assemble Metadata
     metadata = vol_meta.copy()
-    # Add back model params for completeness if needed by consumers, 
-    # though strictly they are inputs.
     
     return pdf_prices, pdf_values, cdf_values, metadata

@@ -9,8 +9,6 @@ from typing import Any
 __all__ = [
     "estimator",
     "market_inputs",
-    "rnd_slice",
-    "rnd_surface",
     "vol_estimation",
     "prob_estimation",
 ]

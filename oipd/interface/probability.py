@@ -8,14 +8,13 @@ import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
+# Import locally inside methods to avoid circular dependency if needed, 
+# but VolCurve is needed for DistributionSurface.fit.
+# However, VolCurve imports Distribution, so we have a circular import.
+# We should import VolCurve inside DistributionSurface.fit.
 from oipd.pipelines.market_inputs import (
-    FillMode,
-    MarketInputs,
     ResolvedMarket,
-    VendorSnapshot,
-    resolve_market,
 )
-from oipd.pipelines.prob_estimation import derive_distribution_internal
 
 
 class Distribution:
@@ -27,92 +26,26 @@ class Distribution:
 
     def __init__(
         self,
-        *,
-        method: str = "svi",
-        method_options: Optional[Mapping[str, Any]] = None,
-        solver: str = "brent",
-        pricing_engine: str = "black76",
-        price_method: str = "mid",
-        max_staleness_days: int = 3,
+        prices: np.ndarray,
+        pdf: np.ndarray,
+        cdf: np.ndarray,
+        market: ResolvedMarket,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Configure the distribution estimator.
+        """Initialize a Distribution result container.
 
         Args:
-            method: Volatility fitting method (``"svi"`` or ``"bspline"``).
-            method_options: Method-specific overrides (e.g., ``{"random_seed": 42}``).
-            solver: Implied-vol solver (``"brent"`` or ``"newton"``).
-            pricing_engine: Pricing engine (``"black76"`` or ``"bs"``).
-            price_method: Price selection strategy (``"mid"`` or ``"last"``).
-            max_staleness_days: Maximum allowed quote age before filtering.
+            prices: Price grid.
+            pdf: Probability density values.
+            cdf: Cumulative distribution values.
+            market: Resolved market snapshot.
+            metadata: Optional metadata (provenance, diagnostics).
         """
-
-        self.method = method
-        self.method_options = method_options
-        self.solver = solver
-        self.pricing_engine = pricing_engine
-        self.price_method = price_method
-        self.max_staleness_days = max_staleness_days
-
-        self._prices: np.ndarray | None = None
-        self._pdf: np.ndarray | None = None
-        self._cdf: np.ndarray | None = None
-        self._metadata: dict[str, Any] | None = None
-        self._resolved_market: ResolvedMarket | None = None
-
-    def fit(
-        self,
-        chain: pd.DataFrame,
-        market: MarketInputs,
-        *,
-        vendor: Optional[VendorSnapshot] = None,
-        fill_mode: FillMode = "strict",
-        column_mapping: Optional[Mapping[str, str]] = None,
-        method_options: Optional[Mapping[str, Any]] = None,
-    ) -> "Distribution":
-        """Compute the risk-neutral PDF/CDF and store on self.
-
-        Args:
-            chain: Option chain DataFrame; columns may be remapped via
-                ``column_mapping``.
-            market: User-supplied market inputs.
-            vendor: Optional vendor snapshot to fill missing market fields.
-            fill_mode: How to combine user/vendor inputs (``"strict"`` by default).
-            column_mapping: Optional mapping from user column names to OIPD
-                standard names.
-            method_options: Per-fit overrides for the volatility calibration.
-
-        Returns:
-            The fitted ``Distribution`` instance.
-
-        Raises:
-            CalculationError: If the pipeline fails to produce a distribution.
-        """
-
-        chain_input = chain.copy()
-        if column_mapping:
-            chain_input = chain_input.rename(columns=column_mapping)
-
-        resolved_market = resolve_market(market, vendor, mode=fill_mode)
-        prices, pdf, cdf, metadata = derive_distribution_internal(
-            chain_input,
-            resolved_market,
-            solver=self.solver,
-            pricing_engine=self.pricing_engine,
-            price_method=self.price_method,
-            max_staleness_days=self.max_staleness_days,
-            method=self.method,
-            method_options=method_options or self.method_options,
-        )
-
-        if prices is None or pdf is None or cdf is None:
-            raise CalculationError("Probability estimation returned no results")
-
-        self._prices = prices
-        self._pdf = pdf
-        self._cdf = cdf
-        self._metadata = metadata
-        self._resolved_market = resolved_market
-        return self
+        self._prices = np.asarray(prices, dtype=float)
+        self._pdf = np.asarray(pdf, dtype=float)
+        self._cdf = np.asarray(cdf, dtype=float)
+        self._resolved_market = market
+        self._metadata = metadata or {}
 
     def __call__(self, price: float | np.ndarray) -> np.ndarray:
         """Evaluate the PDF at the given price level(s)."""
@@ -207,120 +140,18 @@ class DistributionSurface:
 
     def __init__(
         self,
-        *,
-        method: str = "svi",
-        method_options: Optional[Mapping[str, Any]] = None,
-        solver: str = "brent",
-        pricing_engine: str = "black76",
-        price_method: str = "mid",
-        max_staleness_days: int = 3,
-        expiration_column: str = "expiration",
+        distributions: Mapping[pd.Timestamp, Distribution],
     ) -> None:
-        """Configure the distribution surface estimator.
+        """Initialize a DistributionSurface result container.
 
         Args:
-            method: Volatility fitting method (``"svi"`` or ``"bspline"``).
-            method_options: Method-specific overrides.
-            solver: Implied-vol solver (``"brent"`` or ``"newton"``).
-            pricing_engine: Pricing engine (``"black76"`` or ``"bs"``).
-            price_method: Price selection strategy (``"mid"`` or ``"last"``).
-            max_staleness_days: Maximum allowed quote age before filtering.
-            expiration_column: Column name holding option expiry values.
+            distributions: Dictionary mapping expiry timestamps to Distribution objects.
         """
-
-        self.method = method
-        self.method_options = method_options
-        self.solver = solver
-        self.pricing_engine = pricing_engine
-        self.price_method = price_method
-        self.max_staleness_days = max_staleness_days
-        self.expiration_column = expiration_column
-
-        self._distributions: dict[pd.Timestamp, Distribution] = {}
-        self._resolved_markets: dict[pd.Timestamp, ResolvedMarket] = {}
-
-    def fit(
-        self,
-        chain: pd.DataFrame,
-        market: MarketInputs,
-        *,
-        vendor: Optional[VendorSnapshot] = None,
-        fill_mode: FillMode = "strict",
-        column_mapping: Optional[Mapping[str, str]] = None,
-        method_options: Optional[Mapping[str, Any]] = None,
-    ) -> "DistributionSurface":
-        """Compute distributions for all expiries in the chain.
-
-        Args:
-            chain: Option chain containing multiple expiries.
-            market: Base market inputs (valuation date, rates, underlying price).
-            vendor: Optional vendor snapshot to fill missing fields.
-            fill_mode: How to combine user/vendor inputs (``"strict"`` by default).
-            column_mapping: Optional mapping from user column names to OIPD standard names.
-            method_options: Per-fit overrides for the volatility calibration.
-
-        Returns:
-            DistributionSurface: The fitted surface instance.
-
-        Raises:
-            CalculationError: If expiries cannot be parsed or distributions fail.
-        """
-
-        chain_input = chain.copy()
-        if column_mapping:
-            chain_input = chain_input.rename(columns=column_mapping)
-
-        if self.expiration_column not in chain_input.columns:
-            raise CalculationError(
-                f"Expiration column '{self.expiration_column}' not found in input data"
-            )
-
-        expiries = pd.to_datetime(chain_input[self.expiration_column], errors="coerce")
-        if expiries.isna().any():
-            raise CalculationError("Invalid expiration values encountered during parsing")
-        expiries = expiries.dt.tz_localize(None)
-        chain_input[self.expiration_column] = expiries
-
-        self._distributions.clear()
-        self._resolved_markets.clear()
-
-        unique_expiries = sorted(expiries.unique())
-        for expiry_ts in unique_expiries:
-            expiry_date = expiry_ts.date()
-            slice_df = chain_input[chain_input[self.expiration_column] == expiry_ts]
-
-            slice_market = MarketInputs(
-                risk_free_rate=market.risk_free_rate,
-                valuation_date=market.valuation_date,
-                risk_free_rate_mode=market.risk_free_rate_mode,
-                underlying_price=market.underlying_price,
-                dividend_yield=market.dividend_yield,
-                dividend_schedule=market.dividend_schedule,
-                expiry_date=expiry_date,
-            )
-
-            resolved_market = resolve_market(slice_market, vendor, mode=fill_mode)
-            dist = Distribution(
-                method=self.method,
-                method_options=method_options or self.method_options,
-                solver=self.solver,
-                pricing_engine=self.pricing_engine,
-                price_method=self.price_method,
-                max_staleness_days=self.max_staleness_days,
-            )
-            dist.fit(
-                slice_df,
-                slice_market,
-                vendor=vendor,
-                fill_mode=fill_mode,
-                column_mapping=None,
-                method_options=method_options,
-            )
-
-            self._distributions[expiry_ts] = dist
-            self._resolved_markets[expiry_ts] = resolved_market
-
-        return self
+        self._distributions = dict(distributions)
+        # We can infer resolved markets from the distributions themselves
+        self._resolved_markets = {
+            ts: dist.resolved_market for ts, dist in self._distributions.items()
+        }
 
     def slice(self, expiry: Any) -> Distribution:
         """Return a Distribution for a specific expiry."""
