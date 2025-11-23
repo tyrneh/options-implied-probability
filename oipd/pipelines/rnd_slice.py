@@ -209,7 +209,12 @@ def from_ticker(
 
 
 class RND:
-    """Convenience façade resembling the legacy class-based API."""
+    """Convenience façade resembling the legacy class-based API.
+
+    .. deprecated:: 0.1.0
+       Use ``VolCurve`` / ``VolSurface`` and ``Distribution`` / ``DistributionSurface``
+       from ``oipd.interface``. This class remains for transition only.
+    """
 
     def __init__(
         self,
@@ -218,6 +223,12 @@ class RND:
         *,
         verbose: bool = True,
     ) -> None:
+        warnings.warn(
+            "RND is deprecated and will be removed in a future version. "
+            "Use oipd.VolCurve and oipd.Distribution instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.model = model or ModelParams()
         self.vol = vol
         self.verbose = verbose

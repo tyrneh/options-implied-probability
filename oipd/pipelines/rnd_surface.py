@@ -127,6 +127,10 @@ def _resolve_horizon_end(valuation: date, horizon: str | int | float | timedelta
 class RNDSurface:
     """Term-structure volatility surface built from multiple expiries.
 
+    .. deprecated:: 0.1.0
+       Use ``VolSurface`` and ``DistributionSurface`` from ``oipd.interface``
+       for new code. This class remains for transition only.
+
     In addition to pricing and implied-volatility evaluation, this class can
     extract risk-neutral density (RND) slices at a given maturity via the
     Breeden–Litzenberger relationship and assemble a probability surface over
@@ -144,6 +148,12 @@ class RNDSurface:
         horizon: Optional[str] = None,
         ticker: Optional[str] = None,
     ) -> None:
+        warnings.warn(
+            "RNDSurface is deprecated and will be removed in a future version. "
+            "Use oipd.VolSurface and oipd.DistributionSurface instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.base_market = base_market
         self._raw_slices = list(slices)
         self.vol_model = vol_model

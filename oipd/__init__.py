@@ -10,6 +10,9 @@ from oipd.core import (
 
 from oipd.data_access.readers import CSVReader, DataFrameReader
 from oipd.data_access.readers.csv_reader import CSVReadError
+from oipd.data_access import sources
+
+from oipd.interface import VolCurve, VolSurface, Distribution, DistributionSurface
 
 # Optional: explicitly re-export vendor-specific errors later if needed
 
@@ -44,8 +47,14 @@ __all__ = [
     # Readers
     "CSVReader",
     "DataFrameReader",
+    "sources",
     # High-level API
     "RND",
+    "RNDSurface",
+    "VolCurve",
+    "VolSurface",
+    "Distribution",
+    "DistributionSurface",
     "MarketInputs",  # Immutable input class
     "ResolvedMarket",  # Resolved parameters with provenance
     "VendorSnapshot",  # Vendor data snapshot

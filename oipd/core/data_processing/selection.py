@@ -37,13 +37,18 @@ def filter_stale_options(
     if max_staleness_days is None or "last_trade_date" not in options_data.columns:
         return options_data
 
-    last_trade_datetimes = pd.to_datetime(options_data["last_trade_date"])
+    # Normalize timezone to avoid tz-aware vs tz-naive subtraction; Golden Master
+    # data comes in with UTC stamps while valuation_date is naive.
+    last_trade_datetimes = pd.to_datetime(options_data["last_trade_date"], utc=True)
+    last_trade_datetimes = last_trade_datetimes.dt.tz_localize(None)
     if last_trade_datetimes.isna().any():
         return options_data
 
     options_data = options_data.copy()
-    valuation_ts = pd.Timestamp(valuation_date)
-    days_old = (valuation_ts - last_trade_datetimes.dt.normalize()).dt.days
+    valuation_ts = pd.Timestamp(valuation_date).tz_localize(None)
+    days_old = (
+        valuation_ts - last_trade_datetimes.dt.normalize()
+    ).dt.days  # TODO check how timezone normalization works
     fresh_mask = days_old <= max_staleness_days
 
     stale_rows = options_data[~fresh_mask]

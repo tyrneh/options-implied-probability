@@ -6,7 +6,14 @@ from importlib import import_module
 from types import ModuleType
 from typing import Any
 
-__all__ = ["estimator", "market_inputs", "rnd_slice", "rnd_surface"]
+__all__ = [
+    "estimator",
+    "market_inputs",
+    "rnd_slice",
+    "rnd_surface",
+    "vol_estimation",
+    "prob_estimation",
+]
 
 
 def __getattr__(name: str) -> ModuleType:
