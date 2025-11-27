@@ -139,7 +139,9 @@ def _initial_guess(observations: Sequence[SSVISliceObservations]) -> np.ndarray:
         else:
             theta_guess.append(float(np.median(positive)))
 
-    theta_guess = np.maximum.accumulate(np.maximum(np.asarray(theta_guess, dtype=float), 5e-4))
+    theta_guess = np.maximum.accumulate(
+        np.maximum(np.asarray(theta_guess, dtype=float), 5e-4)
+    )
 
     desired_increments = []
     cumulative = 0.0
@@ -152,7 +154,9 @@ def _initial_guess(observations: Sequence[SSVISliceObservations]) -> np.ndarray:
         desired_increments.append(increment)
         cumulative += increment
 
-    adjusted = np.maximum(np.asarray(desired_increments, dtype=float) - THETA_INCREMENT_EPS, 1e-8)
+    adjusted = np.maximum(
+        np.asarray(desired_increments, dtype=float) - THETA_INCREMENT_EPS, 1e-8
+    )
     theta_raw = _softplus_inv(adjusted)
 
     rho_raw = _atanh(-0.3 / RHO_BOUND)
@@ -199,7 +203,9 @@ def _constraint_penalty(
         if abs(rho) < 1e-6:
             upper = 2.0 * phi
         else:
-            upper = (1.0 / (rho * rho)) * (1.0 + np.sqrt(max(0.0, 1.0 - rho * rho))) * phi
+            upper = (
+                (1.0 / (rho * rho)) * (1.0 + np.sqrt(max(0.0, 1.0 - rho * rho))) * phi
+            )
         margin3 = upper - theta_phi_derivative(theta_val, eta, gamma)
         penalty += np.square(np.minimum(0.0, margin1)) * 1e4
         penalty += np.square(np.minimum(0.0, margin2)) * 1e4
@@ -281,7 +287,9 @@ def calibrate_ssvi_surface(
         calendar_margin = float(np.min(margins))
         calendar_margins = [float(m) for m in margins]
 
-    inequality_margins = compute_ssvi_margins(theta, params.rho, params.eta, params.gamma)
+    inequality_margins = compute_ssvi_margins(
+        theta, params.rho, params.eta, params.gamma
+    )
 
     if vol_model.strict_no_arbitrage:
         tol = 1e-6

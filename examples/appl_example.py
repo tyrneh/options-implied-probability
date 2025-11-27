@@ -140,4 +140,3 @@ first_maturity_data.head()
 # Select an arbitrary maturity
 rebuilt_slice_df = surface_rebuild.slice(days_to_expiry=100).data
 rebuilt_slice_df.head()
-

@@ -21,10 +21,9 @@ def _resolve_log_moneyness_domain(
     if not observations:
         raise CalculationError("Surface calibration has no observations to plot")
 
-    all_k = np.concatenate([
-        np.asarray(obs.log_moneyness, dtype=float)
-        for obs in observations
-    ])
+    all_k = np.concatenate(
+        [np.asarray(obs.log_moneyness, dtype=float) for obs in observations]
+    )
     finite_mask = np.isfinite(all_k)
     if not finite_mask.any():
         raise CalculationError("Unable to determine log-moneyness domain")
@@ -190,7 +189,11 @@ def plot_iv_surface_3d(
         margin=dict(l=0, r=0, b=0, t=60),
         scene=dict(
             xaxis=dict(
-                title="Log Moneyness (ln(K/F))" if x_axis_mode == "log_moneyness" else "Strike",
+                title=(
+                    "Log Moneyness (ln(K/F))"
+                    if x_axis_mode == "log_moneyness"
+                    else "Strike"
+                ),
                 backgroundcolor="#F7F7F7",
                 gridcolor="#DDDDDD",
                 zerolinecolor="#CCCCCC",

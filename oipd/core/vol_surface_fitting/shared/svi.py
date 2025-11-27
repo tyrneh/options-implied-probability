@@ -398,7 +398,9 @@ def check_butterfly(
     grid = np.asarray(k_grid, dtype=float)
     values = g_function(grid, params)
     finite_mask = np.isfinite(values)
-    min_margin = float(np.min(values[finite_mask])) if finite_mask.any() else float("nan")
+    min_margin = (
+        float(np.min(values[finite_mask])) if finite_mask.any() else float("nan")
+    )
     return {
         "grid": grid,
         "g_values": values,
@@ -509,9 +511,8 @@ def _butterfly_penalty(
             return 0.0, np.zeros(5, dtype=float)
         return 0.0
 
-    dA = (
-        (k_grid[:, None] * 0.5)
-        * (dw_prime * inv_w[:, None] - w_prime[:, None] * inv_w_sq[:, None] * dw)
+    dA = (k_grid[:, None] * 0.5) * (
+        dw_prime * inv_w[:, None] - w_prime[:, None] * inv_w_sq[:, None] * dw
     )
     dterm1 = -dA
     dB = -0.25 * inv_w_sq[:, None] * dw
@@ -575,9 +576,8 @@ def _call_spread_penalty(
 
     dc_dw = np.zeros_like(sigma)
     valid_sigma = sigma > 1e-12
-    dc_dw[valid_sigma] = (
-        vega[valid_sigma]
-        / (2.0 * sigma[valid_sigma] * context.maturity)
+    dc_dw[valid_sigma] = vega[valid_sigma] / (
+        2.0 * sigma[valid_sigma] * context.maturity
     )
     price_grads = dc_dw[:, None] * dw_combined
 
@@ -755,7 +755,11 @@ def _compute_huber_delta(
     ):
         bid_arr = np.asarray(bid_iv, dtype=float)
         ask_arr = np.asarray(ask_iv, dtype=float)
-        if bid_arr.shape == ask_arr.shape == np.asarray(total_variance, dtype=float).shape:
+        if (
+            bid_arr.shape
+            == ask_arr.shape
+            == np.asarray(total_variance, dtype=float).shape
+        ):
             spread = np.abs((ask_arr**2) - (bid_arr**2)) * float(maturity_years)
             valid = np.isfinite(spread) & (spread > 0.0)
             if valid.any():
@@ -942,7 +946,9 @@ def _qe_split_seeds(
         if not np.isfinite(candidate):
             continue
         clipped = float(np.clip(candidate, bounds[3][0], bounds[3][1]))
-        if not any(np.isclose(clipped, existing, atol=1e-6) for existing in m_candidates):
+        if not any(
+            np.isclose(clipped, existing, atol=1e-6) for existing in m_candidates
+        ):
             m_candidates.append(clipped)
 
     sigma_candidates: list[float] = []
@@ -956,7 +962,9 @@ def _qe_split_seeds(
         if not np.isfinite(candidate) or candidate <= 0.0:
             continue
         clipped = float(np.clip(candidate, bounds[4][0], bounds[4][1]))
-        if not any(np.isclose(clipped, existing, atol=1e-6) for existing in sigma_candidates):
+        if not any(
+            np.isclose(clipped, existing, atol=1e-6) for existing in sigma_candidates
+        ):
             sigma_candidates.append(clipped)
 
     seeds: list[np.ndarray] = []
@@ -1006,7 +1014,9 @@ def _qe_split_seeds(
             except ValueError:
                 continue
 
-            if not any(np.allclose(clipped_vec, existing, atol=1e-6) for existing in seeds):
+            if not any(
+                np.allclose(clipped_vec, existing, atol=1e-6) for existing in seeds
+            ):
                 seeds.append(clipped_vec)
 
     return seeds
@@ -1670,6 +1680,8 @@ __all__ = [
     "SVICalibrationDiagnostics",
     "SVITrialRecord",
 ]
+
+
 @dataclass(frozen=True)
 class _CallSpreadContext:
     """Pre-computed constants used by the call-spread penalty."""

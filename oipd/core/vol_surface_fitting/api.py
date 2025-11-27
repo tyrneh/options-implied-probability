@@ -13,8 +13,7 @@ class VolCurve(Protocol):
     grid: tuple[np.ndarray, np.ndarray] | None
     meta: Mapping[str, Any]
 
-    def __call__(self, strikes: Iterable[float] | np.ndarray) -> np.ndarray:
-        ...
+    def __call__(self, strikes: Iterable[float] | np.ndarray) -> np.ndarray: ...
 
 
 class IVSurface(Protocol):
@@ -24,15 +23,17 @@ class IVSurface(Protocol):
     strikes: np.ndarray
     meta: Mapping[str, Any]
 
-    def __call__(self, expiry_index: int, strikes: Iterable[float] | np.ndarray) -> np.ndarray:
-        ...
+    def __call__(
+        self, expiry_index: int, strikes: Iterable[float] | np.ndarray
+    ) -> np.ndarray: ...
 
 
 class SliceFitter(Protocol):
     """Protocol for fitting a single-expiry smile."""
 
-    def fit(self, strikes: np.ndarray, iv: np.ndarray, **kwargs: Any) -> tuple[VolCurve, Mapping[str, Any]]:
-        ...
+    def fit(
+        self, strikes: np.ndarray, iv: np.ndarray, **kwargs: Any
+    ) -> tuple[VolCurve, Mapping[str, Any]]: ...
 
 
 class SurfaceFitter(Protocol):
@@ -44,9 +45,7 @@ class SurfaceFitter(Protocol):
         strikes: np.ndarray,
         iv: np.ndarray,
         **kwargs: Any,
-    ) -> tuple[IVSurface, Mapping[str, Any]]:
-        ...
+    ) -> tuple[IVSurface, Mapping[str, Any]]: ...
 
 
 __all__ = ["VolCurve", "IVSurface", "SliceFitter", "SurfaceFitter"]
-

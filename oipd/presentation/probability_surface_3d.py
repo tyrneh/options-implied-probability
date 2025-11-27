@@ -33,7 +33,8 @@ def _coerce_density_frame(density_data: pd.DataFrame | object) -> pd.DataFrame:
     missing = required.difference(density_data.columns)
     if missing:
         raise InvalidInputError(
-            "Density DataFrame is missing required columns: " + ", ".join(sorted(missing))
+            "Density DataFrame is missing required columns: "
+            + ", ".join(sorted(missing))
         )
 
     return density_data.copy()
@@ -115,7 +116,9 @@ def plot_probability_3d(
 
     width_px = int(figsize[0] * 100)
     height_px = int(figsize[1] * 100)
-    colorbar_title = "Probability Density" if value == "pdf" else "Cumulative Probability"
+    colorbar_title = (
+        "Probability Density" if value == "pdf" else "Cumulative Probability"
+    )
 
     fig = go.Figure()
     fig.add_surface(

@@ -20,7 +20,7 @@ def from_csv(
     Args:
         path: Path to the CSV file.
         column_mapping: Optional mapping from CSV columns to OIPD standard names.
-            Standard names: 'strike', 'last_price', 'bid', 'ask', 'volume', 
+            Standard names: 'strike', 'last_price', 'bid', 'ask', 'volume',
             'open_interest', 'expiry', 'option_type'.
 
     Returns:
@@ -80,11 +80,11 @@ def from_ticker(
     except TypeError:
         # Fallback for readers that don't support cache args
         reader = reader_cls()
-        
+
     # Construct the query string expected by the reader
     # yfinance reader expects "TICKER" or "TICKER:EXPIRY"
     query = ticker
     if expiry:
         query = f"{ticker}:{expiry}"
-        
+
     return reader.read(query, column_mapping=column_mapping)

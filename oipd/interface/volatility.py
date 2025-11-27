@@ -156,7 +156,7 @@ class VolCurve:
     @property
     def params(self) -> dict[str, Any]:
         """Return fitted parameter dictionary from the underlying curve.
-        
+
         Returns:
             dict[str, Any]: Fitted parameters (e.g., SVI ``a, b, rho, m, sigma``).
 
@@ -202,7 +202,11 @@ class VolCurve:
             ValueError: If ``fit`` has not been called.
         """
 
-        if self._chain is None or self._resolved_market is None or self._metadata is None:
+        if (
+            self._chain is None
+            or self._resolved_market is None
+            or self._metadata is None
+        ):
             raise ValueError("Call fit before deriving the distribution")
 
         # Delegate to the stateless pipeline
@@ -405,14 +409,14 @@ class VolSurface:
             raise ValueError("Call fit before deriving the distribution surface")
 
         distributions = {}
-        
+
         # Iterate over fitted slices and derive distribution for each
         for expiry_timestamp in self.expiries:
             # We can use the slice() method to get a VolCurve, then ask it for distribution
             # This is slightly inefficient as it creates a VolCurve object just to discard it,
             # but it ensures consistent logic.
             # Alternatively, we can manually construct the VolCurve from stored state.
-            
+
             # Let's use the slice() method for correctness and simplicity
             vc = self.slice(expiry_timestamp)
             distributions[expiry_timestamp] = vc.implied_distribution()

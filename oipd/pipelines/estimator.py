@@ -107,7 +107,6 @@ class ModelParams:
                 )
 
 
-
 @dataclass(frozen=True)
 class RNDResult:
     """Container for the resulting PDF / CDF arrays with convenience helpers."""
@@ -471,7 +470,9 @@ class RNDResult:
                 "sigma": float(params_info["sigma"]),
             }
         except KeyError as exc:  # pragma: no cover - defensive guard
-            raise ValueError("Incomplete SVI parameter set in vol_curve metadata.") from exc
+            raise ValueError(
+                "Incomplete SVI parameter set in vol_curve metadata."
+            ) from exc
 
     def plot_iv(
         self,
@@ -522,7 +523,9 @@ class RNDResult:
         reference_annotation = None
         if reference_price is not None:
             valuation_date = self.market.valuation_date.strftime("%b %d, %Y")
-            label_prefix = "Parity forward on" if forward_price is not None else "Price on"
+            label_prefix = (
+                "Parity forward on" if forward_price is not None else "Price on"
+            )
             reference_annotation = ReferenceAnnotation(
                 value=float(reference_price),
                 label=f"{label_prefix} {valuation_date}\n${reference_price:,.2f}",
@@ -945,7 +948,9 @@ def _resolve_slice_vol_model(
             "VolModel.method must be one of {'svi', 'svi-jw', 'bspline'} for single expiries"
         )
 
-    effective_surface_method = "svi" if requested_method in {"svi", "svi-jw"} else "bspline"
+    effective_surface_method = (
+        "svi" if requested_method in {"svi", "svi-jw"} else "bspline"
+    )
 
     if base_model.surface_method != effective_surface_method:
         # Reset surface_options so ModelParams.__post_init__ rebuilds the correct type.

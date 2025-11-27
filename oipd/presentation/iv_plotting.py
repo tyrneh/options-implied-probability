@@ -154,9 +154,7 @@ def plot_iv_smile(
         raise ValueError("axis_mode must be 'log_moneyness' or 'strike'")
     if axis_choice == "log_moneyness":
         if reference is None or reference.value <= 0:
-            raise ValueError(
-                "Positive reference price required for log-moneyness axis"
-            )
+            raise ValueError("Positive reference price required for log-moneyness axis")
 
     def _to_axis(strike_values: np.ndarray) -> np.ndarray:
         if axis_choice == "log_moneyness":
@@ -321,7 +319,11 @@ def plot_iv_smile(
                 return other_color
 
             def _label_for(option_type: str, quote: str) -> str:
-                base = "Call" if option_type == "C" else "Put" if option_type == "P" else "Quote"
+                base = (
+                    "Call"
+                    if option_type == "C"
+                    else "Put" if option_type == "P" else "Quote"
+                )
                 if quote == "bid":
                     return f"{base} bids"
                 if quote == "ask":
@@ -590,7 +592,9 @@ def plot_iv_surface(
                 matched = float(maturity)
             plot_maturities.append(matched)
 
-    all_k = np.concatenate([np.asarray(obs.log_moneyness, dtype=float) for obs in observations])
+    all_k = np.concatenate(
+        [np.asarray(obs.log_moneyness, dtype=float) for obs in observations]
+    )
     k_min = float(np.min(all_k))
     k_max = float(np.max(all_k))
     if not np.isfinite(k_min) or not np.isfinite(k_max):
@@ -714,13 +718,19 @@ def plot_iv_surface(
             slice_title = days_label
 
         observed_bid = (
-            observed_payload.get("bid") if include_observed and observed_payload else None
+            observed_payload.get("bid")
+            if include_observed and observed_payload
+            else None
         )
         observed_ask = (
-            observed_payload.get("ask") if include_observed and observed_payload else None
+            observed_payload.get("ask")
+            if include_observed and observed_payload
+            else None
         )
         observed_last = (
-            observed_payload.get("last") if include_observed and observed_payload else None
+            observed_payload.get("last")
+            if include_observed and observed_payload
+            else None
         )
 
         if include_observed:
@@ -731,9 +741,8 @@ def plot_iv_surface(
             def _merge_observed(column: str, frame: pd.DataFrame | None) -> None:
                 if frame is None or frame.empty:
                     return
-                joined = (
-                    smile_df.loc[:, ["strike"]]
-                    .merge(frame.loc[:, ["strike", "iv"]], on="strike", how="left")
+                joined = smile_df.loc[:, ["strike"]].merge(
+                    frame.loc[:, ["strike", "iv"]], on="strike", how="left"
                 )
                 smile_df[column] = joined["iv"].to_numpy(dtype=float)
 
