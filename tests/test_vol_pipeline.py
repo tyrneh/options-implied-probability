@@ -7,7 +7,7 @@ from datetime import date
 
 from oipd import MarketInputs
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
-from oipd.pipelines.market_inputs import resolve_market
+from oipd.market_inputs import resolve_market
 
 
 def test_vol_pipeline_vs_golden_master():

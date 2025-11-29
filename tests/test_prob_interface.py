@@ -9,7 +9,7 @@ from datetime import date
 
 from oipd.interface.volatility import VolCurve, VolSurface
 from oipd.interface.probability import Distribution, DistributionSurface
-from oipd.pipelines.market_inputs import MarketInputs
+from oipd.market_inputs import MarketInputs
 
 
 @pytest.fixture

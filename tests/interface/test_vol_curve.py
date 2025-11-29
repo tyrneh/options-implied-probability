@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from oipd import MarketInputs
-from oipd.pipelines.market_inputs import resolve_market
+from oipd.market_inputs import resolve_market
 from oipd.interface.volatility import VolCurve
 
 

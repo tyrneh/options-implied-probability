@@ -4,7 +4,7 @@ import pytest
 from datetime import date, timedelta
 
 from oipd import RND, ModelParams
-from oipd.pipelines.market_inputs import MarketInputs
+from oipd.market_inputs import MarketInputs
 from oipd.pricing.black_scholes import black_scholes_call_price
 
 

@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import date
 
 from oipd import RND, ModelParams
-from oipd.pipelines.market_inputs import MarketInputs
+from oipd.market_inputs import MarketInputs
 from oipd.core.errors import CalculationError
 
 

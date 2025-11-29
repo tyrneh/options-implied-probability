@@ -5,7 +5,7 @@ from datetime import date
 
 from oipd import MarketInputs
 from oipd.interface.volatility import VolCurve, VolSurface
-from oipd.pipelines.market_inputs import resolve_market
+from oipd.market_inputs import resolve_market
 
 
 def test_vol_curve_interface():

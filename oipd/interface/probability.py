@@ -13,7 +13,7 @@ from oipd.core.errors import CalculationError
 # but VolCurve is needed for DistributionSurface.fit.
 # However, VolCurve imports Distribution, so we have a circular import.
 # We should import VolCurve inside DistributionSurface.fit.
-from oipd.pipelines.market_inputs import (
+from oipd.market_inputs import (
     ResolvedMarket,
 )
 

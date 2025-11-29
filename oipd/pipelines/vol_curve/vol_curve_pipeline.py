@@ -8,10 +8,10 @@ import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
-from oipd.pipelines.estimator import ModelParams, _estimate
+from oipd.pipelines._legacy.estimator import ModelParams, _estimate
 from oipd.data_access.readers import DataFrameReader
 from oipd.pricing.utils import prepare_dividends
-from oipd.pipelines.market_inputs import ResolvedMarket
+from oipd.market_inputs import ResolvedMarket
 
 
 def fit_vol_curve_internal(

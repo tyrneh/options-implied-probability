@@ -7,7 +7,7 @@ from typing import Any, Mapping, Optional
 import pandas as pd
 
 from oipd.core.errors import CalculationError
-from oipd.pipelines.market_inputs import (
+from oipd.market_inputs import (
     FillMode,
     MarketInputs,
     VendorSnapshot,

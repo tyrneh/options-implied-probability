@@ -6,8 +6,8 @@ import numpy as np
 from datetime import date
 
 from oipd import MarketInputs
-from oipd.pipelines.prob_estimation import derive_distribution_internal
-from oipd.pipelines.market_inputs import resolve_market
+from oipd.pipelines.distribution import derive_distribution_internal
+from oipd.market_inputs import resolve_market
 
 
 def test_prob_pipeline_vs_golden_master():

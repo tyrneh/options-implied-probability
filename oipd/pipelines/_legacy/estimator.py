@@ -30,7 +30,7 @@ from oipd.pricing.utils import (
     prepare_dividends,
     implied_dividend_yield_from_forward,
 )
-from oipd.pipelines.market_inputs import (
+from oipd.market_inputs import (
     MarketInputs,
     VendorSnapshot,
     ResolvedMarket,

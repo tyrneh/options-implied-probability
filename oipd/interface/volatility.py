@@ -9,7 +9,7 @@ import pandas as pd
 
 from oipd.core.errors import CalculationError
 from oipd.interface.probability import Distribution, DistributionSurface
-from oipd.pipelines.market_inputs import (
+from oipd.market_inputs import (
     FillMode,
     MarketInputs,
     ResolvedMarket,
@@ -17,7 +17,7 @@ from oipd.pipelines.market_inputs import (
     resolve_market,
 )
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
-from oipd.pipelines.prob_estimation import derive_distribution_from_curve
+from oipd.pipelines.distribution import derive_distribution_from_curve
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
 

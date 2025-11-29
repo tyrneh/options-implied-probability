@@ -14,7 +14,7 @@ from oipd import (
     rebuild_slice_from_svi,
     rebuild_surface_from_ssvi,
 )
-from oipd.pipelines.reconstruct import _match_with_tolerance
+from oipd.pipelines._internal.reconstruct import _match_with_tolerance
 from oipd.pricing.black76 import black76_call_price
 
 

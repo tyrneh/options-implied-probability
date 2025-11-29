@@ -16,15 +16,15 @@ from oipd.interface import VolCurve, VolSurface, Distribution, DistributionSurfa
 
 # Optional: explicitly re-export vendor-specific errors later if needed
 
-from oipd.pipelines.estimator import ModelParams, RNDResult
+from oipd.pipelines._legacy.estimator import ModelParams, RNDResult
 from oipd.core.vol_surface_fitting.shared.vol_model import VolModel
-from oipd.pipelines.reconstruct import (
+from oipd.pipelines._internal.reconstruct import (
     RebuiltSlice,
     RebuiltSurface,
     rebuild_slice_from_svi,
     rebuild_surface_from_ssvi,
 )
-from oipd.pipelines.market_inputs import (
+from oipd.market_inputs import (
     MarketInputs,
     VendorSnapshot,
     ResolvedMarket,

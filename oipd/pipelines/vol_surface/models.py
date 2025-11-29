@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 import pandas as pd
-from oipd.pipelines.market_inputs import ResolvedMarket
+from oipd.market_inputs import ResolvedMarket
 
 
 @runtime_checkable
