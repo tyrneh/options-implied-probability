@@ -128,7 +128,7 @@ appl_surface.fit(df_appl, market, column_mapping=column_mapping)
 # plt.show()
 
 # return SSVI parameters
-# ssvi_params = appl_surface.ssvi_params() 
+# ssvi_params = appl_surface.ssvi_params()
 # VolSurface currently fits independent slices, so it might not have global SSVI params
 # unless we implemented the SSVI fitting mode.
 
@@ -147,11 +147,5 @@ appl_surface.fit(df_appl, market, column_mapping=column_mapping)
 # first_maturity_data.head()
 
 # Select an arbitrary maturity
-<<<<<<< HEAD
 # rebuilt_slice_df = surface_rebuild.slice(days_to_expiry=100).data
 # rebuilt_slice_df.head()
-
-=======
-rebuilt_slice_df = surface_rebuild.slice(days_to_expiry=100).data
-rebuilt_slice_df.head()
->>>>>>> 5c7b906e8beaeb952243abc4c9020082f33abc1b

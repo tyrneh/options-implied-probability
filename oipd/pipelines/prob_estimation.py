@@ -9,7 +9,7 @@ import pandas as pd
 
 from oipd.core.errors import CalculationError
 from oipd.pipelines.market_inputs import ResolvedMarket
-from oipd.pipelines.vol_estimation import fit_vol_curve_internal
+from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.core.probability_density_conversion import (
     price_curve_from_iv,
     pdf_from_price_curve,

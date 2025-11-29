@@ -6,7 +6,7 @@ import numpy as np
 from datetime import date
 
 from oipd import MarketInputs
-from oipd.pipelines.vol_estimation import fit_vol_curve_internal
+from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.pipelines.market_inputs import resolve_market
 
 

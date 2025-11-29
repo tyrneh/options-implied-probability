@@ -13,7 +13,7 @@ from oipd.pipelines.market_inputs import (
     VendorSnapshot,
     resolve_market,
 )
-from oipd.pipelines.vol_estimation import fit_vol_curve_internal
+from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.pipelines.vol_surface.models import DiscreteSurface
 
 
