@@ -48,7 +48,7 @@ def derive_distribution_internal(
     Raises:
         CalculationError: If the pipeline cannot produce a valid fit.
     """
-    
+
     # 1. Fit Volatility Curve
     # This handles data cleaning, parity, staleness, and fitting
     vol_curve, vol_meta = fit_vol_curve_internal(
@@ -61,7 +61,7 @@ def derive_distribution_internal(
         method=method,
         method_options=method_options,
     )
-    
+
     # 2. Derive Distribution from Fitted Curve
     # We delegate the rest of the process to the dedicated pipeline function
     return derive_distribution_from_curve(
@@ -105,7 +105,9 @@ def derive_distribution_from_curve(
         pricing_underlying = effective_spot
     else:
         # For Black76, use forward price from vol fit or fallback to spot
-        pricing_underlying = vol_meta.get("forward_price", resolved_market.underlying_price)
+        pricing_underlying = vol_meta.get(
+            "forward_price", resolved_market.underlying_price
+        )
         effective_dividend = None
 
     # 2. Generate Price Curve from Vol
@@ -145,5 +147,5 @@ def derive_distribution_from_curve(
 
     # 6. Assemble Metadata
     metadata = vol_meta.copy()
-    
+
     return pdf_prices, pdf_values, cdf_values, metadata

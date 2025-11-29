@@ -20,7 +20,10 @@ from oipd.core.vol_surface_fitting.shared.svi import (
     log_moneyness,
     svi_total_variance,
 )
-from oipd.core.vol_surface_fitting.shared.ssvi import SSVISurfaceParams, ssvi_total_variance
+from oipd.core.vol_surface_fitting.shared.ssvi import (
+    SSVISurfaceParams,
+    ssvi_total_variance,
+)
 
 
 @dataclass(frozen=True)
@@ -106,7 +109,9 @@ class RebuiltSurface:
         def vol_curve(eval_strikes: Iterable[float] | np.ndarray) -> np.ndarray:
             eval_array = np.asarray(eval_strikes, dtype=float)
             log_mny = log_moneyness(eval_array, forward)
-            total_var = ssvi_total_variance(log_mny, theta_t, self.rho, self.eta, self.gamma)
+            total_var = ssvi_total_variance(
+                log_mny, theta_t, self.rho, self.eta, self.gamma
+            )
             if self.alpha:
                 total_var = total_var + float(self.alpha) * maturity
             return np.sqrt(np.maximum(total_var / max(maturity, 1e-8), 1e-12))
@@ -114,7 +119,11 @@ class RebuiltSurface:
         implied_vol = vol_curve(strikes)
         vol_curve.grid = (strikes.copy(), implied_vol.copy())  # type: ignore[attr-defined]
 
-        days_to_expiry = days_override if days_override is not None else self._days_from_maturity(maturity)
+        days_to_expiry = (
+            days_override
+            if days_override is not None
+            else self._days_from_maturity(maturity)
+        )
 
         strike_pricing, call_prices = price_curve_from_iv(
             vol_curve,
@@ -339,10 +348,20 @@ def rebuild_surface_from_ssvi(
     else:
         df = pd.DataFrame(ssvi_params)
 
-    required_columns = {"maturity", "theta", "days_to_expiry", "rho", "eta", "gamma", "alpha"}
+    required_columns = {
+        "maturity",
+        "theta",
+        "days_to_expiry",
+        "rho",
+        "eta",
+        "gamma",
+        "alpha",
+    }
     missing_cols = required_columns.difference(df.columns)
     if missing_cols:
-        raise ValueError(f"SSVI params missing required columns: {sorted(missing_cols)}")
+        raise ValueError(
+            f"SSVI params missing required columns: {sorted(missing_cols)}"
+        )
 
     rho = float(df.iloc[0]["rho"])
     eta = float(df.iloc[0]["eta"])
@@ -364,12 +383,13 @@ def rebuild_surface_from_ssvi(
 
     forward_lookup = {float(k): float(v) for k, v in forward_prices.items()}
     strike_lookup = {
-        float(k): np.asarray(v, dtype=float)
-        for k, v in (strike_grids or {}).items()
+        float(k): np.asarray(v, dtype=float) for k, v in (strike_grids or {}).items()
     }
     days_lookup = {
         float(row_maturity): int(row_days)
-        for row_maturity, row_days in zip(df["maturity"].astype(float), df["days_to_expiry"].astype(int))
+        for row_maturity, row_days in zip(
+            df["maturity"].astype(float), df["days_to_expiry"].astype(int)
+        )
     }
 
     surface = RebuiltSurface(
@@ -400,7 +420,9 @@ def rebuild_surface_from_ssvi(
     return surface
 
 
-def _match_with_tolerance(target: float, table: Mapping[float, float], tol: float = 1e-6) -> float:
+def _match_with_tolerance(
+    target: float, table: Mapping[float, float], tol: float = 1e-6
+) -> float:
     """Return table value whose key matches ``target`` within tolerance.
 
     Args:

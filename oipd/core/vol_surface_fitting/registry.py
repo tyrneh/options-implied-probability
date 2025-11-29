@@ -41,7 +41,9 @@ def get_surface_fitter(name: str) -> SurfaceFitter:
         raise ValueError(f"Unknown surface fitter '{name}'") from exc
 
 
-def available_fitters() -> Tuple[Mapping[str, SliceFitter], Mapping[str, SurfaceFitter]]:
+def available_fitters() -> (
+    Tuple[Mapping[str, SliceFitter], Mapping[str, SurfaceFitter]]
+):
     """Return the registered slice and surface fitters."""
 
     return _SLICE_FITTERS, _SURFACE_FITTERS

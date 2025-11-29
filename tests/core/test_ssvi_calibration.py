@@ -32,7 +32,9 @@ def test_calibrate_ssvi_surface_recovers_parameters():
     eta_true = 1.2
     gamma_true = 0.3
 
-    observations = make_observations(theta_true, maturities, rho_true, eta_true, gamma_true)
+    observations = make_observations(
+        theta_true, maturities, rho_true, eta_true, gamma_true
+    )
     vol_model = VolModel(method="ssvi", strict_no_arbitrage=True)
 
     fit = calibrate_ssvi_surface(observations, vol_model)
@@ -43,5 +45,11 @@ def test_calibrate_ssvi_surface_recovers_parameters():
     assert abs(fit.params.eta - eta_true) < 5e-2
     assert abs(fit.params.gamma - gamma_true) < 5e-2
 
-    w_model = ssvi_total_variance(observations[1].log_moneyness, fit.params.theta[1], fit.params.rho, fit.params.eta, fit.params.gamma)
+    w_model = ssvi_total_variance(
+        observations[1].log_moneyness,
+        fit.params.theta[1],
+        fit.params.rho,
+        fit.params.eta,
+        fit.params.gamma,
+    )
     assert np.allclose(w_model, observations[1].total_variance, atol=1e-3)

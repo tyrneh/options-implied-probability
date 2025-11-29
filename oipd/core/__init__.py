@@ -56,7 +56,5 @@ _BASE_EXPORTS = [
 ]
 
 __all__ = _BASE_EXPORTS + [
-    name
-    for name in globals()
-    if not name.startswith("_") and name not in _BASE_EXPORTS
+    name for name in globals() if not name.startswith("_") and name not in _BASE_EXPORTS
 ]

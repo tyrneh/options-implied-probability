@@ -18,7 +18,9 @@ from oipd.pipelines.reconstruct import _match_with_tolerance
 from oipd.pricing.black76 import black76_call_price
 
 
-def _sample_option_dataset(forward: float, maturity_years: float, rate: float) -> pd.DataFrame:
+def _sample_option_dataset(
+    forward: float, maturity_years: float, rate: float
+) -> pd.DataFrame:
     """Build a small option chain with both calls and puts."""
 
     strikes = np.array([80.0, 90.0, 100.0, 110.0, 120.0], dtype=float)
@@ -170,7 +172,9 @@ def test_rebuild_surface_from_ssvi_matches_surface_result() -> None:
         np.testing.assert_allclose(rebuilt_slice.vol_curve(strike_grid), original_vol)
 
         original_slice = surface.slice(maturity)
-        np.testing.assert_allclose(rebuilt_slice.data["strike"].to_numpy(), original_slice.prices)
+        np.testing.assert_allclose(
+            rebuilt_slice.data["strike"].to_numpy(), original_slice.prices
+        )
         np.testing.assert_allclose(
             rebuilt_slice.data["pdf"].to_numpy(),
             original_slice.pdf,

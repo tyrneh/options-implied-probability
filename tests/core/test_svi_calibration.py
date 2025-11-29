@@ -124,7 +124,9 @@ def test_calibration_multistart_deterministic():
         {"n_starts": 5, "random_seed": 7},
     )
 
-    np.testing.assert_allclose(np.array(astuple(params_one)), np.array(astuple(params_two)))
+    np.testing.assert_allclose(
+        np.array(astuple(params_one)), np.array(astuple(params_two))
+    )
     assert diag_one.objective == pytest.approx(diag_two.objective, rel=1e-12)
     assert diag_one.chosen_start_index == diag_two.chosen_start_index
 
@@ -380,6 +382,8 @@ def test_calibration_emits_logging(caplog):
         {"random_seed": 314},
     )
 
-    messages = [record.message for record in caplog.records if record.name == "oipd.svi"]
+    messages = [
+        record.message for record in caplog.records if record.name == "oipd.svi"
+    ]
     assert any("Starting SVI calibration" in message for message in messages)
     assert any("SVI calibration complete" in message for message in messages)

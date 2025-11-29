@@ -13,14 +13,14 @@ class FittedSurface(Protocol):
 
     def get_slice(self, expiry: pd.Timestamp) -> dict[str, Any]:
         """Retrieve the fitted curve and metadata for a specific expiry.
-        
+
         Returns:
             dict containing:
                 - "curve": The callable volatility curve
                 - "metadata": Fitting metadata/diagnostics
                 - "resolved_market": The ResolvedMarket used for fitting
                 - "chain": The option chain DataFrame used for fitting
-        
+
         Raises:
             ValueError: If the expiry is not found or supported.
         """
@@ -48,7 +48,7 @@ class DiscreteSurface:
     def get_slice(self, expiry: pd.Timestamp) -> dict[str, Any]:
         if expiry not in self._slices:
             raise ValueError(f"Expiry {expiry} not found in fitted surface")
-        
+
         return {
             "curve": self._slices[expiry]["curve"],
             "metadata": self._slices[expiry]["metadata"],

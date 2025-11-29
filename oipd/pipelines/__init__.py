@@ -19,7 +19,9 @@ def __getattr__(name: str) -> ModuleType:
         module = import_module(f"oipd.pipelines.{name}")
         globals()[name] = module
         return module
-    raise AttributeError(f"module 'oipd.pipelines' has no attribute '{name}'")  # pragma: no cover
+    raise AttributeError(
+        f"module 'oipd.pipelines' has no attribute '{name}'"
+    )  # pragma: no cover
 
 
 def __dir__() -> list[str]:  # pragma: no cover - trivial

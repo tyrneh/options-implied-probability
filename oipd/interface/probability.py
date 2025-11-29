@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
-# Import locally inside methods to avoid circular dependency if needed, 
+
+# Import locally inside methods to avoid circular dependency if needed,
 # but VolCurve is needed for DistributionSurface.fit.
 # However, VolCurve imports Distribution, so we have a circular import.
 # We should import VolCurve inside DistributionSurface.fit.
@@ -161,7 +162,9 @@ class DistributionSurface:
 
         expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
         if expiry_timestamp not in self._distributions:
-            raise ValueError(f"Expiry {expiry} not found in fitted distribution surface")
+            raise ValueError(
+                f"Expiry {expiry} not found in fitted distribution surface"
+            )
         return self._distributions[expiry_timestamp]
 
     @property

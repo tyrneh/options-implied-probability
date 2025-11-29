@@ -73,19 +73,24 @@ def plot_probability_summary(
     try:
         import matplotlib.pyplot as plt
     except ImportError as exc:  # pragma: no cover - optional dependency
-        raise ImportError("Matplotlib is required for surface plotting. Install with: pip install matplotlib") from exc
+        raise ImportError(
+            "Matplotlib is required for surface plotting. Install with: pip install matplotlib"
+        ) from exc
 
     for pct in (lower_percentile, upper_percentile):
         if not (0.0 <= pct <= 100.0):
             raise InvalidInputError("Percentile bounds must lie within [0, 100]")
     if not lower_percentile < upper_percentile:
-        raise InvalidInputError("lower_percentile must be strictly less than upper_percentile")
+        raise InvalidInputError(
+            "lower_percentile must be strictly less than upper_percentile"
+        )
 
     required_cols = {"expiry_date", "forward", "strike", "cdf"}
     missing = required_cols.difference(density_data.columns)
     if missing:
         raise InvalidInputError(
-            "Density DataFrame is missing required columns: " + ", ".join(sorted(missing))
+            "Density DataFrame is missing required columns: "
+            + ", ".join(sorted(missing))
         )
 
     grouped = density_data.groupby("expiry_date", sort=True)

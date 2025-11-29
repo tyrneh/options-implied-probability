@@ -137,7 +137,9 @@ def test_g_function_differs_from_erroneous_formula():
     erroneous = term1 * (1 - wp / 2) - (wp**2) * (1 / (4 * w) + 1 / 16) + 0.5 * wpp
 
     assert not np.allclose(correct, erroneous)
-    np.testing.assert_allclose(correct, _canonical_g(k_grid, params), rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        correct, _canonical_g(k_grid, params), rtol=1e-12, atol=1e-12
+    )
 
 
 def test_build_bounds_expand_with_span():

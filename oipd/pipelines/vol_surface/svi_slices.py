@@ -54,9 +54,7 @@ def fit_independent_slices(
         chain_input = chain_input.rename(columns=column_mapping)
 
     if "expiry" not in chain_input.columns:
-        raise CalculationError(
-            "Expiry column 'expiry' not found in input data"
-        )
+        raise CalculationError("Expiry column 'expiry' not found in input data")
 
     expiries = pd.to_datetime(chain_input["expiry"], errors="coerce")
     if expiries.isna().any():
@@ -65,7 +63,7 @@ def fit_independent_slices(
     chain_input["expiry"] = expiries
 
     unique_expiries = sorted(expiries.unique())
-    
+
     slices: dict[pd.Timestamp, dict[str, Any]] = {}
     resolved_markets: dict[pd.Timestamp, Any] = {}
     slice_chains: dict[pd.Timestamp, pd.DataFrame] = {}

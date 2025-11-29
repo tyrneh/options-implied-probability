@@ -6,7 +6,13 @@ so early adopters can rely on the new module paths without breaking.
 """
 
 from . import dividends, iv, moneyness, parity, selection, validation  # noqa: F401
-from .iv import compute_iv, smooth_iv, bs_iv_brent_method, bs_iv_newton_method, black76_iv_brent_method  # noqa: F401
+from .iv import (
+    compute_iv,
+    smooth_iv,
+    bs_iv_brent_method,
+    bs_iv_newton_method,
+    black76_iv_brent_method,
+)  # noqa: F401
 from .parity import (  # noqa: F401
     apply_put_call_parity,
     apply_put_call_parity_to_quotes,

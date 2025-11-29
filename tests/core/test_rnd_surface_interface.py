@@ -34,7 +34,9 @@ def build_synthetic_dataframe() -> pd.DataFrame:
     rho, eta, gamma = -0.35, 0.9, 0.3
     maturities = [0.25, 0.5]
     thetas = [0.05, 0.08]
-    expiries = [pd.Timestamp(valuation + timedelta(days=int(T * 365))) for T in maturities]
+    expiries = [
+        pd.Timestamp(valuation + timedelta(days=int(T * 365))) for T in maturities
+    ]
     rows = []
     F = 100.0
 
@@ -69,7 +71,6 @@ def build_synthetic_dataframe() -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
-
 
 
 def test_surface_from_dataframe_defaults_to_ssvi():
@@ -255,6 +256,7 @@ def test_ssvi_alpha_tilt_applied():
 
     # Inject a positive alpha tilt into the calibrated params
     from dataclasses import replace
+
     alpha = 0.02
     assert surface.vol_model.method == "ssvi"
     # Replace the frozen fit and params with updated alpha

@@ -78,6 +78,8 @@ def test_check_ssvi_constraints_and_calendar():
     assert inequality["min_theta_phi_margin"] >= -1e-8
     assert len(inequality["theta_phi_margins"]) == len(theta)
 
-    calendar = check_ssvi_calendar(theta, rho, eta, gamma, k_grid=np.linspace(-0.5, 0.5, 41))
+    calendar = check_ssvi_calendar(
+        theta, rho, eta, gamma, k_grid=np.linspace(-0.5, 0.5, 41)
+    )
     assert calendar["min_margin"] >= -1e-8
     assert len(calendar["margins"]) == len(theta) - 1

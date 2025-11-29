@@ -46,7 +46,7 @@ def fit_surface(
     # Dispatch based on method.
     # Currently only "svi" (independent slices) is supported.
     # In the future, "ssvi", "local_vol", etc. can be added here.
-    
+
     if method == "svi":
         return fit_independent_slices(
             chain=chain,
@@ -61,17 +61,17 @@ def fit_surface(
             solver=solver,
             method=method,
         )
-    
+
     # Fallback or error for unknown methods
     # For now, we assume "svi" is the default and only option if not specified otherwise,
     # but strictly we should raise if unknown.
     # However, fit_independent_slices handles the "method" arg for the curve fitting itself (e.g. "svi" vs "sabr" for curves).
     # This is a slight ambiguity: is "method" the surface method or the curve method?
     # In the current design, "svi" implies "independent slices using SVI curves".
-    
+
     # If the user passes something else, we might want to try fitting independent slices with that method?
     # e.g. method="sabr" -> independent slices of SABR curves.
-    
+
     # Let's assume for now that if it's not a known *surface* method (like "ssvi"),
     # we default to independent slices and pass the method down to the curve fitter.
     return fit_independent_slices(

@@ -1,4 +1,3 @@
-
 import pytest
 import pandas as pd
 import os
@@ -6,10 +5,11 @@ from unittest.mock import patch, MagicMock
 
 from oipd.data_access import sources
 
+
 def test_from_csv():
     # 1. Path to test data
     data_path = os.path.join(os.path.dirname(__file__), "../data/AAPL_data.csv")
-    
+
     # 2. Load
     column_mapping = {
         "strike": "strike",
@@ -17,11 +17,11 @@ def test_from_csv():
         "type": "option_type",
         "bid": "bid",
         "ask": "ask",
-        "expiration": "expiration"
+        "expiration": "expiration",
     }
-    
+
     df = sources.from_csv(data_path, column_mapping=column_mapping)
-    
+
     # 3. Verify
     assert isinstance(df, pd.DataFrame)
     assert not df.empty
@@ -30,26 +30,27 @@ def test_from_csv():
     # Check normalization (option_type should be lowercase 'call'/'put')
     assert df["option_type"].isin(["C", "P"]).all()
 
+
 def test_from_dataframe():
     # 1. Create dummy dataframe
     raw_data = {
         "K": [100, 110, 120, 130, 140],
         "Price": [10, 5, 2, 1, 0.5],
         "Type": ["C", "P", "C", "P", "C"],
-        "Expiry": ["2025-01-01"] * 5
+        "Expiry": ["2025-01-01"] * 5,
     }
     df_raw = pd.DataFrame(raw_data)
-    
+
     # 2. Load
     mapping = {
         "K": "strike",
         "Price": "last_price",
         "Type": "option_type",
-        "Expiry": "expiration"
+        "Expiry": "expiration",
     }
-    
+
     df = sources.from_dataframe(df_raw, column_mapping=mapping)
-    
+
     # 3. Verify
     assert len(df) == 5
     assert "strike" in df.columns
@@ -57,24 +58,28 @@ def test_from_dataframe():
     # Check normalization of option types (C -> C)
     assert df.iloc[0]["option_type"] == "C"
 
+
 @patch("oipd.data_access.sources.get_reader")
 def test_from_ticker(mock_get_reader):
     # 1. Setup Mock
     mock_reader_instance = MagicMock()
-    mock_reader_instance.read.return_value = pd.DataFrame({"strike": [100], "last_price": [10]})
-    
+    mock_reader_instance.read.return_value = pd.DataFrame(
+        {"strike": [100], "last_price": [10]}
+    )
+
     mock_reader_cls = MagicMock(return_value=mock_reader_instance)
     mock_get_reader.return_value = mock_reader_cls
-    
+
     # 2. Call
     df = sources.from_ticker("AAPL", expiry="2025-01-01")
-    
+
     # 3. Verify
     mock_get_reader.assert_called_with("yfinance")
     mock_reader_instance.read.assert_called()
     call_args = mock_reader_instance.read.call_args
     assert call_args[0][0] == "AAPL:2025-01-01"
     assert not df.empty
+
 
 if __name__ == "__main__":
     test_from_csv()

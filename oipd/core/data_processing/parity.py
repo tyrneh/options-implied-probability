@@ -80,7 +80,9 @@ def infer_forward_from_atm(
                         "strike": float(strike),
                         "call_price": float(call_price),
                         "put_price": float(put_price),
-                        "distance_from_underlying": abs(float(strike) - underlying_price),
+                        "distance_from_underlying": abs(
+                            float(strike) - underlying_price
+                        ),
                     }
                 )
     else:
@@ -184,9 +186,7 @@ def apply_put_call_parity_to_quotes(
     if not results:
         raise ValueError("No valid option prices after put-call parity conversion.")
 
-    result_df = (
-        pd.DataFrame(results).sort_values("strike").reset_index(drop=True)
-    )
+    result_df = pd.DataFrame(results).sort_values("strike").reset_index(drop=True)
     result_df["F_used"] = forward_price
     result_df["DF_used"] = discount_factor
 
@@ -380,7 +380,12 @@ def _calculate_mid_price(option_row: pd.Series) -> float:
         if {"bid", "ask"}.issubset(option_row.index):
             bid = option_row["bid"]
             ask = option_row["ask"]
-            if pd.notna(bid) and pd.notna(ask) and float(bid) > 0 and float(ask) > float(bid):
+            if (
+                pd.notna(bid)
+                and pd.notna(ask)
+                and float(bid) > 0
+                and float(ask) > float(bid)
+            ):
                 return float(bid + ask) / 2.0
     except Exception:
         return float("nan")
@@ -400,7 +405,11 @@ def _extract_bid(option_row: pd.Series) -> float:
         return float("nan")
 
     try:
-        if "bid" in option_row and pd.notna(option_row["bid"]) and float(option_row["bid"]) > 0:
+        if (
+            "bid" in option_row
+            and pd.notna(option_row["bid"])
+            and float(option_row["bid"]) > 0
+        ):
             return float(option_row["bid"])
     except Exception:
         return float("nan")
@@ -420,7 +429,11 @@ def _extract_ask(option_row: pd.Series) -> float:
         return float("nan")
 
     try:
-        if "ask" in option_row and pd.notna(option_row["ask"]) and float(option_row["ask"]) > 0:
+        if (
+            "ask" in option_row
+            and pd.notna(option_row["ask"])
+            and float(option_row["ask"]) > 0
+        ):
             return float(option_row["ask"])
     except Exception:
         return float("nan")
@@ -499,10 +512,18 @@ def _process_strike_prices(
     put_ask = _extract_ask(put_data)
 
     if strike > forward_price:
-        final_mid = call_mid if pd.notna(call_mid) and float(call_mid) > 0 else float("nan")
-        final_last = call_last if pd.notna(call_last) and float(call_last) > 0 else float("nan")
-        final_bid = call_bid if pd.notna(call_bid) and float(call_bid) > 0 else float("nan")
-        final_ask = call_ask if pd.notna(call_ask) and float(call_ask) > 0 else float("nan")
+        final_mid = (
+            call_mid if pd.notna(call_mid) and float(call_mid) > 0 else float("nan")
+        )
+        final_last = (
+            call_last if pd.notna(call_last) and float(call_last) > 0 else float("nan")
+        )
+        final_bid = (
+            call_bid if pd.notna(call_bid) and float(call_bid) > 0 else float("nan")
+        )
+        final_ask = (
+            call_ask if pd.notna(call_ask) and float(call_ask) > 0 else float("nan")
+        )
         source = "call"
         volume = _extract_volume(call_data) if call_data is not None else float("nan")
     else:

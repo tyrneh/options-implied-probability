@@ -150,7 +150,9 @@ def compute_ssvi_margins(
         if abs(rho) < 1e-6:
             upper = 2.0 * phi
         else:
-            upper = (1.0 / (rho * rho)) * (1.0 + np.sqrt(max(0.0, 1.0 - rho * rho))) * phi
+            upper = (
+                (1.0 / (rho * rho)) * (1.0 + np.sqrt(max(0.0, 1.0 - rho * rho))) * phi
+            )
         margin3 = upper - deriv
         margins1.append(margin1)
         margins2.append(margin2)

@@ -30,7 +30,7 @@ column_mapping = {
     "type": "option_type",
     "bid": "bid",
     "ask": "ask",
-    "expiration": "expiry"  # New standard name
+    "expiration": "expiry",  # New standard name
 }
 
 df_appl = sources.from_csv("data/AAPL_data.csv", column_mapping=column_mapping)
@@ -56,7 +56,7 @@ vc.fit(df_appl_slice, market)
 # Derive Distribution
 dist = vc.implied_distribution()
 
-# Plotting (Note: New plotting API is not fully implemented yet, 
+# Plotting (Note: New plotting API is not fully implemented yet,
 # so we use standard matplotlib for now, accessing the raw arrays)
 plt.figure(figsize=(10, 6))
 plt.plot(dist.prices, dist.pdf, label="Risk-Neutral PDF")
@@ -76,8 +76,19 @@ plt.plot(strikes, ivs, label="Fitted SVI")
 # We can access observed IVs from metadata if available
 # Note: diagnostics might be a DataFrame directly
 obs_iv = vc.diagnostics
-if obs_iv is not None and isinstance(obs_iv, pd.DataFrame) and "strike" in obs_iv.columns:
-    plt.scatter(obs_iv["strike"], obs_iv["iv"], alpha=0.5, label="Market Data", color="red", s=10)
+if (
+    obs_iv is not None
+    and isinstance(obs_iv, pd.DataFrame)
+    and "strike" in obs_iv.columns
+):
+    plt.scatter(
+        obs_iv["strike"],
+        obs_iv["iv"],
+        alpha=0.5,
+        label="Market Data",
+        color="red",
+        s=10,
+    )
 
 plt.title(f"AAPL Volatility Smile for {target_expiry}")
 plt.xlabel("Strike")
@@ -114,15 +125,15 @@ axes = axes.flatten()
 for i, expiry in enumerate(vs.expiries[:4]):
     ax = axes[i]
     vc_slice = vs.slice(expiry)
-    
+
     # Grid for plotting
     strikes = np.linspace(200, 350, 50)
     ivs = vc_slice(strikes)
-    
+
     ax.plot(strikes, ivs, label="Fitted")
     ax.set_title(f"Expiry: {expiry.date()}")
     ax.grid(True, alpha=0.3)
-    
+
 plt.tight_layout()
 plt.show()
 

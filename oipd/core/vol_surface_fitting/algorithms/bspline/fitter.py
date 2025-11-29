@@ -81,4 +81,3 @@ def fit_bspline_slice(
 
 
 __all__ = ["DEFAULT_BSPLINE_OPTIONS", "fit_bspline_slice"]
-

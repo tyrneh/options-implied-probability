@@ -20,4 +20,3 @@ class _BsplineSliceFitter:
 register_slice_fitter("bspline", _BsplineSliceFitter())
 
 __all__ = ["fit_bspline_slice", "DEFAULT_BSPLINE_OPTIONS"]
-
