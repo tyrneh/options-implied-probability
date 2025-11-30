@@ -135,6 +135,31 @@ class Distribution:
 
         return self._metadata
 
+    def plot(self, **kwargs) -> Any:
+        """Plot the risk-neutral probability distribution.
+
+        Args:
+            **kwargs: Arguments forwarded to ``oipd.presentation.plot_rnd.plot_rnd``.
+
+        Returns:
+            matplotlib.figure.Figure: The plot figure.
+        """
+        from oipd.presentation.plot_rnd import plot_rnd
+
+        underlying_price = self._resolved_market.underlying_price
+        valuation_date = self._resolved_market.valuation_date.strftime("%b %d, %Y")
+        expiry_date = self._resolved_market.expiry_date.strftime("%b %d, %Y")
+
+        return plot_rnd(
+            prices=self.prices,
+            pdf=self.pdf,
+            cdf=self.cdf,
+            current_price=underlying_price,
+            valuation_date=valuation_date,
+            expiry_date=expiry_date,
+            **kwargs,
+        )
+
 
 class DistributionSurface:
     """Multi-expiry risk-neutral distribution surface wrapper."""

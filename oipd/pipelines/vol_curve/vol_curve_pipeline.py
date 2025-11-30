@@ -87,3 +87,83 @@ def fit_vol_curve_internal(
     }
 
     return vol_curve, metadata
+
+
+def compute_fitted_smile(
+    vol_curve: Any,
+    metadata: Dict[str, Any],
+    domain: Optional[Tuple[float, float]] = None,
+    points: int = 200,
+    include_observed: bool = True,
+) -> pd.DataFrame:
+    """
+    Generate a DataFrame representing the fitted smile and observed data.
+
+    Args:
+        vol_curve: The callable volatility curve.
+        metadata: Metadata dictionary containing observed IVs.
+        domain: Optional (min, max) strike range.
+        points: Number of points in the grid.
+        include_observed: Whether to include market observed IVs (mid, bid, ask).
+
+    Returns:
+        DataFrame with columns: strike, fitted_iv, [market_iv, market_bid_iv, ...]
+    """
+    observed_iv = metadata.get("observed_iv")
+
+    # Determine grid
+    if domain is None:
+        if observed_iv is None or observed_iv.empty:
+            raise ValueError(
+                "No observed data found to infer grid domain. "
+                "Please provide an explicit `domain=(min, max)` argument."
+            )
+        else:
+            min_strike = observed_iv["strike"].min()
+            max_strike = observed_iv["strike"].max()
+            if np.isclose(min_strike, max_strike):
+                strike_grid = np.array([min_strike])
+            else:
+                # Add 20% padding
+                padding = 0.2 * (max_strike - min_strike)
+                strike_grid = np.linspace(
+                    max(0.01, min_strike - padding),
+                    max_strike + padding,
+                    points,
+                )
+    else:
+        strike_grid = np.linspace(domain[0], domain[1], points)
+
+    # Evaluate curve
+    fitted_values = vol_curve(strike_grid)
+
+    smile_df = pd.DataFrame(
+        {
+            "strike": strike_grid,
+            "fitted_iv": fitted_values,
+        }
+    )
+
+    if not include_observed:
+        return smile_df
+
+    # Merge observed data if available
+    if observed_iv is not None and not observed_iv.empty:
+        # Mid IV
+        mid_subset = observed_iv[["strike", "iv"]].rename(columns={"iv": "market_iv"})
+        smile_df = pd.merge(smile_df, mid_subset, on="strike", how="left")
+
+    # Bid/Ask/Last IVs from metadata
+    for key, col_name in [
+        ("observed_iv_bid", "market_bid_iv"),
+        ("observed_iv_ask", "market_ask_iv"),
+        ("observed_iv_last", "market_last_iv"),
+    ]:
+        obs_df = metadata.get(key)
+        if isinstance(obs_df, pd.DataFrame) and not obs_df.empty:
+            subset = obs_df[["strike", "iv"]].rename(columns={"iv": col_name})
+            # Ensure strike is float for merging
+            subset["strike"] = subset["strike"].astype(float)
+            smile_df = pd.merge(smile_df, subset, on="strike", how="left")
+
+    return smile_df

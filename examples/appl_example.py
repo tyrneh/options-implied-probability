@@ -149,3 +149,28 @@ appl_surface.fit(df_appl, market, column_mapping=column_mapping)
 # Select an arbitrary maturity
 # rebuilt_slice_df = surface_rebuild.slice(days_to_expiry=100).data
 # rebuilt_slice_df.head()
+
+# Test Plotting
+print("\nTesting Plotting...")
+try:
+    import matplotlib.pyplot as plt
+    
+    # 1. VolCurve Plot
+    # Pick the first available expiry
+    expiry_to_plot = appl_surface.expiries[0]
+    vol_curve = appl_surface.slice(expiry=expiry_to_plot)
+    fig_iv = vol_curve.plot(title=f"Fitted IV Smile ({expiry_to_plot.date()})")
+    # plt.show() # Uncomment to see plot
+    print("VolCurve.plot() successful")
+
+    # 2. Distribution Plot
+    dist = vol_curve.implied_distribution()
+    fig_pdf = dist.plot(kind="pdf", title="Implied PDF (100 days)")
+    # plt.show() # Uncomment to see plot
+    print("Distribution.plot() successful")
+    
+except ImportError:
+    print("Matplotlib not installed, skipping plotting tests")
+except Exception as e:
+    print(f"Plotting failed: {e}")
+    raise

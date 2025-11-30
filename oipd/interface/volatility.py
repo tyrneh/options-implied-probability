@@ -16,10 +16,12 @@ from oipd.market_inputs import (
     VendorSnapshot,
     resolve_market,
 )
-from oipd.pipelines.vol_curve import fit_vol_curve_internal
+from oipd.pipelines.vol_curve import fit_vol_curve_internal, compute_fitted_smile
 from oipd.pipelines.distribution import derive_distribution_from_curve
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
+
+from oipd.presentation.iv_plotting import plot_iv_smile, ReferenceAnnotation
 
 
 class VolCurve:
@@ -154,6 +156,83 @@ class VolCurve:
         if self._vol_curve is None:
             raise ValueError("Call fit before accessing ATM volatility")
         return getattr(self._vol_curve, "at_money_vol", np.nan)
+
+    def iv_smile(
+        self,
+        domain: Optional[tuple[float, float]] = None,
+        points: int = 200,
+        include_observed: bool = True,
+    ) -> pd.DataFrame:
+        """Return the implied-volatility smile with fitted and market-observed values.
+
+        Args:
+            domain: Optional (min, max) strike range. If None, inferred from observed data.
+            points: Number of points in the grid.
+            include_observed: Whether to include market-observed IVs. If False, only
+                ``strike`` and ``fitted_iv`` columns are returned.
+
+        Returns:
+            DataFrame containing:
+            
+            - ``strike``: Strike levels.
+            - ``fitted_iv``: Fitted implied volatility from the calibrated model.
+            - ``market_iv``: *(if include_observed=True)* Mid-price implied volatility
+              computed by inverting the mid option price using the same pricing model
+              (Black-76 or Black-Scholes), risk-free rate, dividend assumptions, and
+              time-to-expiry as specified during ``.fit()``.
+            - ``market_bid_iv``: *(if include_observed=True)* Bid-price implied volatility
+              computed using the same methodology.
+            - ``market_ask_iv``: *(if include_observed=True)* Ask-price implied volatility
+              computed using the same methodology.
+            - ``market_last_iv``: *(if include_observed=True)* Last-price implied volatility
+              computed using the same methodology (only included if bid/ask are unavailable).
+
+        Note:
+            The market IVs are **not** raw quotes from exchanges—they are computed by
+            the library by solving the inverse problem: "What σ makes the model price
+            match the observed option price?" This ensures consistency with the fitted
+            curve, which uses the same pricing assumptions.
+        """
+        return compute_fitted_smile(
+            vol_curve=self,
+            metadata=self._metadata,
+            domain=domain,
+            points=points,
+            include_observed=include_observed,
+        )
+
+    def plot(self, **kwargs) -> Any:
+        """Plot the fitted implied volatility smile.
+        
+        Args:
+            **kwargs: Arguments forwarded to ``oipd.presentation.iv_plotting.plot_iv_smile``.
+        
+        Returns:
+            matplotlib.figure.Figure: The plot figure.
+        """        
+        smile_df = self.iv_smile()
+        
+        # Map our column names to what plot_iv_smile expects
+        plot_df = smile_df.rename(columns={
+            "market_bid_iv": "bid_iv",
+            "market_ask_iv": "ask_iv",
+            "market_last_iv": "last_iv"
+        })
+
+        # Extract reference price (forward) for log-moneyness plotting
+        reference = None
+        forward_price = self._metadata.get("forward_price")
+        if forward_price is not None:
+            reference = ReferenceAnnotation(
+                value=float(forward_price),
+                label=f"Forward: {float(forward_price):.2f}"
+            )
+        
+        # If no reference price is available, default to strike axis to avoid errors
+        if reference is None and "axis_mode" not in kwargs:
+            kwargs["axis_mode"] = "strike"
+
+        return plot_iv_smile(plot_df, reference=reference, **kwargs)
 
     @property
     def params(self) -> dict[str, Any]:
