@@ -58,8 +58,8 @@ print(f"VolCurve.fit executed in {end_time - start_time:.4f} seconds")
 
 
 # plot fitted IV smile as 2D plot
-# est_appl.plot_iv(observations="range", x_axis="strike")
-# plt.show()
+est_appl.plot_iv(observations="range", x_axis="strike")
+plt.show()
 
 
 # return SVI parameters
@@ -154,7 +154,7 @@ appl_surface.fit(df_appl, market, column_mapping=column_mapping)
 print("\nTesting Plotting...")
 try:
     import matplotlib.pyplot as plt
-    
+
     # 1. VolCurve Plot
     # Pick the first available expiry
     expiry_to_plot = appl_surface.expiries[0]
@@ -168,7 +168,7 @@ try:
     fig_pdf = dist.plot(kind="pdf", title="Implied PDF (100 days)")
     # plt.show() # Uncomment to see plot
     print("Distribution.plot() successful")
-    
+
 except ImportError:
     print("Matplotlib not installed, skipping plotting tests")
 except Exception as e:

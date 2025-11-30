@@ -173,7 +173,7 @@ class VolCurve:
 
         Returns:
             DataFrame containing:
-            
+
             - ``strike``: Strike levels.
             - ``fitted_iv``: Fitted implied volatility from the calibrated model.
             - ``market_iv``: *(if include_observed=True)* Mid-price implied volatility
@@ -203,31 +203,32 @@ class VolCurve:
 
     def plot(self, **kwargs) -> Any:
         """Plot the fitted implied volatility smile.
-        
+
         Args:
             **kwargs: Arguments forwarded to ``oipd.presentation.iv_plotting.plot_iv_smile``.
-        
+
         Returns:
             matplotlib.figure.Figure: The plot figure.
-        """        
+        """
         smile_df = self.iv_smile()
-        
+
         # Map our column names to what plot_iv_smile expects
-        plot_df = smile_df.rename(columns={
-            "market_bid_iv": "bid_iv",
-            "market_ask_iv": "ask_iv",
-            "market_last_iv": "last_iv"
-        })
+        plot_df = smile_df.rename(
+            columns={
+                "market_bid_iv": "bid_iv",
+                "market_ask_iv": "ask_iv",
+                "market_last_iv": "last_iv",
+            }
+        )
 
         # Extract reference price (forward) for log-moneyness plotting
         reference = None
         forward_price = self._metadata.get("forward_price")
         if forward_price is not None:
             reference = ReferenceAnnotation(
-                value=float(forward_price),
-                label=f"Forward: {float(forward_price):.2f}"
+                value=float(forward_price), label=f"Forward: {float(forward_price):.2f}"
             )
-        
+
         # If no reference price is available, default to strike axis to avoid errors
         if reference is None and "axis_mode" not in kwargs:
             kwargs["axis_mode"] = "strike"
