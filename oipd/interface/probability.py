@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -135,11 +135,25 @@ class Distribution:
 
         return self._metadata
 
-    def plot(self, **kwargs) -> Any:
+    def plot(
+        self,
+        *,
+        kind: Literal["pdf", "cdf", "both"] = "both",
+        figsize: tuple[float, float] = (10.0, 5.0),
+        title: Optional[str] = None,
+        xlim: Optional[tuple[float, float]] = None,
+        ylim: Optional[tuple[float, float]] = None,
+        **kwargs,
+    ) -> Any:
         """Plot the risk-neutral probability distribution.
 
         Args:
-            **kwargs: Arguments forwarded to ``oipd.presentation.plot_rnd.plot_rnd``.
+            kind: Which distribution(s) to plot: ``"pdf"``, ``"cdf"``, or ``"both"``.
+            figsize: Figure size as (width, height) in inches.
+            title: Optional custom title for the plot.
+            xlim: Optional x-axis limits as (min, max).
+            ylim: Optional y-axis limits as (min, max).
+            **kwargs: Additional arguments forwarded to ``oipd.presentation.plot_rnd.plot_rnd``.
 
         Returns:
             matplotlib.figure.Figure: The plot figure.
@@ -154,9 +168,14 @@ class Distribution:
             prices=self.prices,
             pdf=self.pdf,
             cdf=self.cdf,
+            kind=kind,
+            figsize=figsize,
+            title=title,
             current_price=underlying_price,
             valuation_date=valuation_date,
             expiry_date=expiry_date,
+            xlim=xlim,
+            ylim=ylim,
             **kwargs,
         )
 

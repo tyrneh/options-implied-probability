@@ -201,16 +201,32 @@ class VolCurve:
             include_observed=include_observed,
         )
 
-    def plot(self, **kwargs) -> Any:
+    def plot(
+        self,
+        *,
+        axis_mode: str = "strike",
+        include_observed: bool = True,
+        figsize: tuple[float, float] = (10.0, 5.0),
+        title: Optional[str] = None,
+        xlim: Optional[tuple[float, float]] = None,
+        ylim: Optional[tuple[float, float]] = None,
+        **kwargs,
+    ) -> Any:
         """Plot the fitted implied volatility smile.
 
         Args:
-            **kwargs: Arguments forwarded to ``oipd.presentation.iv_plotting.plot_iv_smile``.
+            include_observed: Whether to include observed market data points.
+            axis_mode: X-axis mode, either ``"log_moneyness"`` or ``"strike"``.
+            figsize: Figure size as (width, height) in inches.
+            title: Optional plot title.
+            xlim: Optional x-axis limits as (min, max).
+            ylim: Optional y-axis limits as (min, max).
+            **kwargs: Additional arguments forwarded to ``oipd.presentation.iv_plotting.plot_iv_smile``.
 
         Returns:
             matplotlib.figure.Figure: The plot figure.
         """
-        smile_df = self.iv_smile()
+        smile_df = self.iv_smile(include_observed=include_observed)
 
         # Map our column names to what plot_iv_smile expects
         plot_df = smile_df.rename(
@@ -230,10 +246,26 @@ class VolCurve:
             )
 
         # If no reference price is available, default to strike axis to avoid errors
-        if reference is None and "axis_mode" not in kwargs:
-            kwargs["axis_mode"] = "strike"
+        if reference is None and axis_mode == "log_moneyness":
+            axis_mode = "strike"
 
-        return plot_iv_smile(plot_df, reference=reference, **kwargs)
+        # Extract expiry date for default title generation
+        expiry_date = None
+        if self._resolved_market is not None:
+            expiry_date = self._resolved_market.expiry_date
+
+        return plot_iv_smile(
+            plot_df,
+            reference=reference,
+            include_observed=include_observed,
+            axis_mode=axis_mode,
+            figsize=figsize,
+            title=title,
+            expiry_date=expiry_date,
+            xlim=xlim,
+            ylim=ylim,
+            **kwargs,
+        )
 
     @property
     def params(self) -> dict[str, Any]:

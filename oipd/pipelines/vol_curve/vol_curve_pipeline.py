@@ -99,6 +99,8 @@ def compute_fitted_smile(
     """
     Generate a DataFrame representing the fitted smile and observed data.
 
+    The evaluation grid is the union of a smooth linspace and all observed strikes to preserve market data points.
+
     Args:
         vol_curve: The callable volatility curve.
         metadata: Metadata dictionary containing observed IVs.
@@ -124,8 +126,8 @@ def compute_fitted_smile(
             if np.isclose(min_strike, max_strike):
                 strike_grid = np.array([min_strike])
             else:
-                # Add 20% padding
-                padding = 0.2 * (max_strike - min_strike)
+                # Add 5% padding
+                padding = 0.05 * (max_strike - min_strike)
                 strike_grid = np.linspace(
                     max(0.01, min_strike - padding),
                     max_strike + padding,
@@ -133,6 +135,13 @@ def compute_fitted_smile(
                 )
     else:
         strike_grid = np.linspace(domain[0], domain[1], points)
+
+    # Ensure observed strikes are included in the grid so we can merge them later
+    if observed_iv is not None and not observed_iv.empty:
+        observed_strikes = observed_iv["strike"].to_numpy(dtype=float)
+        # Union and sort
+        strike_grid = np.unique(np.concatenate((strike_grid, observed_strikes)))
+        strike_grid.sort()
 
     # Evaluate curve
     fitted_values = vol_curve(strike_grid)

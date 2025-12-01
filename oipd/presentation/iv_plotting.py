@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 import math
 import warnings
 from typing import (
@@ -87,6 +88,7 @@ def plot_iv_smile(
     observed_last: pd.DataFrame | None = None,
     figsize: tuple[float, float] = (10.0, 5.0),
     title: Optional[str] = None,
+    expiry_date: Optional[date] = None,
     style: Literal["publication", "default"] = "publication",
     source: Optional[str] = None,
     show_reference: bool = False,
@@ -114,6 +116,8 @@ def plot_iv_smile(
         observed_last: Optional last trade implied-volatility DataFrame.
         figsize: Matplotlib figure dimensions in inches.
         title: Title text for the chart. When omitted a default is inferred.
+        expiry_date: Optional expiry date used to generate a default title when
+            ``title`` is not provided.
         style: Requested visual style, matching the estimator API.
         source: Optional attribution text used for publication styling.
         show_reference: Whether to draw a vertical reference line at the
@@ -475,7 +479,14 @@ def plot_iv_smile(
             for text in legend.get_texts():
                 text.set_color("#333333")
 
-    resolved_title = title or "Implied Volatility Smile"
+    if title is not None:
+        resolved_title = title
+    elif expiry_date is not None:
+        resolved_title = (
+            f"Implied Volatility Smile (Expiry {expiry_date.strftime('%b %d, %Y')})"
+        )
+    else:
+        resolved_title = "Implied Volatility Smile"
     if not created_fig:
         target_ax.set_title(
             resolved_title,

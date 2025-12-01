@@ -43,43 +43,30 @@ column_mapping = {
     "bid": "bid",
     "ask": "ask",
 }
+# initialize vol smile and fit
+appl_vol_curve = VolCurve()
+appl_vol_curve.fit(df_appl_slice, market, column_mapping=column_mapping)
 
+appl_vol_curve._metadata
 
-# estimate RND and time the operation
-start_time = time.perf_counter()
-# est_appl = RND.from_dataframe(df_appl_slice, market, column_mapping=column_mapping)
-est_appl = VolCurve(method="svi")
-est_appl.fit(df_appl_slice, market, column_mapping=column_mapping)
-end_time = time.perf_counter()
-print(f"VolCurve.fit executed in {end_time - start_time:.4f} seconds")
+# plot vol smile
+appl_vol_curve.plot(include_observed=True, xlim=(50, 400), ylim=(0, 1))
 
-# est_appl.plot(kind="pdf")
-# plt.show()
-
-
-# plot fitted IV smile as 2D plot
-est_appl.plot_iv(observations="range", x_axis="strike")
-plt.show()
+# get fitted vol as dataframe
+fitted_vol_df = appl_vol_curve.iv_smile()
+fitted_vol_df.head()
 
 
 # return SVI parameters
-svi_params = est_appl.params
+svi_params = appl_vol_curve.params
 print(svi_params)
 
-# reconstruct vol curve and RND from SVI parameters
-# Note: accessing private _vol_curve for grid, assuming it has .grid or similar if needed
-# But for now let's just use the params.
-# The original code accessed est_appl.meta["vol_curve"].grid[0]
-# We'll skip the rebuild verification if we can't easily get the grid, or assume a grid.
-# rebuild = rebuild_slice_from_svi(
-#     svi_params,
-#     forward_price=est_appl.forward,
-#     days_to_expiry=est_appl.resolved_market.days_to_expiry,
-#     risk_free_rate=float(est_appl.resolved_market.risk_free_rate),
-#     strike_grid=est_appl._vol_curve.grid[0], # This might fail if _vol_curve doesn't have grid
-# )
-# rebuild_df = rebuild.data  # THIS CONTAINS THE VOL, PDF, AND CDF
-# rebuild_df.head()
+
+# generate RND from vol smile
+rnd_appl = appl_vol_curve.implied_distribution()
+
+rnd_appl.plot(kind="both")
+
 
 # --- Example 2 - AAPL surface (multiple expiries) --- #
 
