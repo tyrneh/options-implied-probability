@@ -95,8 +95,8 @@ appl_surface = VolSurface(method="svi")
 appl_surface.fit(df_appl, market, column_mapping=column_mapping)
 
 # plot IV surface as grid of maturities
-# appl_surface.plot_iv(x_axis="strike", layout="grid")
-# plt.show()
+appl_surface.plot()
+
 
 # plot IV surface as 3D plot
 # fig = appl_surface.plot_iv_3d()

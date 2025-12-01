@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Dict, Literal, Optional, Tuple, Mapping
 
 import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
-from oipd.pipelines._legacy.estimator import ModelParams, _estimate
+from oipd.core.data_processing import (
+    apply_put_call_parity,
+    compute_iv,
+    filter_stale_options,
+    select_price_column,
+)
+from oipd.core.vol_surface_fitting import fit_slice
+from oipd.core.vol_surface_fitting.shared.svi_types import SVICalibrationOptions
 from oipd.data_access.readers import DataFrameReader
 from oipd.pricing.utils import prepare_dividends
 from oipd.market_inputs import ResolvedMarket
@@ -28,6 +36,9 @@ def fit_vol_curve_internal(
     """
     Fit a volatility curve to a single slice of options data.
 
+    This function performs vol-only fitting without computing the risk-neutral
+    distribution (RND). RND computation is deferred to ``implied_distribution()``.
+
     Args:
         options_data: DataFrame containing option quotes.
         resolved_market: Market inputs (rates, spot, etc.).
@@ -45,7 +56,7 @@ def fit_vol_curve_internal(
     """
     valuation_date = resolved_market.valuation_date
 
-    # 1. Prepare Dividends / Spot
+    # 1. Prepare Dividends / Spot for Black-Scholes
     if pricing_engine == "bs":
         effective_spot, effective_dividend = prepare_dividends(
             underlying=resolved_market.underlying_price,
@@ -58,35 +69,182 @@ def fit_vol_curve_internal(
         effective_spot = resolved_market.underlying_price
         effective_dividend = None
 
-    # Clean and normalize input similarly to DataFrameSource used in legacy RND
+    # 2. Clean and normalize input
     reader = DataFrameReader()
     cleaned_options = reader.read(options_data.copy())
 
-    # Mirror legacy pipeline via ModelParams/_estimate to ensure bitwise parity
-    model_params = ModelParams(
-        solver=solver,
-        pricing_engine=pricing_engine,
-        price_method=price_method,
-        max_staleness_days=max_staleness_days,
-        surface_method=method,
-        surface_options=method_options,
+    # 3. Apply put-call parity to get synthetic calls + infer forward price
+    parity_adjusted, forward_price = apply_put_call_parity(
+        cleaned_options, effective_spot, resolved_market
     )
 
-    # _estimate returns pdf/cdf we ignore; meta carries the fitted vol curve
-    _, _, _, meta = _estimate(cleaned_options, resolved_market, model_params)
-    if "vol_curve" not in meta:
-        raise CalculationError("Expected vol_curve in metadata from _estimate")
+    # For Black-76, use forward price; for BS, use spot
+    if pricing_engine == "black76":
+        if forward_price is None:
+            warnings.warn(
+                "Black-76 requires a parity-implied forward but put quotes are missing. "
+                "Using spot price as fallback.",
+                UserWarning,
+            )
+            underlying_for_iv = effective_spot
+        else:
+            underlying_for_iv = forward_price
+    else:
+        underlying_for_iv = effective_spot
 
-    vol_curve = meta["vol_curve"]
+    # 4. Filter stale quotes
+    filtered_options = filter_stale_options(
+        parity_adjusted,
+        valuation_date,
+        max_staleness_days,
+        emit_warning=True,
+    )
+
+    # 5. Select price column (mid, last, bid, ask)
+    priced_options = select_price_column(filtered_options, price_method)
+    if priced_options.empty:
+        raise CalculationError("No valid options data after price selection")
+
+    # 6. Compute implied volatilities
+    options_with_iv = compute_iv(
+        priced_options,
+        underlying_for_iv,
+        days_to_expiry=resolved_market.days_to_expiry,
+        risk_free_rate=resolved_market.risk_free_rate,
+        solver_method=solver,
+        pricing_engine=pricing_engine,
+        dividend_yield=effective_dividend,
+    )
+
+    # 7. Fit the volatility smile (SVI or bspline)
+    strikes = options_with_iv["strike"].to_numpy(dtype=float)
+    ivs = options_with_iv["iv"].to_numpy(dtype=float)
+
+    # Extract volume array if available
+    volume_array: np.ndarray | None = None
+    if "volume" in options_with_iv.columns:
+        volume_array = options_with_iv["volume"].to_numpy(dtype=float)
+        if not np.isfinite(volume_array).any() or np.all(volume_array <= 0):
+            volume_array = None
+
+    # 8. Compute observed bid/ask/last IVs for plotting AND for SVI calibration
+    observed_bid_iv = _compute_observed_iv(
+        priced_options,
+        "bid",
+        underlying_for_iv,
+        resolved_market,
+        solver,
+        pricing_engine,
+        effective_dividend,
+    )
+    observed_ask_iv = _compute_observed_iv(
+        priced_options,
+        "ask",
+        underlying_for_iv,
+        resolved_market,
+        solver,
+        pricing_engine,
+        effective_dividend,
+    )
+    observed_last_iv = _compute_observed_iv(
+        priced_options,
+        "last_price",
+        underlying_for_iv,
+        resolved_market,
+        solver,
+        pricing_engine,
+        effective_dividend,
+    )
+
+    # Align bid/ask IVs with the strike array for SVI calibration
+    fit_kwargs: Dict[str, Any] = {}
+    if method == "svi":
+
+        def _align_iv_series(iv_df: Optional[pd.DataFrame]) -> np.ndarray | None:
+            if iv_df is None or iv_df.empty:
+                return None
+            joined = (
+                pd.DataFrame({"strike": strikes})
+                .merge(iv_df, on="strike", how="left")
+                .sort_index()
+            )
+            iv_values = joined["iv"].to_numpy(dtype=float)
+            if np.all(np.isnan(iv_values)):
+                return None
+            return iv_values
+
+        aligned_bid_iv = _align_iv_series(observed_bid_iv)
+        aligned_ask_iv = _align_iv_series(observed_ask_iv)
+
+        if aligned_bid_iv is not None or aligned_ask_iv is not None:
+            fit_kwargs["bid_iv"] = aligned_bid_iv
+            fit_kwargs["ask_iv"] = aligned_ask_iv
+        if volume_array is not None:
+            fit_kwargs["volumes"] = volume_array
+
+    vol_curve, fit_metadata = fit_slice(
+        method,
+        strikes,
+        ivs,
+        forward=underlying_for_iv,
+        maturity_years=resolved_market.days_to_expiry / 365.0,
+        options=method_options,
+        **fit_kwargs,
+    )
+
+    # 9. Return vol curve + metadata (NO RND computation!)
     metadata = {
-        "forward_price": meta.get("forward_price", resolved_market.underlying_price),
+        "forward_price": underlying_for_iv,
         "pricing_engine": pricing_engine,
-        "method": meta.get("surface_fit", method),
-        "fit_diagnostics": meta.get("observed_iv"),
-        **{k: v for k, v in meta.items() if k.startswith("observed_iv")},
+        "method": method,
+        "observed_iv": options_with_iv,
+        "observed_iv_bid": observed_bid_iv,
+        "observed_iv_ask": observed_ask_iv,
+        "observed_iv_last": observed_last_iv,
+        **fit_metadata,
     }
 
     return vol_curve, metadata
+
+
+def _compute_observed_iv(
+    source_df: pd.DataFrame,
+    price_column: str,
+    underlying_price: float,
+    resolved_market: ResolvedMarket,
+    solver: str,
+    pricing_engine: str,
+    dividend_yield: Optional[float],
+) -> Optional[pd.DataFrame]:
+    """Compute implied volatility for an alternate observed price column."""
+
+    if price_column not in source_df.columns:
+        return None
+
+    priced = source_df.loc[
+        source_df[price_column].notna() & (source_df[price_column] > 0)
+    ].copy()
+    if priced.empty:
+        return None
+
+    priced["price"] = priced[price_column]
+    try:
+        iv_df = compute_iv(
+            priced,
+            underlying_price,
+            days_to_expiry=resolved_market.days_to_expiry,
+            risk_free_rate=resolved_market.risk_free_rate,
+            solver_method=solver,
+            pricing_engine=pricing_engine,
+            dividend_yield=dividend_yield,
+        )
+    except Exception:
+        return None
+
+    columns = ["strike", "iv"]
+    if "option_type" in iv_df.columns:
+        columns.append("option_type")
+    return iv_df.loc[:, columns]
 
 
 def compute_fitted_smile(

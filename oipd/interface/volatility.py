@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -508,6 +508,139 @@ class VolSurface:
             distributions[expiry_timestamp] = vol_curve.implied_distribution()
 
         return DistributionSurface(distributions)
+
+    def plot(
+        self,
+        *,
+        axis_mode: Literal["strike", "log_moneyness"] = "strike",
+        figsize: tuple[float, float] = (10.0, 5.0),
+        title: Optional[str] = None,
+        xlim: Optional[tuple[float, float]] = None,
+        ylim: Optional[tuple[float, float]] = None,
+        label_format: Literal["date", "days"] = "date",
+        style: Literal["publication", "default"] = "publication",
+        **kwargs,
+    ) -> Any:
+        """Plot overlayed IV smiles for all fitted expiries.
+
+        Args:
+            axis_mode: X-axis mode, either ``"strike"`` or ``"log_moneyness"``.
+            figsize: Figure size as (width, height) in inches.
+            title: Optional plot title.
+            xlim: Optional x-axis limits as (min, max).
+            ylim: Optional y-axis limits as (min, max).
+            label_format: How to label each curve - ``"date"`` (e.g., "Jan 17, 2025")
+                or ``"days"`` (e.g., "30d").
+            style: Visual style, either ``"publication"`` or ``"default"``.
+            **kwargs: Additional arguments forwarded to matplotlib plot calls.
+
+        Returns:
+            matplotlib.figure.Figure: The plot figure.
+
+        Raises:
+            ValueError: If ``fit`` has not been called.
+        """
+        if self._model is None:
+            raise ValueError("Call fit before plotting the surface")
+
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.ticker as ticker
+        except ImportError as exc:
+            raise ImportError(
+                "Matplotlib is required for plotting. Install with: pip install matplotlib"
+            ) from exc
+
+        # Apply publication style if requested
+        if style == "publication":
+            from oipd.presentation.publication import (
+                _apply_publication_style,
+                _style_publication_axes,
+            )
+
+            _apply_publication_style(plt)
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # Plot each expiry's IV smile
+        for expiry_timestamp in self.expiries:
+            vol_curve = self.slice(expiry_timestamp)
+            smile_df = vol_curve.iv_smile(include_observed=False)
+
+            # Compute x-axis values
+            strikes = smile_df["strike"].to_numpy(dtype=float)
+            if axis_mode == "log_moneyness":
+                forward = vol_curve._metadata.get("forward_price")
+                if forward is None or forward <= 0:
+                    raise ValueError(
+                        "Forward price required for log-moneyness axis but not available"
+                    )
+                x_values = np.log(strikes / forward)
+            else:
+                x_values = strikes
+
+            # Generate label
+            if label_format == "days":
+                resolved_market = vol_curve._resolved_market
+                if resolved_market is not None:
+                    days = resolved_market.days_to_expiry
+                    label = f"{days}d"
+                else:
+                    label = expiry_timestamp.strftime("%b %d, %Y")
+            else:
+                label = expiry_timestamp.strftime("%b %d, %Y")
+
+            ax.plot(
+                x_values,
+                smile_df["fitted_iv"].to_numpy(dtype=float),
+                label=label,
+                linewidth=1.5,
+                **kwargs,
+            )
+
+        # Axis labels
+        if axis_mode == "log_moneyness":
+            ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
+        else:
+            ax.set_xlabel("Strike", fontsize=11)
+        ax.set_ylabel("Implied Volatility", fontsize=11)
+
+        # Format y-axis as percentage
+        ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+
+        # Apply limits
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+        else:
+            ax.set_ylim(bottom=0)
+
+        # Legend
+        legend = ax.legend(loc="best", frameon=False)
+        if legend is not None:
+            for text in legend.get_texts():
+                text.set_color("#333333")
+
+        # Apply publication styling to axes
+        if style == "publication":
+            _style_publication_axes(ax)
+
+        # Title
+        resolved_title = title or "Implied Volatility Surface"
+        if style == "publication":
+            plt.subplots_adjust(top=0.88)
+            fig.suptitle(
+                resolved_title,
+                fontsize=16,
+                fontweight="bold",
+                y=0.95,
+                color="#333333",
+            )
+        else:
+            ax.set_title(resolved_title)
+
+        return fig
 
 
 __all__ = ["VolCurve", "VolSurface"]
