@@ -18,7 +18,7 @@ import numpy as np
 df_appl = pd.read_csv("data/AAPL_data.csv")
 
 # filter appl for 2026-01-16 expiration date
-df_appl_slice = df_appl[df_appl["expiration"] == "2026-01-16"]
+df_appl_slice = df_appl[df_appl["expiration"] == "2025-10-10"]
 
 
 # --- Example 1 - AAPL on a single expiry (slice) --- #
@@ -31,7 +31,7 @@ df_appl_slice = df_appl[df_appl["expiration"] == "2026-01-16"]
 
 market = MarketInputs(
     valuation_date=date(2025, 10, 6),  # date pulled
-    expiry_date=date(2026, 1, 16),
+    expiry_date=date(2025, 10, 10),
     risk_free_rate=0.04,
     underlying_price=256.69,  # closing price on 2025-10-06
 )
@@ -50,7 +50,7 @@ appl_vol_curve.fit(df_appl_slice, market, column_mapping=column_mapping)
 appl_vol_curve._metadata
 
 # plot vol smile
-appl_vol_curve.plot(include_observed=True, xlim=(50, 400), ylim=(0, 1))
+appl_vol_curve.plot(include_observed=True, xlim=(200, 300), ylim=(0, 1))
 
 # get fitted vol as dataframe
 fitted_vol_df = appl_vol_curve.iv_smile()

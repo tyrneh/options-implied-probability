@@ -518,7 +518,6 @@ class VolSurface:
         xlim: Optional[tuple[float, float]] = None,
         ylim: Optional[tuple[float, float]] = None,
         label_format: Literal["date", "days"] = "date",
-        style: Literal["publication", "default"] = "publication",
         **kwargs,
     ) -> Any:
         """Plot overlayed IV smiles for all fitted expiries.
@@ -531,7 +530,6 @@ class VolSurface:
             ylim: Optional y-axis limits as (min, max).
             label_format: How to label each curve - ``"date"`` (e.g., "Jan 17, 2025")
                 or ``"days"`` (e.g., "30d").
-            style: Visual style, either ``"publication"`` or ``"default"``.
             **kwargs: Additional arguments forwarded to matplotlib plot calls.
 
         Returns:
@@ -551,14 +549,13 @@ class VolSurface:
                 "Matplotlib is required for plotting. Install with: pip install matplotlib"
             ) from exc
 
-        # Apply publication style if requested
-        if style == "publication":
-            from oipd.presentation.publication import (
-                _apply_publication_style,
-                _style_publication_axes,
-            )
+        # Apply publication style
+        from oipd.presentation.publication import (
+            _apply_publication_style,
+            _style_publication_axes,
+        )
 
-            _apply_publication_style(plt)
+        _apply_publication_style(plt)
 
         fig, ax = plt.subplots(figsize=figsize)
 
@@ -623,22 +620,18 @@ class VolSurface:
                 text.set_color("#333333")
 
         # Apply publication styling to axes
-        if style == "publication":
-            _style_publication_axes(ax)
+        _style_publication_axes(ax)
 
         # Title
         resolved_title = title or "Implied Volatility Surface"
-        if style == "publication":
-            plt.subplots_adjust(top=0.88)
-            fig.suptitle(
-                resolved_title,
-                fontsize=16,
-                fontweight="bold",
-                y=0.95,
-                color="#333333",
-            )
-        else:
-            ax.set_title(resolved_title)
+        plt.subplots_adjust(top=0.88)
+        fig.suptitle(
+            resolved_title,
+            fontsize=16,
+            fontweight="bold",
+            y=0.95,
+            color="#333333",
+        )
 
         return fig
 
