@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from datetime import date
 
 
-ticker_ = "APPL"
+ticker_ = "AAPL"
 
 # 3 INPUTS:
 # 1. market parameters
