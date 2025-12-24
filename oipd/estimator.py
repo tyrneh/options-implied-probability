@@ -1383,3 +1383,116 @@ class RND:
             along with observed bid/ask implied volatilities when available.
         """
         return self.result.iv_smile(strikes, num_points=num_points)
+
+
+from datetime import date
+
+
+class RNDResultSet:
+    def __init__(self, rnd_list: list[tuple[RNDResult , date]] | None = None):
+        if rnd_list is None:
+            self.RND_list = []
+        else:
+            self.RND_list = rnd_list
+
+    @classmethod
+    def set_from_ticker(
+        cls,
+        ticker: str,
+        market: MarketInputs,
+        *,
+        model: Optional[ModelParams] = None,
+        vendor: str = "yfinance",
+        fill: FillMode = "missing",
+        echo: Optional[bool] = None,
+        verbose: bool = True,
+        cache_enabled: bool = True,
+        cache_ttl_minutes: int = 15,
+    )->RNDResultSet:
+        """
+        Generate a Set of RND for every available expiry date
+        """
+        expiry_dates = RND.list_expiry_dates(ticker)
+
+        RND_list = []
+        from dataclasses import replace
+
+        
+        for e_date in expiry_dates:
+
+            expiry = date.fromisoformat(e_date.strip())
+
+            if expiry <= date.today():
+                continue
+
+            market = replace(market, expiry_date= expiry)
+
+            RND_entity = RND.from_ticker(
+                ticker,
+                market,
+                model=model,
+                vendor=vendor,
+                fill=fill,
+                echo=echo,
+                verbose=verbose,
+                cache_enabled=cache_enabled,
+                cache_ttl_minutes=cache_ttl_minutes,
+            )
+
+            RND_date_tuple = (RND_entity,expiry)
+
+            RND_list.append(RND_date_tuple)
+
+        result_set = RNDResultSet(RND_list)
+
+        return result_set
+    
+    
+    def plot(self):
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        import numpy as np
+
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+
+        x_points = []
+        y_points = []
+        z_points = []
+
+        # Store max PDF points per date
+        max_pdf_dates = []
+        max_pdf_prices = []
+        max_pdf_values = []
+
+        lowest_date = mdates.date2num(date.today())
+
+        for data in self.RND_list:
+
+            date_cord = mdates.date2num(data[1]) - lowest_date
+
+            date_repeated = np.full_like(data[0].pdf, date_cord)
+
+            x_points.extend(date_repeated)
+            y_points.extend(data[0].prices)
+            z_points.extend(data[0].pdf)
+
+            # Find max PDF for this date
+            max_idx = np.argmax(data[0].pdf)
+            max_pdf_dates.append(date_cord)
+            max_pdf_prices.append(data[0].prices[max_idx])
+            max_pdf_values.append(data[0].pdf[max_idx])
+
+        # 3D scatter
+        scatter = ax.scatter(x_points, y_points, z_points, c=x_points, cmap='viridis', marker='o')
+
+        # Draw line connecting max PDF points
+        ax.plot(max_pdf_dates, max_pdf_prices, max_pdf_values, color='red', linewidth=2, label='Max PDF per date')
+
+        ax.set_xlabel('Date(days)')
+        ax.set_ylabel('Price')
+        ax.set_zlabel('Density')
+        ax.set_title('Ticker Date')
+
+        ax.legend()
+        plt.tight_layout()

@@ -12,7 +12,7 @@ from oipd.io import CSVReader, DataFrameReader, CSVReadError
 
 # Optional: explicitly re-export vendor-specific errors later if needed
 
-from oipd.estimator import RND, ModelParams, RNDResult
+from oipd.estimator import RND, ModelParams, RNDResult , RNDResultSet
 from oipd.market_inputs import (
     MarketInputs,
     VendorSnapshot,
@@ -42,4 +42,5 @@ __all__ = [
     "FillMode",  # Fill mode literal type
     "ModelParams",
     "RNDResult",
+    "RNDResultSet", 
 ]
