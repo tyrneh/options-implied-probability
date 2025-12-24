@@ -1427,7 +1427,17 @@ class RNDResultSet:
 
             market = replace(market, expiry_date= expiry)
 
-            RND_entity = RND.from_ticker(ticker,market)
+            RND_entity = RND.from_ticker(
+                ticker,
+                market,
+                model=model,
+                vendor=vendor,
+                fill=fill,
+                echo=echo,
+                verbose=verbose,
+                cache_enabled=cache_enabled,
+                cache_ttl_minutes=cache_ttl_minutes,
+            )
 
             RND_date_tuple = (RND_entity,expiry)
 
