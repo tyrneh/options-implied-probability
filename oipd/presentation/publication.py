@@ -38,6 +38,19 @@ def _apply_publication_style(plt: Any) -> None:
             "ytick.color": "#666666",
             "axes.labelcolor": "#333333",
             "axes.titlecolor": "#333333",
+            "axes.prop_cycle": plt.cycler(
+                color=[
+                    "#1f77b4",  # blue
+                    "#ff7f0e",  # orange
+                    "#2ca02c",  # green
+                    "#d62728",  # red
+                    "#9467bd",  # purple
+                    "#8c564b",  # brown
+                    "#e377c2",  # pink
+                    "#7f7f7f",  # gray
+                    "#17becf",  # cyan (skipping olive/yellow)
+                ]
+            ),
         }
     )
 

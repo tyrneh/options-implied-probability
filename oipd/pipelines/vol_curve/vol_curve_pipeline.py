@@ -292,8 +292,16 @@ def compute_fitted_smile(
             else:
                 # Add 5% padding
                 padding = 0.05 * (max_strike - min_strike)
+                lower_bound = min_strike - padding
+                
+                # Prevent lower bound from dropping too close to zero or negative
+                # If padding pushes below zero, we clamp to 50% of the minimum strike
+                # to maintain a reasonable visualization range.
+                if lower_bound <= 0:
+                    lower_bound = min_strike * 0.5
+
                 strike_grid = np.linspace(
-                    max(0.01, min_strike - padding),
+                    max(0.01, lower_bound),
                     max_strike + padding,
                     points,
                 )

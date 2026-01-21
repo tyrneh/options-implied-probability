@@ -93,7 +93,7 @@ def plot_iv_smile(
     source: Optional[str] = None,
     show_reference: bool = False,
     reference: ReferenceAnnotation | None = None,
-    axis_mode: Literal["log_moneyness", "strike"] = "log_moneyness",
+    axis_mode: Literal["log_moneyness", "strike", "log_strike_over_forward"] = "log_moneyness",
     line_kwargs: Optional[Dict[str, Any]] = None,
     scatter_kwargs: Optional[Dict[str, Any]] = None,
     observed_style: Literal["range", "markers"] = "range",
@@ -104,6 +104,8 @@ def plot_iv_smile(
     show_legend: bool = True,
     title_fontsize: Optional[float] = None,
     tick_labelsize: Optional[float] = None,
+    y_metric: Literal["iv", "total_variance"] = "iv",
+    t_to_expiry: Optional[float] = None,
 ) -> "Figure":
     """Render a single implied-volatility smile.
 
@@ -136,6 +138,8 @@ def plot_iv_smile(
         title_fontsize: Optional override for the subplot title font size when
             ``ax`` is supplied.
         tick_labelsize: Optional override for x/y tick label font size.
+        y_metric: Metric to plot on y-axis ("iv" or "total_variance").
+        t_to_expiry: Time to expiry in years (required if y_metric="total_variance").
 
     Returns:
         Matplotlib Figure populated with the smile visualisation.
@@ -154,14 +158,26 @@ def plot_iv_smile(
         line_config["label"] = "Fitted IV"
 
     axis_choice = axis_mode.lower()
-    if axis_choice not in {"log_moneyness", "strike"}:
-        raise ValueError("axis_mode must be 'log_moneyness' or 'strike'")
-    if axis_choice == "log_moneyness":
+    if axis_choice not in {"log_moneyness", "strike", "log_strike_over_forward"}:
+        raise ValueError("axis_mode must be 'log_moneyness', 'strike' or 'log_strike_over_forward'")
+    if axis_choice in ("log_moneyness", "log_strike_over_forward"):
         if reference is None or reference.value <= 0:
             raise ValueError("Positive reference price required for log-moneyness axis")
 
+    if y_metric == "total_variance":
+        if t_to_expiry is None or t_to_expiry <= 0:
+            raise ValueError(
+                "Positive t_to_expiry is required when plotting total variance"
+            )
+
+    def _transform_y(iv_values: np.ndarray | pd.Series) -> np.ndarray:
+        if y_metric == "total_variance":
+            # w = sigma^2 * T
+            return np.square(iv_values) * t_to_expiry
+        return np.asarray(iv_values)
+
     def _to_axis(strike_values: np.ndarray) -> np.ndarray:
-        if axis_choice == "log_moneyness":
+        if axis_choice in ("log_moneyness", "log_strike_over_forward"):
             return np.log(strike_values / reference.value)  # type: ignore[union-attr]
         return strike_values
 
@@ -174,7 +190,8 @@ def plot_iv_smile(
         fig = target_ax.figure
 
     strike_values = smile["strike"].to_numpy(dtype=float)
-    target_ax.plot(_to_axis(strike_values), smile["fitted_iv"], **line_config)
+    strike_values = smile["strike"].to_numpy(dtype=float)
+    target_ax.plot(_to_axis(strike_values), _transform_y(smile["fitted_iv"]), **line_config)
 
     if include_observed:
         observed_kwargs = dict(scatter_kwargs or {})
@@ -227,7 +244,11 @@ def plot_iv_smile(
                     .dropna()
                 )
             else:
-                observed_ranges = smile.dropna(subset=["bid_iv", "ask_iv"])
+                required_cols = ["bid_iv", "ask_iv"]
+                if set(required_cols).issubset(smile.columns):
+                    observed_ranges = smile.dropna(subset=required_cols)
+                else:
+                    observed_ranges = pd.DataFrame()
 
             if not observed_ranges.empty:
                 strikes_series = observed_ranges["strike"].to_numpy(dtype=float)
@@ -237,8 +258,8 @@ def plot_iv_smile(
 
                 vlines = target_ax.vlines(
                     x_coords,
-                    bid_values,
-                    ask_values,
+                    _transform_y(bid_values),
+                    _transform_y(ask_values),
                     colors=range_color,
                     linewidth=linewidth,
                     alpha=range_alpha,
@@ -256,7 +277,7 @@ def plot_iv_smile(
                 left = x_coords - cap_half_width
                 right = x_coords + cap_half_width
                 target_ax.hlines(
-                    bid_values,
+                    _transform_y(bid_values),
                     left,
                     right,
                     colors=range_color,
@@ -264,7 +285,7 @@ def plot_iv_smile(
                     alpha=range_alpha,
                 )
                 target_ax.hlines(
-                    ask_values,
+                    _transform_y(ask_values),
                     left,
                     right,
                     colors=range_color,
@@ -292,7 +313,7 @@ def plot_iv_smile(
                     marker_kwargs.setdefault("label", "Observed IV")
                     target_ax.scatter(
                         _to_axis(valid_last["strike"].to_numpy(dtype=float)),
-                        valid_last["iv"],
+                        _transform_y(valid_last["iv"]),
                         **marker_kwargs,
                     )
         else:
@@ -351,7 +372,7 @@ def plot_iv_smile(
                         plotted_labels.add(label_key)
                         target_ax.scatter(
                             _to_axis(quote_df["strike"].to_numpy(dtype=float)),
-                            quote_df["iv"],
+                            _transform_y(quote_df["iv"]),
                             color=_colour_for(option_type),
                             marker=marker_symbol,
                             s=marker_size,
@@ -405,21 +426,26 @@ def plot_iv_smile(
                     marker_kwargs.setdefault("label", "Observed IV")
                     target_ax.scatter(
                         _to_axis(valid_last["strike"].to_numpy(dtype=float)),
-                        valid_last["iv"],
+                        _transform_y(valid_last["iv"]),
                         **marker_kwargs,
                     )
 
     if show_axis_labels:
-        if axis_choice == "log_moneyness":
+        if axis_choice in ("log_moneyness", "log_strike_over_forward"):
             target_ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
         else:
             target_ax.set_xlabel("Strike", fontsize=11)
-
-        target_ax.set_ylabel("Implied Volatility", fontsize=11)
+    
+        if y_metric == "total_variance":
+            target_ax.set_ylabel("Total Variance", fontsize=11)
+        else:
+            target_ax.set_ylabel("Implied Volatility", fontsize=11)
     else:
         target_ax.set_xlabel("")
         target_ax.set_ylabel("")
-    target_ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+    
+    if y_metric != "total_variance":
+        target_ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
 
     if style_axes is not None:
         style_axes(target_ax)
@@ -436,10 +462,10 @@ def plot_iv_smile(
     if ylim is not None:
         target_ax.set_ylim(ylim)
     else:
-        iv_arrays: list[np.ndarray] = [smile["fitted_iv"].to_numpy(dtype=float)]
+        iv_arrays: list[np.ndarray] = [_transform_y(smile["fitted_iv"])]
         for column in ("bid_iv", "ask_iv", "last_iv"):
             if column in smile.columns:
-                iv_arrays.append(smile[column].to_numpy(dtype=float))
+                iv_arrays.append(_transform_y(smile[column]))
         iv_values = np.concatenate(
             [arr[np.isfinite(arr)] for arr in iv_arrays if arr.size]
         )
@@ -487,6 +513,10 @@ def plot_iv_smile(
         )
     else:
         resolved_title = "Implied Volatility Smile"
+    
+    if y_metric == "total_variance":
+        resolved_title = resolved_title.replace("Implied Volatility", "Total Variance")
+        
     if not created_fig:
         target_ax.set_title(
             resolved_title,
@@ -527,7 +557,7 @@ def plot_iv_surface(
     infer_forward: Callable[[float], float],
     maturities: Optional[Sequence[float]] = None,
     num_points: int = 200,
-    axis_mode: Literal["log_moneyness", "strike"] = "log_moneyness",
+    axis_mode: Literal["log_moneyness", "strike", "log_strike_over_forward"] = "log_moneyness",
     figsize: tuple[float, float] = (10.0, 5.0),
     title: Optional[str] = None,
     style: Literal["publication", "default"] = "publication",
@@ -581,8 +611,8 @@ def plot_iv_surface(
         raise ValueError("num_points must be at least 5 for plotting")
 
     axis_choice = axis_mode.lower()
-    if axis_choice not in {"log_moneyness", "strike"}:
-        raise ValueError("axis_mode must be 'log_moneyness' or 'strike'")
+    if axis_choice not in {"log_moneyness", "strike", "log_strike_over_forward"}:
+        raise ValueError("axis_mode must be 'log_moneyness', 'strike', or 'log_strike_over_forward'")
 
     plt, ticker, style_axes = _resolve_plot_style(style)
 
@@ -628,7 +658,7 @@ def plot_iv_surface(
         fig, ax = plt.subplots(figsize=figsize)
 
         def _axis_values(k: np.ndarray, forward: float) -> np.ndarray:
-            if axis_choice == "log_moneyness":
+            if axis_choice in ("log_moneyness", "log_strike_over_forward"):
                 return k
             return forward * np.exp(k)
 
@@ -640,7 +670,7 @@ def plot_iv_surface(
             label = f"{label_days}d"
             ax.plot(_axis_values(k_grid, forward), iv_curve, label=label)
 
-        ax.set_xlabel("Log Moneyness" if axis_choice == "log_moneyness" else "Strike")
+        ax.set_xlabel("Log Moneyness" if axis_choice in ("log_moneyness", "log_strike_over_forward") else "Strike")
         ax.set_ylabel("Implied Volatility")
         ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
 

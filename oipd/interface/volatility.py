@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Mapping, Optional
+from collections.abc import Mapping
+from datetime import date
+from typing import Any, Dict, Literal, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -212,23 +214,25 @@ class VolCurve:
     def plot(
         self,
         *,
-        axis_mode: str = "strike",
+        axis_mode: Literal["strike", "log_moneyness", "log_strike_over_forward"] = "strike",
         include_observed: bool = True,
         figsize: tuple[float, float] = (10.0, 5.0),
         title: Optional[str] = None,
         xlim: Optional[tuple[float, float]] = None,
         ylim: Optional[tuple[float, float]] = None,
+        y_metric: Literal["iv", "total_variance"] = "iv",
         **kwargs,
     ) -> Any:
         """Plot the fitted implied volatility smile.
 
         Args:
             include_observed: Whether to include observed market data points.
-            axis_mode: X-axis mode, either ``"log_moneyness"`` or ``"strike"``.
+            axis_mode: X-axis mode, either ``"strike"``, ``"log_moneyness"``, or ``"log_strike_over_forward"``.
             figsize: Figure size as (width, height) in inches.
             title: Optional plot title.
             xlim: Optional x-axis limits as (min, max).
             ylim: Optional y-axis limits as (min, max).
+            y_metric: Metric to plot on y-axis ("iv" or "total_variance").
             **kwargs: Additional arguments forwarded to ``oipd.presentation.iv_plotting.plot_iv_smile``.
 
         Returns:
@@ -253,14 +257,21 @@ class VolCurve:
                 value=float(forward_price), label=f"Forward: {float(forward_price):.2f}"
             )
 
+
+
         # If no reference price is available, default to strike axis to avoid errors
-        if reference is None and axis_mode == "log_moneyness":
+        if reference is None and axis_mode in ("log_moneyness", "log_strike_over_forward"):
             axis_mode = "strike"
 
         # Extract expiry date for default title generation
         expiry_date = None
         if self._resolved_market is not None:
             expiry_date = self._resolved_market.expiry_date
+
+        # Calculate time to expiry for total variance conversion if needed
+        t_to_expiry = None
+        if self._resolved_market is not None:
+            t_to_expiry = self._resolved_market.days_to_expiry / 365.0
 
         return plot_iv_smile(
             plot_df,
@@ -272,6 +283,8 @@ class VolCurve:
             expiry_date=expiry_date,
             xlim=xlim,
             ylim=ylim,
+            y_metric=y_metric,
+            t_to_expiry=t_to_expiry,
             **kwargs,
         )
 
@@ -396,6 +409,7 @@ class VolSurface:
         fill_mode: FillMode = "strict",
         column_mapping: Optional[Mapping[str, str]] = None,
         method_options: Optional[Mapping[str, Any]] = None,
+        horizon: Optional[Union[str, date, pd.Timestamp]] = None,
     ) -> "VolSurface":
         """Fit all expiries in the chain and store slice curves.
 
@@ -405,7 +419,10 @@ class VolSurface:
             vendor: Optional vendor snapshot to fill missing market fields.
             fill_mode: How to combine user/vendor inputs (``"strict"`` by default).
             column_mapping: Optional mapping from user column names to OIPD standard names.
+            column_mapping: Optional mapping from user column names to OIPD standard names.
             method_options: Per-fit overrides for the calibration method.
+            horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date). 
+                     Expiries after this horizon will be ignored.
 
         Returns:
             VolSurface: The fitted surface instance.
@@ -423,6 +440,47 @@ class VolSurface:
                 "Expiry column 'expiry' not found in input data. "
                 "Use column_mapping to map your expiry column to 'expiry'."
             )
+
+        # Apply horizon filtering
+        if horizon is not None:
+            # Resolve cutoff date
+            if isinstance(horizon, (date, pd.Timestamp, str)):
+                # formatted string date "YYYY-MM-DD"
+                try:
+                    cutoff = pd.to_datetime(horizon).tz_localize(None)
+                except (ValueError, TypeError):
+                    # Handle relative horizon strings
+                    # Custom handling for "m" (months) and "y" (years) first
+                    # because pd.to_timedelta("3m") means 3 minutes, not months.
+                    val_date = pd.to_datetime(market.valuation_date).tz_localize(None)
+                    
+                    if isinstance(horizon, str) and horizon[-1].lower() in ("m", "y"):
+                         amount = int(horizon[:-1])
+                         unit = horizon[-1].lower()
+                         if unit == "m":
+                             cutoff = val_date + pd.DateOffset(months=amount)
+                         elif unit == "y":
+                             cutoff = val_date + pd.DateOffset(years=amount)
+                         else:
+                             # Should not reach here due to if condition
+                             raise ValueError(f"Could not parse horizon string: {horizon}")
+                    else:
+                        # Fallback to pandas timedelta (supports "d", "w", etc.)
+                        try:
+                            delta = pd.to_timedelta(horizon)
+                            cutoff = val_date + delta
+                        except Exception:
+                             raise ValueError(f"Could not parse horizon: {horizon}")
+            else:
+                raise TypeError("horizon must be a string, date, or Timestamp")
+
+            # Filter chain
+            # Ensure expiry col is datetime
+            chain_input["expiry"] = pd.to_datetime(chain_input["expiry"]).dt.tz_localize(None)
+            chain_input = chain_input[chain_input["expiry"] <= cutoff]
+
+            if chain_input.empty:
+                raise CalculationError(f"No expiries found within horizon {horizon} (cutoff {cutoff})")
 
         self._model = fit_surface(
             chain=chain_input,
@@ -520,24 +578,27 @@ class VolSurface:
     def plot(
         self,
         *,
-        axis_mode: Literal["strike", "log_moneyness"] = "strike",
+        axis_mode: Literal["strike", "log_moneyness", "log_strike_over_forward"] = "log_strike_over_forward",
         figsize: tuple[float, float] = (10.0, 5.0),
         title: Optional[str] = None,
         xlim: Optional[tuple[float, float]] = None,
         ylim: Optional[tuple[float, float]] = None,
         label_format: Literal["date", "days"] = "date",
+        y_metric: Literal["iv", "total_variance"] = "total_variance",
         **kwargs,
     ) -> Any:
         """Plot overlayed IV smiles for all fitted expiries.
 
         Args:
-            axis_mode: X-axis mode, either ``"strike"`` or ``"log_moneyness"``.
+            axis_mode: X-axis mode, either ``"strike"``, ``"log_moneyness"``, or ``"log_strike_over_forward"``.
             figsize: Figure size as (width, height) in inches.
             title: Optional plot title.
             xlim: Optional x-axis limits as (min, max).
             ylim: Optional y-axis limits as (min, max).
+            ylim: Optional y-axis limits as (min, max).
             label_format: How to label each curve - ``"date"`` (e.g., "Jan 17, 2025")
                 or ``"days"`` (e.g., "30d").
+            y_metric: Metric to plot on y-axis ("iv" or "total_variance"). Defaults to "total_variance".
             **kwargs: Additional arguments forwarded to matplotlib plot calls.
 
         Returns:
@@ -574,7 +635,7 @@ class VolSurface:
 
             # Compute x-axis values
             strikes = smile_df["strike"].to_numpy(dtype=float)
-            if axis_mode == "log_moneyness":
+            if axis_mode in ("log_moneyness", "log_strike_over_forward"):
                 forward = vol_curve._metadata.get("forward_price")
                 if forward is None or forward <= 0:
                     raise ValueError(
@@ -595,23 +656,39 @@ class VolSurface:
             else:
                 label = expiry_timestamp.strftime("%b %d, %Y")
 
+            iv_values = smile_df["fitted_iv"].to_numpy(dtype=float)
+            y_values = iv_values
+
+            if y_metric == "total_variance":
+                resolved_market = vol_curve._resolved_market
+                if resolved_market is None:
+                    # Fallback if resolved_market missing, though unlikely after fit
+                    warnings.warn(f"Missing market data for expiry {expiry_timestamp}, cannot compute total variance.", UserWarning)
+                    y_values = np.full_like(iv_values, np.nan)
+                else:
+                    t_to_expiry = resolved_market.days_to_expiry / 365.0
+                    y_values = np.square(iv_values) * t_to_expiry
+
             ax.plot(
                 x_values,
-                smile_df["fitted_iv"].to_numpy(dtype=float),
+                y_values,
                 label=label,
                 linewidth=1.5,
                 **kwargs,
             )
 
         # Axis labels
-        if axis_mode == "log_moneyness":
+        if axis_mode in ("log_moneyness", "log_strike_over_forward"):
             ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
         else:
             ax.set_xlabel("Strike", fontsize=11)
-        ax.set_ylabel("Implied Volatility", fontsize=11)
 
-        # Format y-axis as percentage
-        ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+        if y_metric == "total_variance":
+             ax.set_ylabel("Total Variance", fontsize=11)
+        else:
+            ax.set_ylabel("Implied Volatility", fontsize=11)
+            # Format y-axis as percentage only for IV
+            ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
 
         # Apply limits
         if xlim is not None:
@@ -632,6 +709,9 @@ class VolSurface:
 
         # Title
         resolved_title = title or "Implied Volatility Surface"
+        if y_metric == "total_variance":
+            resolved_title = resolved_title.replace("Implied Volatility", "Total Variance")
+            
         plt.subplots_adjust(top=0.88)
         fig.suptitle(
             resolved_title,
