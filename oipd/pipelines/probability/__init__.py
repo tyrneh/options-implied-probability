@@ -1,6 +1,6 @@
 """Risk-neutral distribution estimation pipeline."""
 
-from oipd.pipelines.distribution.rnd_curve import (
+from oipd.pipelines.probability.rnd_curve import (
     derive_distribution_internal,
     derive_distribution_from_curve,
 )

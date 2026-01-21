@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+import warnings
 import pandas as pd
 
 from oipd.core.errors import CalculationError
@@ -68,6 +69,8 @@ def fit_independent_slices(
     resolved_markets: dict[pd.Timestamp, Any] = {}
     slice_chains: dict[pd.Timestamp, pd.DataFrame] = {}
 
+    expiries_with_mid_fills: list[str] = []
+
     for expiry_timestamp in unique_expiries:
         expiry_date = expiry_timestamp.date()
         slice_df = chain_input[chain_input["expiry"] == expiry_timestamp].copy()
@@ -90,9 +93,14 @@ def fit_independent_slices(
             price_method=price_method,
             max_staleness_days=max_staleness_days,
             solver=solver,
+
             method=method,
             method_options=method_options,
+            suppress_price_warning=True,
         )
+
+        if metadata.get("mid_price_filled"):
+            expiries_with_mid_fills.append(expiry_date.strftime("%Y-%m-%d"))
 
         slices[expiry_timestamp] = {
             "curve": vol_curve,
@@ -100,5 +108,20 @@ def fit_independent_slices(
         }
         resolved_markets[expiry_timestamp] = resolved
         slice_chains[expiry_timestamp] = slice_df
+
+    if expiries_with_mid_fills:
+        count = len(expiries_with_mid_fills)
+        # Show first 3 and last 1 if too many
+        if count > 4:
+            details = (
+                f"{', '.join(expiries_with_mid_fills[:3])} ... {expiries_with_mid_fills[-1]}"
+            )
+        else:
+            details = ", ".join(expiries_with_mid_fills)
+
+        warnings.warn(
+            f"Filled missing mid prices with last_price for {count} expiries: [{details}]",
+            UserWarning,
+        )
 
     return DiscreteSurface(slices, resolved_markets, slice_chains)

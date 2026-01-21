@@ -80,8 +80,11 @@ def filter_stale_options(
 
 
 def select_price_column(
-    options_data: pd.DataFrame, price_method: Literal["last", "mid"]
-) -> pd.DataFrame:
+    options_data: pd.DataFrame, 
+    price_method: Literal["last", "mid"],
+    *,
+    emit_warning: bool = True,
+) -> tuple[pd.DataFrame, bool]:
     """Select the appropriate option price column based on user preference.
 
     Args:
@@ -92,8 +95,10 @@ def select_price_column(
             the last traded price.
 
     Returns:
-        DataFrame with a ``price`` column populated according to the requested
-        pricing convention and filtered for positive prices.
+        tuple[DataFrame, bool]: A tuple containing:
+            - DataFrame with a ``price`` column populated according to the requested
+              pricing convention and filtered for positive prices.
+            - Boolean flag indicating if missing mid prices were filled with last_price.
 
     Raises:
         CalculationError: When the requested pricing convention cannot be
@@ -103,6 +108,7 @@ def select_price_column(
     from oipd.core.errors import CalculationError
 
     data = options_data.copy()
+    was_filled = False
 
     if price_method == "mid":
         if "mid" in data.columns:
@@ -140,13 +146,15 @@ def select_price_column(
         if missing_mask.any():
             data.loc[missing_mask, "price"] = data.loc[missing_mask, "last_price"]
             if missing_mask.any():
-                warnings.warn(
-                    "Filled missing mid prices with last_price due to unavailable bid/ask",
-                    UserWarning,
-                )
+                was_filled = True
+                if emit_warning:
+                    warnings.warn(
+                        "Filled missing mid prices with last_price due to unavailable bid/ask",
+                        UserWarning,
+                    )
 
     data = data[data["price"] > 0].copy()
-    return data
+    return data, was_filled
 
 
 __all__ = [

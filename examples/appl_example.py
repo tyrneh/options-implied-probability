@@ -3,8 +3,6 @@ from oipd import (
     VolSurface,
     MarketInputs,
     ModelParams,
-    rebuild_slice_from_svi,
-    rebuild_surface_from_ssvi,
 )
 
 import matplotlib.pyplot as plt
@@ -51,6 +49,7 @@ appl_vol_curve._metadata
 
 # plot vol smile
 appl_vol_curve.plot(include_observed=True, xlim=(200, 300), ylim=(0, 1))
+plt.show()
 
 # get fitted vol as dataframe
 fitted_vol_df = appl_vol_curve.iv_smile()
@@ -62,10 +61,10 @@ svi_params = appl_vol_curve.params
 print(svi_params)
 
 
-# generate RND from vol smile
-rnd_appl = appl_vol_curve.implied_distribution()
+# generate ProbCurve from vol smile
+prob_appl = appl_vol_curve.implied_distribution()
 
-rnd_appl.plot(kind="both")
+prob_appl.plot(kind="both")
 
 
 # --- Example 2 - AAPL surface (multiple expiries) --- #
@@ -150,14 +149,63 @@ try:
     # plt.show() # Uncomment to see plot
     print("VolCurve.plot() successful")
 
-    # 2. Distribution Plot
-    dist = vol_curve.implied_distribution()
-    fig_pdf = dist.plot(kind="pdf", title="Implied PDF (100 days)")
+    # 2. ProbCurve Plot
+    prob = vol_curve.implied_distribution()
+    fig_pdf = prob.plot(kind="pdf", title="Implied PDF (100 days)")
     # plt.show() # Uncomment to see plot
-    print("Distribution.plot() successful")
+    print("ProbCurve.plot() successful")
 
 except ImportError:
     print("Matplotlib not installed, skipping plotting tests")
 except Exception as e:
     print(f"Plotting failed: {e}")
     raise
+
+
+
+
+# --- Example 3 - NVDA on a single expiry (slice) --- #
+
+
+# 3 INPUTS:
+# 1. market parameters
+# 2. model  [optional]
+# 3. column mapping
+
+market = MarketInputs(
+    # valuation_date=date(2025, 10, 6),  # date pulled
+    expiry_date=date(2025, 12, 16),
+    risk_free_rate=0.04,
+    # underlying_price=256.69,  # closing price on 2025-10-06
+)
+
+column_mapping = {
+    "strike": "strike",
+    "last_price": "last_price",
+    "type": "option_type",
+    "bid": "bid",
+    "ask": "ask",
+}
+# initialize vol smile and fit
+nvda_vol_curve = VolCurve()
+nvda_vol_curve.fit(df_appl_slice, market, column_mapping=column_mapping)
+
+appl_vol_curve._metadata
+
+# plot vol smile
+appl_vol_curve.plot(include_observed=True, xlim=(200, 300), ylim=(0, 1))
+
+# get fitted vol as dataframe
+fitted_vol_df = appl_vol_curve.iv_smile()
+fitted_vol_df.head()
+
+
+# return SVI parameters
+svi_params = appl_vol_curve.params
+print(svi_params)
+
+
+# generate ProbCurve from vol smile
+prob_appl = appl_vol_curve.implied_distribution()
+
+prob_appl.plot(kind="both")

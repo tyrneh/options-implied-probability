@@ -736,7 +736,7 @@ def _estimate(
     )
 
     # Pick which observed price column we will treat as the option premium
-    options_with_selected_price = select_price_column(
+    options_with_selected_price, _ = select_price_column(
         staleness_filtered_options, model.price_method
     )
     if options_with_selected_price.empty:

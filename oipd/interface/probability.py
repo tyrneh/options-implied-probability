@@ -9,17 +9,14 @@ import pandas as pd
 
 from oipd.core.errors import CalculationError
 
-# Import locally inside methods to avoid circular dependency if needed,
-# but VolCurve is needed for DistributionSurface.fit.
-# However, VolCurve imports Distribution, so we have a circular import.
-# We should import VolCurve inside DistributionSurface.fit.
+
 from oipd.market_inputs import (
     ResolvedMarket,
 )
 
 
-class Distribution:
-    """Single-expiry risk-neutral distribution wrapper.
+class ProbCurve:
+    """Single-expiry risk-neutral probability curve wrapper.
 
     Computes PDF/CDF from an option chain using the stateless probability pipeline
     (golden-master aligned) and exposes convenience probability queries.
@@ -33,7 +30,7 @@ class Distribution:
         market: ResolvedMarket,
         metadata: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Initialize a Distribution result container.
+        """Initialize a ProbCurve result container.
 
         Args:
             prices: Price grid.
@@ -180,17 +177,17 @@ class Distribution:
         )
 
 
-class DistributionSurface:
-    """Multi-expiry risk-neutral distribution surface wrapper."""
+class ProbSurface:
+    """Multi-expiry risk-neutral probability surface wrapper."""
 
     def __init__(
         self,
-        distributions: Mapping[pd.Timestamp, Distribution],
+        distributions: Mapping[pd.Timestamp, ProbCurve],
     ) -> None:
-        """Initialize a DistributionSurface result container.
+        """Initialize a ProbSurface result container.
 
         Args:
-            distributions: Dictionary mapping expiry timestamps to Distribution objects.
+            distributions: Dictionary mapping expiry timestamps to ProbCurve objects.
         """
         self._distributions = dict(distributions)
         # We can infer resolved markets from the distributions themselves
@@ -198,8 +195,8 @@ class DistributionSurface:
             ts: dist.resolved_market for ts, dist in self._distributions.items()
         }
 
-    def slice(self, expiry: Any) -> Distribution:
-        """Return a Distribution for a specific expiry."""
+    def slice(self, expiry: Any) -> ProbCurve:
+        """Return a ProbCurve (probability distribution function) for a specific expiry."""
 
         if not self._distributions:
             raise ValueError("Call fit before slicing the distribution surface")
@@ -207,15 +204,15 @@ class DistributionSurface:
         expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
         if expiry_timestamp not in self._distributions:
             raise ValueError(
-                f"Expiry {expiry} not found in fitted distribution surface"
+                f"Expiry {expiry} not found in fitted probability surface"
             )
         return self._distributions[expiry_timestamp]
 
     @property
     def expiries(self) -> tuple[pd.Timestamp, ...]:
-        """Return fitted expiries available on the distribution surface."""
+        """Return fitted expiries available on the probability surface."""
 
         return tuple(self._distributions.keys())
 
 
-__all__ = ["Distribution", "DistributionSurface"]
+__all__ = ["ProbCurve", "ProbSurface"]

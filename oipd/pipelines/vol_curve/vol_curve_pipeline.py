@@ -32,6 +32,7 @@ def fit_vol_curve_internal(
     solver: Literal["brent", "newton"] = "brent",
     method: str = "svi",
     method_options: Optional[Mapping[str, Any] | SVICalibrationOptions] = None,
+    suppress_price_warning: bool = False,
 ) -> Tuple[Any, Dict[str, Any]]:
     """
     Fit a volatility curve to a single slice of options data.
@@ -45,9 +46,11 @@ def fit_vol_curve_internal(
         pricing_engine: 'black76' or 'bs'.
         price_method: Column to use for pricing ('mid', 'last', etc.).
         max_staleness_days: Filter out quotes older than this.
+        max_staleness_days: Filter out quotes older than this.
         solver: IV solver method.
         method: Volatility fitting method (e.g., 'svi').
         method_options: Options for the fitting method.
+        suppress_price_warning: If True, suppress warning when filling missing mid prices.
 
     Returns:
         Tuple containing:
@@ -101,7 +104,9 @@ def fit_vol_curve_internal(
     )
 
     # 5. Select price column (mid, last, bid, ask)
-    priced_options = select_price_column(filtered_options, price_method)
+    priced_options, mid_price_filled = select_price_column(
+        filtered_options, price_method, emit_warning=not suppress_price_warning
+    )
     if priced_options.empty:
         raise CalculationError("No valid options data after price selection")
 
@@ -201,6 +206,7 @@ def fit_vol_curve_internal(
         "observed_iv_bid": observed_bid_iv,
         "observed_iv_ask": observed_ask_iv,
         "observed_iv_last": observed_last_iv,
+        "mid_price_filled": mid_price_filled,
         **fit_metadata,
     }
 

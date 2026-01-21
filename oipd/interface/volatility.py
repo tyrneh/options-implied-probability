@@ -6,9 +6,10 @@ from typing import Any, Literal, Mapping, Optional
 
 import numpy as np
 import pandas as pd
+import warnings
 
 from oipd.core.errors import CalculationError
-from oipd.interface.probability import Distribution, DistributionSurface
+from oipd.interface.probability import ProbCurve, ProbSurface
 from oipd.market_inputs import (
     FillMode,
     MarketInputs,
@@ -17,7 +18,7 @@ from oipd.market_inputs import (
     resolve_market,
 )
 from oipd.pipelines.vol_curve import fit_vol_curve_internal, compute_fitted_smile
-from oipd.pipelines.distribution import derive_distribution_from_curve
+from oipd.pipelines.probability import derive_distribution_from_curve
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
 
@@ -115,7 +116,14 @@ class VolCurve:
             solver=self.solver,
             method=self.method,
             method_options=method_options or self.method_options,
+            suppress_price_warning=True,
         )
+
+        if metadata.get("mid_price_filled"):
+            warnings.warn(
+                "Filled missing mid prices with last_price due to unavailable bid/ask",
+                UserWarning,
+            )
 
         if vol_curve is None:
             raise CalculationError("Volatility calibration returned no curve")
@@ -306,11 +314,11 @@ class VolCurve:
             raise ValueError("Call fit before accessing the resolved market")
         return self._resolved_market
 
-    def implied_distribution(self) -> Distribution:
+    def implied_distribution(self) -> ProbCurve:
         """Return the risk-neutral distribution implied by the fitted smile.
 
         Returns:
-            Distribution: Fitted distribution object.
+            ProbCurve: Fitted distribution object.
 
         Raises:
             ValueError: If ``fit`` has not been called.
@@ -332,7 +340,7 @@ class VolCurve:
         )
 
         # Return Result Container
-        return Distribution(
+        return ProbCurve(
             prices=prices,
             pdf=pdf,
             cdf=cdf,
@@ -481,11 +489,11 @@ class VolSurface:
             return ()
         return self._model.expiries
 
-    def implied_distribution(self) -> DistributionSurface:
+    def implied_distribution(self) -> ProbSurface:
         """Return the risk-neutral distribution surface for all fitted expiries.
 
         Returns:
-            DistributionSurface: Surface with per-expiry distributions.
+            ProbSurface: Surface with per-expiry distributions.
 
         Raises:
             ValueError: If ``fit`` has not been called.
@@ -507,7 +515,7 @@ class VolSurface:
             vol_curve = self.slice(expiry_timestamp)
             distributions[expiry_timestamp] = vol_curve.implied_distribution()
 
-        return DistributionSurface(distributions)
+        return ProbSurface(distributions)
 
     def plot(
         self,
