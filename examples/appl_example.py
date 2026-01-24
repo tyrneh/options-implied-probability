@@ -49,7 +49,7 @@ appl_vol_curve._metadata
 
 # plot vol smile
 appl_vol_curve.plot(include_observed=True) #, xlim=(200, 300), ylim=(0, 1))
-plt.show()
+# plt.show()
 
 # get fitted vol as dataframe
 fitted_vol_df = appl_vol_curve.iv_smile()
@@ -96,7 +96,7 @@ appl_surface.fit(df_appl, market, column_mapping=column_mapping, horizon="3m")
 # plot IV surface as grid of maturities
 
 # Plot the implied volatility surface (2D overlay)
-# Default y_metric="total_variance", axis_mode="log_strike_over_forward"
+# Default y_axis="total_variance", x_axis="log_moneyness"
 appl_surface.plot(xlim=(-1, 1), ylim=(0, 0.1))
 
 

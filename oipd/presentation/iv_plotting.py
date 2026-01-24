@@ -35,8 +35,8 @@ class HasLogMoneyness(Protocol):
 
 
 @dataclass(frozen=True)
-class ReferenceAnnotation:
-    """Configuration describing how to annotate the smile reference price."""
+class ForwardPriceAnnotation:
+    """Configuration describing how to annotate the smile forward/reference price."""
 
     value: float
     label: str
@@ -91,9 +91,11 @@ def plot_iv_smile(
     expiry_date: Optional[date] = None,
     style: Literal["publication", "default"] = "publication",
     source: Optional[str] = None,
-    show_reference: bool = False,
-    reference: ReferenceAnnotation | None = None,
-    axis_mode: Literal["log_moneyness", "strike", "log_strike_over_forward"] = "log_moneyness",
+    show_forward: bool = False,
+    forward_price: ForwardPriceAnnotation | None = None,
+    x_axis: Literal["log_moneyness", "strike"] = "log_moneyness",
+    y_axis: Literal["iv", "total_variance"] = "iv",
+    t_to_expiry: Optional[float] = None,
     line_kwargs: Optional[Dict[str, Any]] = None,
     scatter_kwargs: Optional[Dict[str, Any]] = None,
     observed_style: Literal["range", "markers"] = "range",
@@ -104,8 +106,6 @@ def plot_iv_smile(
     show_legend: bool = True,
     title_fontsize: Optional[float] = None,
     tick_labelsize: Optional[float] = None,
-    y_metric: Literal["iv", "total_variance"] = "iv",
-    t_to_expiry: Optional[float] = None,
 ) -> "Figure":
     """Render a single implied-volatility smile.
 
@@ -122,10 +122,12 @@ def plot_iv_smile(
             ``title`` is not provided.
         style: Requested visual style, matching the estimator API.
         source: Optional attribution text used for publication styling.
-        show_reference: Whether to draw a vertical reference line at the
-            supplied reference price.
-        reference: Optional configuration describing the reference price.
-        axis_mode: Coordinate system for the x-axis.
+        show_forward: Whether to draw a vertical reference line at the
+            supplied forward price.
+        forward_price: Optional configuration describing the forward price.
+        x_axis: Coordinate system for the x-axis ("log_moneyness", "strike").
+        y_axis: Metric to plot on y-axis ("iv" or "total_variance").
+        t_to_expiry: Time to expiry in years (required if y_axis="total_variance").
         line_kwargs: Keyword overrides forwarded to ``ax.plot``.
         scatter_kwargs: Keyword overrides forwarded to observed quote markers.
         observed_style: Strategy for rendering observed quotes.
@@ -138,16 +140,15 @@ def plot_iv_smile(
         title_fontsize: Optional override for the subplot title font size when
             ``ax`` is supplied.
         tick_labelsize: Optional override for x/y tick label font size.
-        y_metric: Metric to plot on y-axis ("iv" or "total_variance").
-        t_to_expiry: Time to expiry in years (required if y_metric="total_variance").
 
     Returns:
         Matplotlib Figure populated with the smile visualisation.
 
     Raises:
-        ValueError: If the axis mode requires but lacks a positive reference.
+        ValueError: If the axis mode requires but lacks a positive forward price.
     """
     plt, ticker, style_axes = _resolve_plot_style(style)
+
 
     line_config = dict(line_kwargs or {})
     if "color" not in line_config:
@@ -157,28 +158,28 @@ def plot_iv_smile(
     if "label" not in line_config:
         line_config["label"] = "Fitted IV"
 
-    axis_choice = axis_mode.lower()
-    if axis_choice not in {"log_moneyness", "strike", "log_strike_over_forward"}:
-        raise ValueError("axis_mode must be 'log_moneyness', 'strike' or 'log_strike_over_forward'")
-    if axis_choice in ("log_moneyness", "log_strike_over_forward"):
-        if reference is None or reference.value <= 0:
-            raise ValueError("Positive reference price required for log-moneyness axis")
+    axis_choice = x_axis.lower()
+    if axis_choice not in {"log_moneyness", "strike"}:
+        raise ValueError("x_axis must be 'log_moneyness' or 'strike'")
+    if axis_choice == "log_moneyness":
+        if forward_price is None or forward_price.value <= 0:
+            raise ValueError("Positive forward price required for log-moneyness axis")
 
-    if y_metric == "total_variance":
+    if y_axis == "total_variance":
         if t_to_expiry is None or t_to_expiry <= 0:
             raise ValueError(
                 "Positive t_to_expiry is required when plotting total variance"
             )
 
     def _transform_y(iv_values: np.ndarray | pd.Series) -> np.ndarray:
-        if y_metric == "total_variance":
+        if y_axis == "total_variance":
             # w = sigma^2 * T
             return np.square(iv_values) * t_to_expiry
         return np.asarray(iv_values)
 
     def _to_axis(strike_values: np.ndarray) -> np.ndarray:
-        if axis_choice in ("log_moneyness", "log_strike_over_forward"):
-            return np.log(strike_values / reference.value)  # type: ignore[union-attr]
+        if axis_choice == "log_moneyness":
+            return np.log(strike_values / forward_price.value)  # type: ignore[union-attr]
         return strike_values
 
     created_fig = False
@@ -189,7 +190,6 @@ def plot_iv_smile(
     else:
         fig = target_ax.figure
 
-    strike_values = smile["strike"].to_numpy(dtype=float)
     strike_values = smile["strike"].to_numpy(dtype=float)
     target_ax.plot(_to_axis(strike_values), _transform_y(smile["fitted_iv"]), **line_config)
 
@@ -431,12 +431,12 @@ def plot_iv_smile(
                     )
 
     if show_axis_labels:
-        if axis_choice in ("log_moneyness", "log_strike_over_forward"):
+        if axis_choice == "log_moneyness":
             target_ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
         else:
             target_ax.set_xlabel("Strike", fontsize=11)
     
-        if y_metric == "total_variance":
+        if y_axis == "total_variance":
             target_ax.set_ylabel("Total Variance", fontsize=11)
         else:
             target_ax.set_ylabel("Implied Volatility", fontsize=11)
@@ -444,7 +444,7 @@ def plot_iv_smile(
         target_ax.set_xlabel("")
         target_ax.set_ylabel("")
     
-    if y_metric != "total_variance":
+    if y_axis != "total_variance":
         target_ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
 
     if style_axes is not None:
@@ -477,8 +477,8 @@ def plot_iv_smile(
             max_iv = 1.0
         target_ax.set_ylim(0.0, max_iv * 1.05)
 
-    if show_reference and reference is not None:
-        ref_axis_value = 0.0 if axis_choice == "log_moneyness" else reference.value
+    if show_forward and forward_price is not None:
+        ref_axis_value = 0.0 if axis_choice == "log_moneyness" else forward_price.value
         target_ax.axvline(
             x=ref_axis_value,
             color="#555555",
@@ -488,7 +488,7 @@ def plot_iv_smile(
         )
         y_min, _ = target_ax.get_ylim()
         target_ax.annotate(
-            reference.label,
+            forward_price.label,
             xy=(ref_axis_value, y_min),
             xytext=(5, 15),
             textcoords="offset points",
@@ -514,7 +514,7 @@ def plot_iv_smile(
     else:
         resolved_title = "Implied Volatility Smile"
     
-    if y_metric == "total_variance":
+    if y_axis == "total_variance":
         resolved_title = resolved_title.replace("Implied Volatility", "Total Variance")
         
     if not created_fig:
@@ -557,7 +557,7 @@ def plot_iv_surface(
     infer_forward: Callable[[float], float],
     maturities: Optional[Sequence[float]] = None,
     num_points: int = 200,
-    axis_mode: Literal["log_moneyness", "strike", "log_strike_over_forward"] = "log_moneyness",
+    x_axis: Literal["log_moneyness", "strike"] = "log_moneyness",
     figsize: tuple[float, float] = (10.0, 5.0),
     title: Optional[str] = None,
     style: Literal["publication", "default"] = "publication",
@@ -579,7 +579,7 @@ def plot_iv_surface(
         infer_forward: Callable returning the forward price for a maturity.
         maturities: Optional subset of maturities to display.
         num_points: Number of strike or log-moneyness samples per slice.
-        axis_mode: Coordinate system for the x-axis.
+        x_axis: Coordinate system for the x-axis ("log_moneyness", "strike").
         figsize: Matplotlib figure dimensions in inches.
         title: Custom chart title.
         style: Requested visual style, matching other plotting APIs.
@@ -600,7 +600,7 @@ def plot_iv_surface(
 
     Raises:
         CalculationError: If observations are empty or num_points is too small.
-        ValueError: If axis_mode or layout are invalid.
+        ValueError: If layout is invalid.
     """
     from oipd.core.errors import CalculationError
 
@@ -610,9 +610,9 @@ def plot_iv_surface(
     if num_points < 5:
         raise ValueError("num_points must be at least 5 for plotting")
 
-    axis_choice = axis_mode.lower()
-    if axis_choice not in {"log_moneyness", "strike", "log_strike_over_forward"}:
-        raise ValueError("axis_mode must be 'log_moneyness', 'strike', or 'log_strike_over_forward'")
+    axis_choice = x_axis.lower()
+    if axis_choice not in {"log_moneyness", "strike"}:
+        raise ValueError("x_axis must be 'log_moneyness' or 'strike'")
 
     plt, ticker, style_axes = _resolve_plot_style(style)
 
@@ -658,7 +658,7 @@ def plot_iv_surface(
         fig, ax = plt.subplots(figsize=figsize)
 
         def _axis_values(k: np.ndarray, forward: float) -> np.ndarray:
-            if axis_choice in ("log_moneyness", "log_strike_over_forward"):
+            if axis_choice == "log_moneyness":
                 return k
             return forward * np.exp(k)
 
@@ -670,7 +670,7 @@ def plot_iv_surface(
             label = f"{label_days}d"
             ax.plot(_axis_values(k_grid, forward), iv_curve, label=label)
 
-        ax.set_xlabel("Log Moneyness" if axis_choice in ("log_moneyness", "log_strike_over_forward") else "Strike")
+        ax.set_xlabel("Log Moneyness" if axis_choice == "log_moneyness" else "Strike")
         ax.set_ylabel("Implied Volatility")
         ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
 
@@ -750,7 +750,7 @@ def plot_iv_surface(
             if valuation_text is not None
             else f"Forward ${forward:,.2f}"
         )
-        reference = ReferenceAnnotation(value=forward, label=reference_label)
+        forward_price = ForwardPriceAnnotation(value=forward, label=reference_label)
 
         days_label = f"{int(round(maturity * 365))}d"
         if expiry_text is not None:
@@ -801,9 +801,18 @@ def plot_iv_surface(
             title=slice_title,
             style=style,
             source=None,
-            show_reference=False,
-            reference=reference,
-            axis_mode=axis_mode,
+            show_forward=True,
+            forward_price=forward_price,
+            x_axis=x_axis,
+            y_axis="total_variance",  # Surface usually plots total variance, but let's respect the outer call or default? The outer loop calculates total_var logic. Actually the outer function logic computes iv_curve from total_var.
+            # Wait, plot_iv_surface usually plots IV slices.
+            # The outer function calculates `iv_curve`.
+            # Let's check y_axis logic.
+            # In the loop: iv_curve = np.sqrt(total_var / ...). So we are plotting IV.
+            # But we might want to plot total variance?
+            # Creating a DataFrame with "fitted_iv".
+            # plot_iv_smile will transform it back to total_variance if y_axis="total_variance".
+            t_to_expiry=maturity,
             line_kwargs=None,
             scatter_kwargs=scatter_kwargs,
             observed_style=observed_style,

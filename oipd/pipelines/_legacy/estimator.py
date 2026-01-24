@@ -37,7 +37,7 @@ from oipd.market_inputs import (
     resolve_market,
     FillMode,
 )
-from oipd.presentation.iv_plotting import ReferenceAnnotation, plot_iv_smile
+from oipd.presentation.iv_plotting import ForwardPriceAnnotation, plot_iv_smile
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +526,7 @@ class RNDResult:
             label_prefix = (
                 "Parity forward on" if forward_price is not None else "Price on"
             )
-            reference_annotation = ReferenceAnnotation(
+            reference_annotation = ForwardPriceAnnotation(
                 value=float(reference_price),
                 label=f"{label_prefix} {valuation_date}\n${reference_price:,.2f}",
             )
@@ -551,9 +551,9 @@ class RNDResult:
             title=resolved_title,
             style="publication",
             source=None,
-            show_reference=False,
-            reference=reference_annotation,
-            axis_mode=x_axis,
+            show_forward=False,
+            forward_price=reference_annotation,
+            x_axis=x_axis,
             observed_style=observations,
             xlim=xlim,
             ylim=ylim,

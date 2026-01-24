@@ -23,8 +23,9 @@ from oipd.pipelines.vol_curve import fit_vol_curve_internal, compute_fitted_smil
 from oipd.pipelines.probability import derive_distribution_from_curve
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
+from oipd.pipelines.vol_surface.interpolator import build_surface_interpolator
 
-from oipd.presentation.iv_plotting import plot_iv_smile, ReferenceAnnotation
+from oipd.presentation.iv_plotting import plot_iv_smile, ForwardPriceAnnotation
 
 
 class VolCurve:
@@ -214,30 +215,31 @@ class VolCurve:
     def plot(
         self,
         *,
-        axis_mode: Literal["strike", "log_moneyness", "log_strike_over_forward"] = "strike",
+        x_axis: Literal["strike", "log_moneyness"] = "strike",
+        y_axis: Literal["iv", "total_variance"] = "iv",
         include_observed: bool = True,
         figsize: tuple[float, float] = (10.0, 5.0),
         title: Optional[str] = None,
         xlim: Optional[tuple[float, float]] = None,
         ylim: Optional[tuple[float, float]] = None,
-        y_metric: Literal["iv", "total_variance"] = "iv",
         **kwargs,
     ) -> Any:
         """Plot the fitted implied volatility smile.
 
         Args:
             include_observed: Whether to include observed market data points.
-            axis_mode: X-axis mode, either ``"strike"``, ``"log_moneyness"``, or ``"log_strike_over_forward"``.
+            x_axis: X-axis mode ("strike", "log_moneyness").
+            y_axis: Metric to plot on y-axis ("iv" or "total_variance").
             figsize: Figure size as (width, height) in inches.
             title: Optional plot title.
             xlim: Optional x-axis limits as (min, max).
             ylim: Optional y-axis limits as (min, max).
-            y_metric: Metric to plot on y-axis ("iv" or "total_variance").
             **kwargs: Additional arguments forwarded to ``oipd.presentation.iv_plotting.plot_iv_smile``.
 
         Returns:
             matplotlib.figure.Figure: The plot figure.
         """
+
         smile_df = self.iv_smile(include_observed=include_observed)
 
         # Map our column names to what plot_iv_smile expects
@@ -249,19 +251,17 @@ class VolCurve:
             }
         )
 
-        # Extract reference price (forward) for log-moneyness plotting
-        reference = None
+        # Extract forward price for log-moneyness plotting
+        forward_price_annotation = None
         forward_price = self._metadata.get("forward_price")
         if forward_price is not None:
-            reference = ReferenceAnnotation(
+            forward_price_annotation = ForwardPriceAnnotation(
                 value=float(forward_price), label=f"Forward: {float(forward_price):.2f}"
             )
 
-
-
-        # If no reference price is available, default to strike axis to avoid errors
-        if reference is None and axis_mode in ("log_moneyness", "log_strike_over_forward"):
-            axis_mode = "strike"
+        if x_axis == "log_moneyness":
+            if forward_price is None or forward_price <= 0:
+                raise ValueError("Positive forward price required for log-moneyness axis, but not found in fit metadata.")
 
         # Extract expiry date for default title generation
         expiry_date = None
@@ -275,15 +275,16 @@ class VolCurve:
 
         return plot_iv_smile(
             plot_df,
-            reference=reference,
+            forward_price=forward_price_annotation,
+            show_forward=False,  # Can add an argument to VolCurve.plot if we want to expose this
             include_observed=include_observed,
-            axis_mode=axis_mode,
+            x_axis=x_axis,
+            y_axis=y_axis,
             figsize=figsize,
             title=title,
             expiry_date=expiry_date,
             xlim=xlim,
             ylim=ylim,
-            y_metric=y_metric,
             t_to_expiry=t_to_expiry,
             **kwargs,
         )
@@ -422,7 +423,6 @@ class VolSurface:
             vendor: Optional vendor snapshot to fill missing market fields.
             fill_mode: How to combine user/vendor inputs (``"strict"`` by default).
             column_mapping: Optional mapping from user column names to OIPD standard names.
-            column_mapping: Optional mapping from user column names to OIPD standard names.
             method_options: Per-fit overrides for the calibration method.
             horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date). 
                      Expiries after this horizon will be ignored.
@@ -505,8 +505,6 @@ class VolSurface:
 
         # Build interpolator if requested
         if interpolation == "linear":
-            from oipd.pipelines.vol_surface.interpolator import build_surface_interpolator
-
             # Extract slices and forwards from the fitted model
             slices = {}
             forwards = {}
@@ -516,7 +514,12 @@ class VolSurface:
                 days = slice_data["resolved_market"].days_to_expiry
                 t = days / 365.0
                 slices[t] = slice_data["curve"]
-                forwards[t] = slice_data["metadata"].get("forward_price", 0.0)
+                forward = slice_data["metadata"].get("forward_price")
+                if forward is None:
+                    raise ValueError(
+                        f"Forward price missing for expiry slice t={t:.4f}. Cannot build interpolator."
+                    )
+                forwards[t] = forward
 
             self._interpolator = build_surface_interpolator(
                 slices, forwards, check_arbitrage=check_arbitrage
@@ -573,10 +576,6 @@ class VolSurface:
             return ()
         return self._model.expiries
 
-    @property
-    def interpolator(self) -> Any:
-        """Return the surface interpolator if available."""
-        return self._interpolator
 
     def total_variance(self, K: float, t: float) -> float:
         """Return total variance at strike K and time t (years).
@@ -658,27 +657,26 @@ class VolSurface:
     def plot(
         self,
         *,
-        axis_mode: Literal["strike", "log_moneyness", "log_strike_over_forward"] = "log_strike_over_forward",
+        x_axis: Literal["strike", "log_moneyness"] = "log_moneyness",
+        y_axis: Literal["iv", "total_variance"] = "total_variance",
         figsize: tuple[float, float] = (10.0, 5.0),
         title: Optional[str] = None,
         xlim: Optional[tuple[float, float]] = None,
         ylim: Optional[tuple[float, float]] = None,
         label_format: Literal["date", "days"] = "date",
-        y_metric: Literal["iv", "total_variance"] = "total_variance",
         **kwargs,
     ) -> Any:
         """Plot overlayed IV smiles for all fitted expiries.
 
         Args:
-            axis_mode: X-axis mode, either ``"strike"``, ``"log_moneyness"``, or ``"log_strike_over_forward"``.
+            x_axis: X-axis mode ("strike", "log_moneyness").
+            y_axis: Metric to plot on y-axis ("iv" or "total_variance"). Defaults to "total_variance".
             figsize: Figure size as (width, height) in inches.
             title: Optional plot title.
             xlim: Optional x-axis limits as (min, max).
             ylim: Optional y-axis limits as (min, max).
-            ylim: Optional y-axis limits as (min, max).
             label_format: How to label each curve - ``"date"`` (e.g., "Jan 17, 2025")
                 or ``"days"`` (e.g., "30d").
-            y_metric: Metric to plot on y-axis ("iv" or "total_variance"). Defaults to "total_variance".
             **kwargs: Additional arguments forwarded to matplotlib plot calls.
 
         Returns:
@@ -715,7 +713,7 @@ class VolSurface:
 
             # Compute x-axis values
             strikes = smile_df["strike"].to_numpy(dtype=float)
-            if axis_mode in ("log_moneyness", "log_strike_over_forward"):
+            if x_axis == "log_moneyness":
                 forward = vol_curve._metadata.get("forward_price")
                 if forward is None or forward <= 0:
                     raise ValueError(
@@ -739,7 +737,7 @@ class VolSurface:
             iv_values = smile_df["fitted_iv"].to_numpy(dtype=float)
             y_values = iv_values
 
-            if y_metric == "total_variance":
+            if y_axis == "total_variance":
                 resolved_market = vol_curve._resolved_market
                 if resolved_market is None:
                     # Fallback if resolved_market missing, though unlikely after fit
@@ -758,12 +756,12 @@ class VolSurface:
             )
 
         # Axis labels
-        if axis_mode in ("log_moneyness", "log_strike_over_forward"):
+        if x_axis == "log_moneyness":
             ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
         else:
             ax.set_xlabel("Strike", fontsize=11)
 
-        if y_metric == "total_variance":
+        if y_axis == "total_variance":
              ax.set_ylabel("Total Variance", fontsize=11)
         else:
             ax.set_ylabel("Implied Volatility", fontsize=11)
@@ -789,7 +787,7 @@ class VolSurface:
 
         # Title
         resolved_title = title or "Implied Volatility Surface"
-        if y_metric == "total_variance":
+        if y_axis == "total_variance":
             resolved_title = resolved_title.replace("Implied Volatility", "Total Variance")
             
         plt.subplots_adjust(top=0.88)
