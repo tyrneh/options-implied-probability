@@ -399,6 +399,7 @@ class VolSurface:
         self.max_staleness_days = max_staleness_days
 
         self._model: FittedSurface | None = None
+        self._interpolator: Any = None  # TotalVarianceInterpolator if enabled
 
     def fit(
         self,
@@ -410,6 +411,8 @@ class VolSurface:
         column_mapping: Optional[Mapping[str, str]] = None,
         method_options: Optional[Mapping[str, Any]] = None,
         horizon: Optional[Union[str, date, pd.Timestamp]] = None,
+        interpolation: Literal["none", "linear"] = "none",
+        check_arbitrage: bool = False,
     ) -> "VolSurface":
         """Fit all expiries in the chain and store slice curves.
 
@@ -423,6 +426,10 @@ class VolSurface:
             method_options: Per-fit overrides for the calibration method.
             horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date). 
                      Expiries after this horizon will be ignored.
+            interpolation: If ``"linear"``, build a total variance interpolator for
+                           continuous time queries. Default ``"none"`` for discrete slices only.
+            check_arbitrage: If True and interpolation is enabled, clamps variance to
+                             prevent negative forward variance (calendar arbitrage).
 
         Returns:
             VolSurface: The fitted surface instance.
@@ -496,6 +503,25 @@ class VolSurface:
             method=self.method,
         )
 
+        # Build interpolator if requested
+        if interpolation == "linear":
+            from oipd.pipelines.vol_surface.interpolator import build_surface_interpolator
+
+            # Extract slices and forwards from the fitted model
+            slices = {}
+            forwards = {}
+            for expiry_ts in self._model.expiries:
+                slice_data = self._model.get_slice(expiry_ts)
+                # Time in years
+                days = slice_data["resolved_market"].days_to_expiry
+                t = days / 365.0
+                slices[t] = slice_data["curve"]
+                forwards[t] = slice_data["metadata"].get("forward_price", 0.0)
+
+            self._interpolator = build_surface_interpolator(
+                slices, forwards, check_arbitrage=check_arbitrage
+            )
+
         return self
 
     def slice(self, expiry: Any) -> VolCurve:
@@ -546,6 +572,60 @@ class VolSurface:
         if self._model is None:
             return ()
         return self._model.expiries
+
+    @property
+    def interpolator(self) -> Any:
+        """Return the surface interpolator if available."""
+        return self._interpolator
+
+    def total_variance(self, K: float, t: float) -> float:
+        """Return total variance at strike K and time t (years).
+
+        Requires interpolation="linear" during fit.
+
+        Args:
+            K: Strike price.
+            t: Time to maturity in years.
+
+        Returns:
+            Total variance w(K, t).
+
+        Raises:
+            ValueError: If interpolator is not available.
+        """
+        if self._interpolator is None:
+            raise ValueError(
+                "Interpolator not available. Fit with interpolation='linear'."
+            )
+        return self._interpolator(K, t)
+
+    def implied_vol(self, K: float, t: float) -> float:
+        """Return implied volatility at strike K and time t (years).
+
+        Requires interpolation="linear" during fit.
+
+        Args:
+            K: Strike price.
+            t: Time to maturity in years.
+
+        Returns:
+            Implied volatility sigma(K, t).
+
+        Raises:
+            ValueError: If interpolator is not available.
+        """
+        if self._interpolator is None:
+            raise ValueError(
+                "Interpolator not available. Fit with interpolation='linear'."
+            )
+        return self._interpolator.implied_vol(K, t)
+
+    def __call__(self, K: float, t: float) -> float:
+        """Return implied volatility at strike K and time t (years).
+
+        Alias for implied_vol. Requires interpolation="linear" during fit.
+        """
+        return self.implied_vol(K, t)
 
     def implied_distribution(self) -> ProbSurface:
         """Return the risk-neutral distribution surface for all fitted expiries.
