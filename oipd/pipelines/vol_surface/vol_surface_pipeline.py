@@ -6,7 +6,7 @@ from typing import Any, Mapping, Optional
 
 import pandas as pd
 
-from oipd.market_inputs import FillMode, MarketInputs, VendorSnapshot
+from oipd.market_inputs import MarketInputs
 from oipd.pipelines.vol_surface.svi_slices import fit_independent_slices
 from oipd.pipelines.vol_surface.models import FittedSurface
 
@@ -15,8 +15,6 @@ def fit_surface(
     chain: pd.DataFrame,
     market: MarketInputs,
     *,
-    vendor: Optional[VendorSnapshot] = None,
-    fill_mode: FillMode = "strict",
     column_mapping: Optional[Mapping[str, str]] = None,
     method_options: Optional[Mapping[str, Any]] = None,
     pricing_engine: str = "black76",
@@ -30,8 +28,6 @@ def fit_surface(
     Args:
         chain: Option chain DataFrame.
         market: Market inputs.
-        vendor: Vendor snapshot.
-        fill_mode: Fill mode.
         column_mapping: Column mapping.
         method_options: Options for the fitting method.
         pricing_engine: Pricing engine ("black76" or "bs").
@@ -51,8 +47,6 @@ def fit_surface(
         return fit_independent_slices(
             chain=chain,
             market=market,
-            vendor=vendor,
-            fill_mode=fill_mode,
             column_mapping=column_mapping,
             method_options=method_options,
             pricing_engine=pricing_engine,
@@ -77,8 +71,6 @@ def fit_surface(
     return fit_independent_slices(
         chain=chain,
         market=market,
-        vendor=vendor,
-        fill_mode=fill_mode,
         column_mapping=column_mapping,
         method_options=method_options,
         pricing_engine=pricing_engine,

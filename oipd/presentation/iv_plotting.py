@@ -22,6 +22,8 @@ from typing import (
 import numpy as np
 import pandas as pd
 
+from oipd.core.errors import CalculationError
+
 if TYPE_CHECKING:  # pragma: no cover
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
@@ -602,7 +604,7 @@ def plot_iv_surface(
         CalculationError: If observations are empty or num_points is too small.
         ValueError: If layout is invalid.
     """
-    from oipd.core.errors import CalculationError
+
 
     if not observations:
         raise CalculationError("Surface calibration has no observations to plot")
@@ -804,14 +806,7 @@ def plot_iv_surface(
             show_forward=True,
             forward_price=forward_price,
             x_axis=x_axis,
-            y_axis="total_variance",  # Surface usually plots total variance, but let's respect the outer call or default? The outer loop calculates total_var logic. Actually the outer function logic computes iv_curve from total_var.
-            # Wait, plot_iv_surface usually plots IV slices.
-            # The outer function calculates `iv_curve`.
-            # Let's check y_axis logic.
-            # In the loop: iv_curve = np.sqrt(total_var / ...). So we are plotting IV.
-            # But we might want to plot total variance?
-            # Creating a DataFrame with "fitted_iv".
-            # plot_iv_smile will transform it back to total_variance if y_axis="total_variance".
+            y_axis="total_variance",
             t_to_expiry=maturity,
             line_kwargs=None,
             scatter_kwargs=scatter_kwargs,

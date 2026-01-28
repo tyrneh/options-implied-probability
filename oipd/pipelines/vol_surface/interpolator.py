@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
+import numpy as np
+
 from oipd.core.vol_surface_fitting.forward_interpolator import ForwardInterpolator
 from oipd.core.vol_surface_fitting.variance_interpolator import TotalVarianceInterpolator
+from oipd.core.utils import calculate_days_to_expiry
+from oipd.pipelines.vol_surface.models import FittedSurface
 
 
 def build_surface_interpolator(
@@ -32,12 +36,6 @@ def build_surface_interpolator(
     forward_interp = ForwardInterpolator(forward_pillars)
 
     # Build variance pillars
-    # Each VolCurve is callable: curve(K) -> sigma
-    # We need callable: k -> w = sigma(k)^2 * t
-    # But VolCurve takes K, not k. We need to convert.
-    # Actually, the TotalVarianceInterpolator expects curve(k) -> w.
-    # We need to wrap the VolCurve to accept k and return w.
-
     def make_variance_curve(t: float, vol_curve: Any):
         """Create a callable k -> w from a VolCurve."""
         F_t = forwards.get(t)
@@ -47,7 +45,7 @@ def build_surface_interpolator(
 
         def variance_curve(k: float) -> float:
             # k = ln(K/F), so K = F * exp(k)
-            K = F_t * float(__import__("numpy").exp(k))
+            K = F_t * float(np.exp(k))
             sigma = vol_curve(K)
             return sigma**2 * t
 
@@ -63,4 +61,46 @@ def build_surface_interpolator(
         pillars=variance_pillars,
         forward_interp=forward_interp,
         check_arbitrage=check_arbitrage,
+    )
+
+
+def build_interpolator_from_fitted_surface(
+    fitted_surface: FittedSurface,
+    check_arbitrage: bool = False,
+) -> TotalVarianceInterpolator:
+    """Build interpolate directly from a fitted surface model.
+
+    Args:
+        fitted_surface: The fitted surface results containing slices.
+        check_arbitrage: Whether to enforce no-arbitrage checks.
+
+    Returns:
+        TotalVarianceInterpolator.
+    """
+    # Extract slices and forwards from the fitted model
+    slices = {}
+    forwards = {}
+    for expiry_ts in fitted_surface.expiries:
+        slice_data = fitted_surface.get_slice(expiry_ts)
+        # Time in years
+        # ResolvedMarket must be present in the slice data from fit_surface
+        resolved_market = slice_data.get("resolved_market")
+        if not resolved_market:
+             # Should not happen if coming from fit_surface
+             raise ValueError(f"ResolvedMarket missing for expiry {expiry_ts}")
+             
+        # Calculate T locally
+        days = calculate_days_to_expiry(expiry_ts, resolved_market.valuation_date)
+        t = days / 365.0
+        slices[t] = slice_data["curve"]
+        
+        forward = slice_data["metadata"].get("forward_price")
+        if forward is None:
+            raise ValueError(
+                f"Forward price missing for expiry slice t={t:.4f}. Cannot build interpolator."
+            )
+        forwards[t] = forward
+
+    return build_surface_interpolator(
+        slices, forwards, check_arbitrage=check_arbitrage
     )

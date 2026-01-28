@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import warnings
 
+from oipd.core.errors import CalculationError
+
 
 def filter_stale_options(
     options_data: pd.DataFrame,
@@ -105,7 +107,7 @@ def select_price_column(
             satisfied given the available columns.
     """
 
-    from oipd.core.errors import CalculationError
+
 
     data = options_data.copy()
     was_filled = False

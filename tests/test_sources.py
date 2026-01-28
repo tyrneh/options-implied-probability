@@ -71,7 +71,7 @@ def test_from_ticker(mock_get_reader):
     mock_get_reader.return_value = mock_reader_cls
 
     # 2. Call
-    df = sources.from_ticker("AAPL", expiry="2025-01-01")
+    df, snapshot = sources.from_ticker("AAPL", expiry="2025-01-01")
 
     # 3. Verify
     mock_get_reader.assert_called_with("yfinance")
@@ -79,10 +79,27 @@ def test_from_ticker(mock_get_reader):
     call_args = mock_reader_instance.read.call_args
     assert call_args[0][0] == "AAPL:2025-01-01"
     assert not df.empty
+    assert snapshot.vendor == "yfinance"
+
+
+@patch("oipd.data_access.sources.get_reader")
+def test_list_expiry_dates(mock_get_reader):
+    class DummyReader:
+        @classmethod
+        def list_expiry_dates(cls, ticker):
+            return ["2025-01-01", "2025-02-01"]
+
+    mock_get_reader.return_value = DummyReader
+
+    expiries = sources.list_expiry_dates("AAPL")
+
+    mock_get_reader.assert_called_with("yfinance")
+    assert expiries == ["2025-01-01", "2025-02-01"]
 
 
 if __name__ == "__main__":
     test_from_csv()
     test_from_dataframe()
     test_from_ticker()
+    test_list_expiry_dates()
     print("\nTest Passed!")

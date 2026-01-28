@@ -40,7 +40,9 @@ class _YFinanceCache:
     def _path(self, ticker: str, expiry: str) -> Path:
         return self.cache_dir / f"{ticker}_{expiry}.pkl"
 
-    def get(self, ticker: str, expiry: str) -> Optional[Tuple[pd.DataFrame, float]]:
+    def get(
+        self, ticker: str, expiry: str
+    ) -> Optional[Tuple[pd.DataFrame, float, datetime]]:
         p = self._path(ticker, expiry)
         if not p.exists():
             return None
@@ -48,7 +50,11 @@ class _YFinanceCache:
             with open(p, "rb") as f:
                 data = pickle.load(f)
             if datetime.now() - data["timestamp"] < self.ttl:
-                return data["options_data"], data["underlying_price"]
+                return (
+                    data["options_data"],
+                    data["underlying_price"],
+                    data["timestamp"],
+                )
         except Exception:
             p.unlink(missing_ok=True)
         return None
@@ -56,10 +62,11 @@ class _YFinanceCache:
     def set(self, ticker: str, expiry: str, df: pd.DataFrame, price: float):
         p = self._path(ticker, expiry)
         try:
+            timestamp = datetime.now()
             with open(p, "wb") as f:
                 pickle.dump(
                     {
-                        "timestamp": datetime.now(),
+                        "timestamp": timestamp,
                         "options_data": df,
                         "underlying_price": price,
                     },
@@ -115,13 +122,22 @@ class Reader(AbstractReader):
         if self._cache:
             hit = self._cache.get(ticker, expiry)
             if hit is not None:
-                df, price = hit
+                df, price, asof = hit
                 df.attrs["underlying_price"] = price
+                df.attrs["asof"] = asof
 
                 # Apply column mapping to cached data
                 column_mapping = {
                     "lastPrice": "last_price",
                     "lastTradeDate": "last_trade_date",
+                    "bid": "bid",
+                    "ask": "ask",
+                    "Bid": "bid",
+                    "Ask": "ask",
+                    "volume": "volume",
+                    "Volume": "volume",
+                    "openInterest": "open_interest",
+                    "impliedVolatility": "implied_volatility",
                 }
                 for yf_name, std_name in column_mapping.items():
                     if yf_name in df.columns:
@@ -160,6 +176,14 @@ class Reader(AbstractReader):
         column_mapping = {
             "lastPrice": "last_price",
             "lastTradeDate": "last_trade_date",
+            "bid": "bid",
+            "ask": "ask",
+            "Bid": "bid",
+            "Ask": "ask",
+            "volume": "volume",
+            "Volume": "volume",
+            "openInterest": "open_interest",
+            "impliedVolatility": "implied_volatility",
         }
 
         # Apply mapping for calls
@@ -178,6 +202,7 @@ class Reader(AbstractReader):
 
         # Set metadata on final DataFrame
         final_df.attrs["underlying_price"] = price
+        final_df.attrs["asof"] = datetime.now()
         dividend_yield = self._extract_dividend_yield(tk.info)
         final_df.attrs["dividend_yield"] = dividend_yield
         final_df.attrs["dividend_schedule"] = (

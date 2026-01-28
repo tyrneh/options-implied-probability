@@ -159,7 +159,10 @@ class ProbCurve:
 
         underlying_price = self._resolved_market.underlying_price
         valuation_date = self._resolved_market.valuation_date.strftime("%b %d, %Y")
-        expiry_date = self._resolved_market.expiry_date.strftime("%b %d, %Y")
+        
+        # Get expiry_date from metadata (stored by vol_curve_pipeline)
+        expiry_date_raw = self._metadata.get("expiry_date")
+        expiry_date = expiry_date_raw.strftime("%b %d, %Y") if expiry_date_raw else None
 
         return plot_rnd(
             prices=self.prices,

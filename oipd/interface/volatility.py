@@ -11,19 +11,19 @@ import pandas as pd
 import warnings
 
 from oipd.core.errors import CalculationError
+from oipd.core.utils import resolve_horizon, calculate_days_to_expiry
 from oipd.interface.probability import ProbCurve, ProbSurface
 from oipd.market_inputs import (
-    FillMode,
     MarketInputs,
     ResolvedMarket,
-    VendorSnapshot,
     resolve_market,
 )
 from oipd.pipelines.vol_curve import fit_vol_curve_internal, compute_fitted_smile
 from oipd.pipelines.probability import derive_distribution_from_curve
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
-from oipd.pipelines.vol_surface.interpolator import build_surface_interpolator
+from oipd.pipelines.vol_surface.interpolator import build_interpolator_from_fitted_surface
+
 
 from oipd.presentation.iv_plotting import plot_iv_smile, ForwardPriceAnnotation
 
@@ -73,8 +73,6 @@ class VolCurve:
         chain: pd.DataFrame,
         market: MarketInputs,
         *,
-        vendor: Optional[VendorSnapshot] = None,
-        fill_mode: FillMode = "strict",
         column_mapping: Optional[Mapping[str, str]] = None,
         method_options: Optional[Mapping[str, Any]] = None,
     ) -> "VolCurve":
@@ -84,8 +82,6 @@ class VolCurve:
             chain: Option chain DataFrame. Column names can be remapped via
                 ``column_mapping``.
             market: User-supplied market inputs (dates, rates, spot/forward).
-            vendor: Optional vendor snapshot to fill missing market fields.
-            fill_mode: How to combine user/vendor inputs (``"strict"`` by default).
             column_mapping: Optional mapping from user column names to OIPD
                 standard names (e.g., ``{"type": "option_type"}``).
             method_options: Per-fit overrides for the calibration method. Falls
@@ -103,9 +99,17 @@ class VolCurve:
         if column_mapping:
             chain_input = chain_input.rename(columns=column_mapping)
 
+        # Strict validation: Expiry column is mandatory because MarketInputs no longer carries it.
+        # We need the expiry to calculate time-to-maturity (T) for the pricing engine.
+        if "expiry" not in chain_input.columns:
+            raise ValueError(
+                "Input DataFrame must contain an 'expiry' column. "
+                "Use column_mapping={'your_col': 'expiry'} if needed."
+            )
+
         # resolved_market: A complete snapshot of market conditions (rates, spot, dividends)
-        # derived by merging user inputs with vendor data (if provided).
-        resolved_market = resolve_market(market, vendor, mode=fill_mode)
+        # derived from explicit user inputs.
+        resolved_market = resolve_market(market)
 
         # vol_curve: The fitted volatility model (callable) that maps strikes to implied vols.
         # metadata: A dictionary containing fit diagnostics (RMSE), the implied forward price,
@@ -264,14 +268,14 @@ class VolCurve:
                 raise ValueError("Positive forward price required for log-moneyness axis, but not found in fit metadata.")
 
         # Extract expiry date for default title generation
-        expiry_date = None
-        if self._resolved_market is not None:
-            expiry_date = self._resolved_market.expiry_date
+        # expiry_date is stored in metadata from the vol_curve_pipeline
+        expiry_date = self._metadata.get("expiry_date")
 
         # Calculate time to expiry for total variance conversion if needed
         t_to_expiry = None
-        if self._resolved_market is not None:
-            t_to_expiry = self._resolved_market.days_to_expiry / 365.0
+        if self._resolved_market is not None and expiry_date is not None:
+            days = calculate_days_to_expiry(expiry_date, self._resolved_market.valuation_date)
+            t_to_expiry = days / 365.0
 
         return plot_iv_smile(
             plot_df,
@@ -407,29 +411,19 @@ class VolSurface:
         chain: pd.DataFrame,
         market: MarketInputs,
         *,
-        vendor: Optional[VendorSnapshot] = None,
-        fill_mode: FillMode = "strict",
         column_mapping: Optional[Mapping[str, str]] = None,
         method_options: Optional[Mapping[str, Any]] = None,
         horizon: Optional[Union[str, date, pd.Timestamp]] = None,
-        interpolation: Literal["none", "linear"] = "none",
-        check_arbitrage: bool = False,
     ) -> "VolSurface":
         """Fit all expiries in the chain and store slice curves.
 
         Args:
             chain: Option chain DataFrame containing multiple expiries.
-            market: Base market inputs (valuation date, rates, underlying price).
-            vendor: Optional vendor snapshot to fill missing market fields.
-            fill_mode: How to combine user/vendor inputs (``"strict"`` by default).
+            market: Explicit market parameters (price, rates, dividends).
             column_mapping: Optional mapping from user column names to OIPD standard names.
             method_options: Per-fit overrides for the calibration method.
-            horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date). 
+            horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date).
                      Expiries after this horizon will be ignored.
-            interpolation: If ``"linear"``, build a total variance interpolator for
-                           continuous time queries. Default ``"none"`` for discrete slices only.
-            check_arbitrage: If True and interpolation is enabled, clamps variance to
-                             prevent negative forward variance (calendar arbitrage).
 
         Returns:
             VolSurface: The fitted surface instance.
@@ -451,35 +445,7 @@ class VolSurface:
         # Apply horizon filtering
         if horizon is not None:
             # Resolve cutoff date
-            if isinstance(horizon, (date, pd.Timestamp, str)):
-                # formatted string date "YYYY-MM-DD"
-                try:
-                    cutoff = pd.to_datetime(horizon).tz_localize(None)
-                except (ValueError, TypeError):
-                    # Handle relative horizon strings
-                    # Custom handling for "m" (months) and "y" (years) first
-                    # because pd.to_timedelta("3m") means 3 minutes, not months.
-                    val_date = pd.to_datetime(market.valuation_date).tz_localize(None)
-                    
-                    if isinstance(horizon, str) and horizon[-1].lower() in ("m", "y"):
-                         amount = int(horizon[:-1])
-                         unit = horizon[-1].lower()
-                         if unit == "m":
-                             cutoff = val_date + pd.DateOffset(months=amount)
-                         elif unit == "y":
-                             cutoff = val_date + pd.DateOffset(years=amount)
-                         else:
-                             # Should not reach here due to if condition
-                             raise ValueError(f"Could not parse horizon string: {horizon}")
-                    else:
-                        # Fallback to pandas timedelta (supports "d", "w", etc.)
-                        try:
-                            delta = pd.to_timedelta(horizon)
-                            cutoff = val_date + delta
-                        except Exception:
-                             raise ValueError(f"Could not parse horizon: {horizon}")
-            else:
-                raise TypeError("horizon must be a string, date, or Timestamp")
+            cutoff = resolve_horizon(horizon, market.valuation_date)
 
             # Filter chain
             # Ensure expiry col is datetime
@@ -492,8 +458,6 @@ class VolSurface:
         self._model = fit_surface(
             chain=chain_input,
             market=market,
-            vendor=vendor,
-            fill_mode=fill_mode,
             column_mapping=column_mapping,
             method_options=method_options or self.method_options,
             pricing_engine=self.pricing_engine,
@@ -503,27 +467,10 @@ class VolSurface:
             method=self.method,
         )
 
-        # Build interpolator if requested
-        if interpolation == "linear":
-            # Extract slices and forwards from the fitted model
-            slices = {}
-            forwards = {}
-            for expiry_ts in self._model.expiries:
-                slice_data = self._model.get_slice(expiry_ts)
-                # Time in years
-                days = slice_data["resolved_market"].days_to_expiry
-                t = days / 365.0
-                slices[t] = slice_data["curve"]
-                forward = slice_data["metadata"].get("forward_price")
-                if forward is None:
-                    raise ValueError(
-                        f"Forward price missing for expiry slice t={t:.4f}. Cannot build interpolator."
-                    )
-                forwards[t] = forward
-
-            self._interpolator = build_surface_interpolator(
-                slices, forwards, check_arbitrage=check_arbitrage
-            )
+        # Always build linear total variance interpolator
+        self._interpolator = build_interpolator_from_fitted_surface(
+            self._model, check_arbitrage=True
+        )
 
         return self
 
@@ -659,6 +606,7 @@ class VolSurface:
         *,
         x_axis: Literal["strike", "log_moneyness"] = "log_moneyness",
         y_axis: Literal["iv", "total_variance"] = "total_variance",
+        include_observed: bool = False,
         figsize: tuple[float, float] = (10.0, 5.0),
         title: Optional[str] = None,
         xlim: Optional[tuple[float, float]] = None,
@@ -671,6 +619,7 @@ class VolSurface:
         Args:
             x_axis: X-axis mode ("strike", "log_moneyness").
             y_axis: Metric to plot on y-axis ("iv" or "total_variance"). Defaults to "total_variance".
+            include_observed: Whether to include observed market data points (default False).
             figsize: Figure size as (width, height) in inches.
             title: Optional plot title.
             xlim: Optional x-axis limits as (min, max).
@@ -706,55 +655,48 @@ class VolSurface:
 
         fig, ax = plt.subplots(figsize=figsize)
 
-        # Plot each expiry's IV smile
-        for expiry_timestamp in self.expiries:
+        # Get color cycle
+        prop_cycle = plt.rcParams["axes.prop_cycle"]
+        colors = prop_cycle.by_key()["color"]
+
+        # Plot each expiry's IV smile by delegating to VolCurve.plot
+        for i, expiry_timestamp in enumerate(self.expiries):
             vol_curve = self.slice(expiry_timestamp)
-            smile_df = vol_curve.iv_smile(include_observed=False)
-
-            # Compute x-axis values
-            strikes = smile_df["strike"].to_numpy(dtype=float)
-            if x_axis == "log_moneyness":
-                forward = vol_curve._metadata.get("forward_price")
-                if forward is None or forward <= 0:
-                    raise ValueError(
-                        "Forward price required for log-moneyness axis but not available"
-                    )
-                x_values = np.log(strikes / forward)
-            else:
-                x_values = strikes
-
+            
             # Generate label
             if label_format == "days":
                 resolved_market = vol_curve._resolved_market
                 if resolved_market is not None:
-                    days = resolved_market.days_to_expiry
+                    days = calculate_days_to_expiry(expiry_timestamp, resolved_market.valuation_date)
                     label = f"{days}d"
                 else:
                     label = expiry_timestamp.strftime("%b %d, %Y")
             else:
                 label = expiry_timestamp.strftime("%b %d, %Y")
 
-            iv_values = smile_df["fitted_iv"].to_numpy(dtype=float)
-            y_values = iv_values
+            # Determine color: use kwargs if provided, else cycle
+            current_line_kwargs = {"label": label, **kwargs}
+            if "color" not in current_line_kwargs and "c" not in current_line_kwargs:
+                current_line_kwargs["color"] = colors[i % len(colors)]
 
-            if y_axis == "total_variance":
-                resolved_market = vol_curve._resolved_market
-                if resolved_market is None:
-                    # Fallback if resolved_market missing, though unlikely after fit
-                    warnings.warn(f"Missing market data for expiry {expiry_timestamp}, cannot compute total variance.", UserWarning)
-                    y_values = np.full_like(iv_values, np.nan)
-                else:
-                    t_to_expiry = resolved_market.days_to_expiry / 365.0
-                    y_values = np.square(iv_values) * t_to_expiry
-
-            ax.plot(
-                x_values,
-                y_values,
-                label=label,
-                linewidth=1.5,
-                **kwargs,
+            # Delegate to curve plotting
+            # We suppress individual chart decorations (titles, labels, legends)
+            # and handle them globally for the surface.
+            vol_curve.plot(
+                ax=ax,
+                x_axis=x_axis,
+                y_axis=y_axis,
+                include_observed=include_observed,
+                title="",  # Suppress per-curve title
+                show_axis_labels=False,  # Suppress per-curve axis labels
+                show_legend=False,  # Suppress per-curve legend
+                line_kwargs=current_line_kwargs,
+                xlim=xlim,
+                ylim=ylim,
             )
 
+        # Global Surface Decorations
+        
         # Axis labels
         if x_axis == "log_moneyness":
             ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
@@ -768,14 +710,6 @@ class VolSurface:
             # Format y-axis as percentage only for IV
             ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
 
-        # Apply limits
-        if xlim is not None:
-            ax.set_xlim(xlim)
-        if ylim is not None:
-            ax.set_ylim(ylim)
-        else:
-            ax.set_ylim(bottom=0)
-
         # Legend
         legend = ax.legend(loc="best", frameon=False)
         if legend is not None:
@@ -787,8 +721,8 @@ class VolSurface:
 
         # Title
         resolved_title = title or "Implied Volatility Surface"
-        if y_axis == "total_variance":
-            resolved_title = resolved_title.replace("Implied Volatility", "Total Variance")
+        if y_axis == "total_variance" and title is None:
+            resolved_title = "Total Variance Surface"
             
         plt.subplots_adjust(top=0.88)
         fig.suptitle(

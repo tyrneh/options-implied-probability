@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from oipd.market_inputs import ResolvedMarket
+from oipd.core.utils import calculate_days_to_expiry
 
 
 def infer_forward_from_atm(
@@ -351,8 +352,16 @@ def apply_put_call_parity(
         ValueError: Propagated from :func:`preprocess_with_parity` when the provided
             data cannot support parity adjustments.
     """
+    # Calculate time to expiry from the DataFrame's expiry column
+    # We assume the DataFrame contains data for a single expiry (standard for parity checks)
+    if "expiry" not in options_data.columns:
+        raise ValueError("Options data must contain an 'expiry' column for parity adjustments.")
+    
+    expiry_val = options_data["expiry"].iloc[0]
+    days_to_expiry = calculate_days_to_expiry(expiry_val, resolved_market.valuation_date)
+
     discount_factor = float(
-        np.exp(-resolved_market.risk_free_rate * resolved_market.days_to_expiry / 365.0)
+        np.exp(-resolved_market.risk_free_rate * days_to_expiry / 365.0)
     )
     processed = preprocess_with_parity(options_data, spot, discount_factor)
     forward_price: Optional[float] = None

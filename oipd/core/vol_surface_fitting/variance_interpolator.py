@@ -9,7 +9,13 @@ from oipd.core.vol_surface_fitting.forward_interpolator import ForwardInterpolat
 
 
 class VarianceCurve(Protocol):
-    """Protocol for objects that can return total variance at log-moneyness."""
+    """Protocol for objects that can return total variance at log-moneyness.
+    
+    This is the mathematical dual of the user-facing ``VolCurve``, but defined
+    in the coordinate system best suited for interpolation:
+    - Input: log-moneyness $k = \ln(K/F)$ (instead of Strike K)
+    - Output: Total Variance $w = \sigma^2 T$ (instead of Volatility $\sigma$)
+    """
 
     def __call__(self, k: float) -> float:
         """Return total variance at log-moneyness k."""
@@ -24,6 +30,8 @@ class TotalVarianceInterpolator:
 
     Args:
         pillars: Sequence of (time, variance_curve) tuples sorted by time.
+            "Pillars" are the fixed, calibrated expiries that support the surface.
+            We interpolate between these known slices.
             Each variance_curve is a callable(k) -> w.
         forward_interp: ForwardInterpolator instance for forward prices.
         check_arbitrage: If True, clamps variance to prevent negative increments.

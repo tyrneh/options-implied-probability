@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
+from oipd.core.utils import calculate_days_to_expiry
 from oipd.market_inputs import ResolvedMarket
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.core.probability_density_conversion import (
@@ -109,12 +110,19 @@ def derive_distribution_from_curve(
             "forward_price", resolved_market.underlying_price
         )
         effective_dividend = None
+    
+    # 2a. Determine Days to Expiry
+    expiry_date = vol_meta.get("expiry_date")
+    if expiry_date is None:
+        raise CalculationError("Volatility metadata missing 'expiry_date'. Cannot derive distribution.")
+    
+    days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
 
     # 2. Generate Price Curve from Vol
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
         vol_curve,
         pricing_underlying,
-        days_to_expiry=resolved_market.days_to_expiry,
+        days_to_expiry=days_to_expiry,
         risk_free_rate=resolved_market.risk_free_rate,
         pricing_engine=pricing_engine,
         dividend_yield=effective_dividend,
@@ -134,7 +142,7 @@ def derive_distribution_from_curve(
         pricing_strike_grid,
         pricing_call_prices,
         risk_free_rate=resolved_market.risk_free_rate,
-        days_to_expiry=resolved_market.days_to_expiry,
+        days_to_expiry=days_to_expiry,
         min_strike=observed_min_strike,
         max_strike=observed_max_strike,
     )

@@ -20,6 +20,7 @@ from oipd.core.vol_surface_fitting.shared.svi_types import SVICalibrationOptions
 from oipd.data_access.readers import DataFrameReader
 from oipd.pricing.utils import prepare_dividends
 from oipd.market_inputs import ResolvedMarket
+from oipd.core.utils import calculate_days_to_expiry
 
 
 def fit_vol_curve_internal(
@@ -110,11 +111,20 @@ def fit_vol_curve_internal(
     if priced_options.empty:
         raise CalculationError("No valid options data after price selection")
 
+    # Calculate time to expiry for this slice
+    # priced_options came from cleaned_options which has 'expiry'
+    if "expiry" not in priced_options.columns:
+        raise CalculationError("Options data missing 'expiry' column.")
+    
+    expiry_val = priced_options["expiry"].iloc[0]
+    expiry_date = expiry_val.date() if isinstance(expiry_val, pd.Timestamp) else pd.to_datetime(expiry_val).date()
+    days_to_expiry_slice = calculate_days_to_expiry(expiry_date, valuation_date)
+
     # 6. Compute implied volatilities
     options_with_iv = compute_iv(
         priced_options,
         underlying_for_iv,
-        days_to_expiry=resolved_market.days_to_expiry,
+        days_to_expiry=days_to_expiry_slice,
         risk_free_rate=resolved_market.risk_free_rate,
         solver_method=solver,
         pricing_engine=pricing_engine,
@@ -141,6 +151,7 @@ def fit_vol_curve_internal(
         solver,
         pricing_engine,
         effective_dividend,
+        days_to_expiry=days_to_expiry_slice,
     )
     observed_ask_iv = _compute_observed_iv(
         priced_options,
@@ -150,6 +161,7 @@ def fit_vol_curve_internal(
         solver,
         pricing_engine,
         effective_dividend,
+        days_to_expiry=days_to_expiry_slice,
     )
     observed_last_iv = _compute_observed_iv(
         priced_options,
@@ -159,6 +171,7 @@ def fit_vol_curve_internal(
         solver,
         pricing_engine,
         effective_dividend,
+        days_to_expiry=days_to_expiry_slice,
     )
 
     # Align bid/ask IVs with the strike array for SVI calibration
@@ -192,7 +205,7 @@ def fit_vol_curve_internal(
         strikes,
         ivs,
         forward=underlying_for_iv,
-        maturity_years=resolved_market.days_to_expiry / 365.0,
+        maturity_years=days_to_expiry_slice / 365.0,
         options=method_options,
         **fit_kwargs,
     )
@@ -207,6 +220,7 @@ def fit_vol_curve_internal(
         "observed_iv_ask": observed_ask_iv,
         "observed_iv_last": observed_last_iv,
         "mid_price_filled": mid_price_filled,
+        "expiry_date": expiry_date,
         **fit_metadata,
     }
 
@@ -221,6 +235,7 @@ def _compute_observed_iv(
     solver: str,
     pricing_engine: str,
     dividend_yield: Optional[float],
+    days_to_expiry: int,
 ) -> Optional[pd.DataFrame]:
     """Compute implied volatility for an alternate observed price column."""
 
@@ -238,7 +253,7 @@ def _compute_observed_iv(
         iv_df = compute_iv(
             priced,
             underlying_price,
-            days_to_expiry=resolved_market.days_to_expiry,
+            days_to_expiry=days_to_expiry,
             risk_free_rate=resolved_market.risk_free_rate,
             solver_method=solver,
             pricing_engine=pricing_engine,
