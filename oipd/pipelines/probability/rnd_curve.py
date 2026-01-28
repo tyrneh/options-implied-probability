@@ -118,10 +118,17 @@ def derive_distribution_from_curve(
     
     days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
 
+    # Determine strike grid - interpolated slices store default_domain in metadata
+    strike_grid = None
+    default_domain = vol_meta.get("default_domain")
+    if default_domain:
+        strike_grid = np.linspace(default_domain[0], default_domain[1], 200)
+
     # 2. Generate Price Curve from Vol
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
         vol_curve,
         pricing_underlying,
+        strike_grid=strike_grid,
         days_to_expiry=days_to_expiry,
         risk_free_rate=resolved_market.risk_free_rate,
         pricing_engine=pricing_engine,

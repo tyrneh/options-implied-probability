@@ -155,15 +155,17 @@ def select_price_column(
 
     if data["price"].isna().any() and "last_price" in data.columns:
         missing_mask = data["price"].isna()
-        if missing_mask.any():
+        filled_count = int(missing_mask.sum())
+        if filled_count > 0:
             data.loc[missing_mask, "price"] = data.loc[missing_mask, "last_price"]
-            if missing_mask.any():
-                was_filled = True
-                if emit_warning:
-                    warnings.warn(
-                        "Filled missing mid prices with last_price due to unavailable bid/ask",
-                        UserWarning,
-                    )
+            was_filled = filled_count  # Return count instead of bool
+            if emit_warning:
+                warnings.warn(
+                    f"Filled {filled_count} missing mid prices with last_price due to unavailable bid/ask",
+                    UserWarning,
+                )
+    else:
+        was_filled = 0
 
     data = data[data["price"] > 0].copy()
     return data, was_filled

@@ -298,10 +298,22 @@ def compute_fitted_smile(
     # Determine grid
     if domain is None:
         if observed_iv is None or observed_iv.empty:
-            raise ValueError(
-                "No observed data found to infer grid domain. "
-                "Please provide an explicit `domain=(min, max)` argument."
-            )
+            # Fallback: check for default_domain in metadata (interpolated slices)
+            default_domain = metadata.get("default_domain")
+            if default_domain:
+                min_strike, max_strike = default_domain
+                # Add 5% padding for interpolated slices too
+                padding = 0.05 * (max_strike - min_strike)
+                strike_grid = np.linspace(
+                    max(0.01, min_strike - padding),
+                    max_strike + padding,
+                    points,
+                )
+            else:
+                raise ValueError(
+                    "No observed data found to infer grid domain. "
+                    "Please provide an explicit `domain=(min, max)` argument."
+                )
         else:
             min_strike = observed_iv["strike"].min()
             max_strike = observed_iv["strike"].max()

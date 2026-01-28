@@ -120,11 +120,31 @@ class VolCurve:
             method=self.method,
             method_options=self.method_options,
             suppress_price_warning=True,
+            suppress_staleness_warning=True,
         )
 
+        # Handle warnings manually to ensure consistency
         if metadata.get("mid_price_filled"):
+            count = metadata["mid_price_filled"]
+            # It might be a boolean in older versions or legacy paths, handle graceful fallback
+            count_str = f"{count}" if isinstance(count, int) and count > 1 else ""
             warnings.warn(
-                "Filled missing mid prices with last_price due to unavailable bid/ask",
+                f"Filled {count_str} missing mid prices with last_price due to unavailable bid/ask",
+                UserWarning,
+            )
+
+        if metadata.get("staleness_report"):
+            stats = metadata["staleness_report"]
+            removed_count = stats.get("removed_count", 0)
+            strike_desc = stats.get("strike_desc", "N/A")
+            max_staleness = stats.get("max_staleness_days", self.max_staleness_days)
+            min_age = stats.get("min_age", "N/A")
+            max_age = stats.get("max_age", "N/A")
+            
+            warnings.warn(
+                f"Filtered {removed_count} option rows (covering {strike_desc} strikes) "
+                f"older than {max_staleness} days "
+                f"(most recent: {min_age} days old, oldest: {max_age} days old)",
                 UserWarning,
             )
 
@@ -338,12 +358,18 @@ class VolCurve:
             ValueError: If ``fit`` has not been called.
         """
 
-        if (
+        # For interpolated slices, _chain is None but _metadata["interpolated"] is True
+        is_interpolated = self._metadata is not None and self._metadata.get("interpolated")
+        
+        if not is_interpolated and (
             self._chain is None
             or self._resolved_market is None
             or self._metadata is None
         ):
             raise ValueError("Call fit before deriving the distribution")
+        
+        if is_interpolated and self._resolved_market is None:
+            raise ValueError("Interpolated slice missing resolved market parameters")
 
         # Delegate to the stateless pipeline
         prices, pdf, cdf, metadata = derive_distribution_from_curve(
@@ -546,9 +572,40 @@ class VolSurface:
                 f"({last_pillar.date()}). Long-end extrapolation is not supported."
             )
 
-        # Create a callable that wraps the interpolator
+        # Get interpolated forward price
         interpolator = self._interpolator
+        forward_price = interpolator._forward_interp(t)
 
+        # Construct synthetic ResolvedMarket for this expiry
+        from oipd.market_inputs import ResolvedMarket, Provenance
+
+        synthetic_market = ResolvedMarket(
+            risk_free_rate=self._market.risk_free_rate,
+            underlying_price=forward_price,  # Use forward as "underlying" for Black-76
+            valuation_date=self._market.valuation_date,
+            dividend_yield=self._market.dividend_yield,
+            dividend_schedule=None,
+            provenance=Provenance(price="user", dividends="none"),
+            source_meta={"interpolated": True, "expiry": expiry_timestamp},
+        )
+
+        # Derive default strike domain from nearest fitted slices
+        # Use the union of min/max strikes across all fitted slices
+        all_strikes = []
+        for exp_ts in self.expiries:
+            try:
+                slice_data = self._model.get_slice(exp_ts)
+                if slice_data.get("chain") is not None and "strike" in slice_data["chain"].columns:
+                    all_strikes.extend(slice_data["chain"]["strike"].tolist())
+            except (ValueError, KeyError):
+                pass
+        
+        if all_strikes:
+            default_domain = (min(all_strikes), max(all_strikes))
+        else:
+            default_domain = None
+
+        # Create a callable that wraps the interpolator
         def interpolated_vol_curve(strikes: np.ndarray) -> np.ndarray:
             """Synthetic vol curve that evaluates IV via surface interpolation."""
             return np.array([interpolator.implied_vol(K, t) for K in strikes])
@@ -566,10 +623,13 @@ class VolSurface:
         vol_curve._metadata = {  # type: ignore[attr-defined]
             "interpolated": True,
             "expiry": expiry_timestamp,
+            "expiry_date": expiry_timestamp.date(),  # Required for probability derivation
             "time_to_expiry_years": t,
+            "days_to_expiry": days,
             "method": "total_variance_interpolation",
+            "default_domain": default_domain,
         }
-        vol_curve._resolved_market = None  # type: ignore[attr-defined]
+        vol_curve._resolved_market = synthetic_market  # type: ignore[attr-defined]
         vol_curve._chain = None  # type: ignore[attr-defined]
         return vol_curve
 

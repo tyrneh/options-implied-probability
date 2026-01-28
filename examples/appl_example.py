@@ -107,8 +107,15 @@ appl_surface.implied_vol(K=100, t=0.1)
 # get a VolCurve slice at an expiry
 appl_slice = appl_surface.slice(expiry="2025-12-19")
 #plot the slice
-appl_slice.plot(include_observed=True)
-plt.show()
+appl_slice.plot()
+appl_slice.implied_distribution().plot(kind="both")
+
+# get a VolCurve slice at an ARBITRARY expiry
+appl_slice = appl_surface.slice(expiry="2025-12-10")
+#plot the slice
+appl_slice.plot()
+appl_slice.implied_distribution().plot(kind="both")
+
 
 
 # convert the surface to a probability surface
