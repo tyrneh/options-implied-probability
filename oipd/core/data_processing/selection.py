@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -17,7 +17,7 @@ def filter_stale_options(
     max_staleness_days: Optional[int],
     *,
     emit_warning: bool = True,
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """Filter stale strikes based on last trade date metadata.
 
     Args:
@@ -30,21 +30,20 @@ def filter_stale_options(
         emit_warning: Whether to emit a summary warning when rows are removed.
 
     Returns:
-        DataFrame restricted to rows that satisfy the staleness constraint.
-
-    Raises:
-        None explicitly. Value errors from pandas conversions propagate.
+        Tuple containing:
+        - DataFrame restricted to rows that satisfy the staleness constraint.
+        - Dictionary with filtering statistics (removed count, age range, etc.)
     """
 
     if max_staleness_days is None or "last_trade_date" not in options_data.columns:
-        return options_data
+        return options_data, {}
 
     # Normalize timezone to avoid tz-aware vs tz-naive subtraction; Golden Master
     # data comes in with UTC stamps while valuation_date is naive.
     last_trade_datetimes = pd.to_datetime(options_data["last_trade_date"], utc=True)
     last_trade_datetimes = last_trade_datetimes.dt.tz_localize(None)
     if last_trade_datetimes.isna().any():
-        return options_data
+        return options_data, {}
 
     options_data = options_data.copy()
     valuation_ts = pd.Timestamp(valuation_date).tz_localize(None)
@@ -65,20 +64,31 @@ def filter_stale_options(
     combined_stale_mask = (~fresh_mask) | shared_strike_mask
     removed_count = int(np.sum(combined_stale_mask))
 
-    if removed_count > 0 and emit_warning:
+    stats: Dict[str, Any] = {}
+    if removed_count > 0:
         removed_days = days_old[combined_stale_mask]
         min_age = int(removed_days.min()) if not removed_days.empty else "N/A"
         max_age = int(removed_days.max()) if not removed_days.empty else "N/A"
         strike_desc = unique_stale_strikes if unique_stale_strikes else "N/A"
-        warnings.warn(
-            f"Filtered {removed_count} option rows (covering {strike_desc} strikes) "
-            f"older than {max_staleness_days} days "
-            f"(most recent: {min_age} days old, oldest: {max_age} days old)",
-            UserWarning,
-        )
+        
+        stats = {
+            "removed_count": removed_count,
+            "max_staleness_days": max_staleness_days,
+            "min_age": min_age,
+            "max_age": max_age,
+            "strike_desc": strike_desc,
+        }
+
+        if emit_warning:
+            warnings.warn(
+                f"Filtered {removed_count} option rows (covering {strike_desc} strikes) "
+                f"older than {max_staleness_days} days "
+                f"(most recent: {min_age} days old, oldest: {max_age} days old)",
+                UserWarning,
+            )
 
     filtered = options_data[~combined_stale_mask].reset_index(drop=True)
-    return filtered
+    return filtered, stats
 
 
 def select_price_column(

@@ -16,7 +16,7 @@ from oipd.interface import VolCurve, VolSurface, ProbCurve, ProbSurface
 
 # Optional: explicitly re-export vendor-specific errors later if needed
 
-from oipd.pipelines._legacy.estimator import ModelParams, RNDResult
+
 from oipd.core.vol_surface_fitting.shared.vol_model import VolModel
 from oipd.pipelines._internal.reconstruct import (
     RebuiltSlice,
@@ -28,7 +28,6 @@ from oipd.market_inputs import (
     MarketInputs,
     VendorSnapshot,
     ResolvedMarket,
-    FillMode,
     resolve_market,
 )
 
@@ -54,9 +53,7 @@ __all__ = [
     "MarketInputs",  # Immutable input class
     "ResolvedMarket",  # Resolved parameters with provenance
     "VendorSnapshot",  # Vendor data snapshot
-    "FillMode",  # Fill mode literal type
-    "ModelParams",
-    "RNDResult",
+
     "VolModel",
     "RebuiltSlice",
     "RebuiltSurface",

@@ -64,6 +64,7 @@ def fit_independent_slices(
     slice_chains: dict[pd.Timestamp, pd.DataFrame] = {}
 
     expiries_with_mid_fills: list[str] = []
+    staleness_reports: list[dict[str, Any]] = []
 
     for expiry_timestamp in unique_expiries:
         expiry_date = expiry_timestamp.date()
@@ -83,10 +84,16 @@ def fit_independent_slices(
             method=method,
             method_options=method_options,
             suppress_price_warning=True,
+            suppress_staleness_warning=True,
         )
 
         if metadata.get("mid_price_filled"):
             expiries_with_mid_fills.append(expiry_date.strftime("%Y-%m-%d"))
+
+        if metadata.get("staleness_report"):
+            report = metadata["staleness_report"]
+            report["expiry_str"] = expiry_date.strftime("%Y-%m-%d")
+            staleness_reports.append(report)
 
         slices[expiry_timestamp] = {
             "curve": vol_curve,
@@ -107,6 +114,33 @@ def fit_independent_slices(
 
         warnings.warn(
             f"Filled missing mid prices with last_price for {count} expiries: [{details}]",
+            UserWarning,
+        )
+
+    if staleness_reports:
+        total_removed = sum(r["removed_count"] for r in staleness_reports)
+        affected_count = len(staleness_reports)
+        
+        # Try to find global min/max age
+        min_ages = [r["min_age"] for r in staleness_reports if isinstance(r.get("min_age"), (int, float))]
+        max_ages = [r["max_age"] for r in staleness_reports if isinstance(r.get("max_age"), (int, float))]
+        
+        age_info = ""
+        if min_ages and max_ages:
+            global_min = min(min_ages)
+            global_max = max(max_ages)
+            age_info = f" (most recent: {global_min} days, oldest: {global_max} days)"
+
+        affected_expiries = [r["expiry_str"] for r in staleness_reports if "expiry_str" in r]
+        
+        if len(affected_expiries) > 4:
+            expiry_detail = f"{', '.join(affected_expiries[:3])} ... {affected_expiries[-1]}"
+        else:
+            expiry_detail = ", ".join(affected_expiries)
+
+        warnings.warn(
+            f"Filtered {total_removed} stale option rows across {affected_count} expiries: [{expiry_detail}]"
+            f"{age_info} older than {max_staleness_days} days.",
             UserWarning,
         )
 

@@ -35,9 +35,10 @@ from oipd.market_inputs import (
     VendorSnapshot,
     ResolvedMarket,
     resolve_market,
-    FillMode,
 )
 from oipd.presentation.iv_plotting import ForwardPriceAnnotation, plot_iv_smile
+
+FillMode = Literal["missing", "vendor_only", "strict"]
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +729,7 @@ def _estimate(
         underlying_price = effective_spot_price
 
     # Remove quotes that are too old relative to the valuation date
-    staleness_filtered_options = filter_stale_options(
+    staleness_filtered_options, _ = filter_stale_options(
         parity_adjusted_options,
         valuation_date,
         model.max_staleness_days,

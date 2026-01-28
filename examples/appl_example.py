@@ -101,6 +101,19 @@ appl_surface.fit(df_appl, market, column_mapping=column_mapping, horizon="3m")
 # Default y_axis="total_variance", x_axis="log_moneyness"
 appl_surface.plot(xlim=(-1, 1), ylim=(0, 0.1))
 
+# Return the IV at an arbitrary strike price and maturity
+appl_surface.implied_vol(K=100, t=0.1)
+
+# get a VolCurve slice at an expiry
+appl_slice = appl_surface.slice(expiry="2025-12-19")
+#plot the slice
+appl_slice.plot(include_observed=True)
+plt.show()
+
+
+# convert the surface to a probability surface
+prob_surface = appl_surface.implied_distribution()
+prob_surface
 
 
 ### ----------------------------------------
@@ -172,3 +185,14 @@ gme_surface = VolSurface().fit(gme_surface_chain, gme_surface_market, )
 
 gme_surface.plot(xlim=(-1, 1), ylim=(0, 0.1))
 plt.show()
+
+# get a slice
+gme_slice_2 = gme_surface.slice(expiry="2026-02-06")
+gme_slice_2.plot(include_observed=True)
+plt.show()
+
+# get a second slice
+gme_slice_3 = gme_surface.slice(expiry="2026-02-13")
+gme_slice_3.plot(include_observed=True)
+plt.show()
+

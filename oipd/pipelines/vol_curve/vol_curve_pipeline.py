@@ -34,6 +34,7 @@ def fit_vol_curve_internal(
     method: str = "svi",
     method_options: Optional[Mapping[str, Any] | SVICalibrationOptions] = None,
     suppress_price_warning: bool = False,
+    suppress_staleness_warning: bool = False,
 ) -> Tuple[Any, Dict[str, Any]]:
     """
     Fit a volatility curve to a single slice of options data.
@@ -52,6 +53,7 @@ def fit_vol_curve_internal(
         method: Volatility fitting method (e.g., 'svi').
         method_options: Options for the fitting method.
         suppress_price_warning: If True, suppress warning when filling missing mid prices.
+        suppress_staleness_warning: If True, suppress warning when filtering stale quotes.
 
     Returns:
         Tuple containing:
@@ -97,11 +99,11 @@ def fit_vol_curve_internal(
         underlying_for_iv = effective_spot
 
     # 4. Filter stale quotes
-    filtered_options = filter_stale_options(
+    filtered_options, staleness_stats = filter_stale_options(
         parity_adjusted,
         valuation_date,
         max_staleness_days,
-        emit_warning=True,
+        emit_warning=not suppress_staleness_warning,
     )
 
     # 5. Select price column (mid, last, bid, ask)
@@ -220,6 +222,7 @@ def fit_vol_curve_internal(
         "observed_iv_ask": observed_ask_iv,
         "observed_iv_last": observed_last_iv,
         "mid_price_filled": mid_price_filled,
+        "staleness_report": staleness_stats,
         "expiry_date": expiry_date,
         **fit_metadata,
     }

@@ -496,12 +496,12 @@ class VolSurface:
 
         vol_curve = VolCurve(
             method=self.method,
-            method_options=self.method_options,
-            solver=self.solver,
             pricing_engine=self.pricing_engine,
             price_method=self.price_method,
             max_staleness_days=self.max_staleness_days,
         )
+        vol_curve.method_options = self.method_options
+        vol_curve.solver = self.solver
         vol_curve._vol_curve = slice_data["curve"]  # type: ignore[attr-defined]
         vol_curve._metadata = slice_data["metadata"]  # type: ignore[attr-defined]
         vol_curve._resolved_market = slice_data["resolved_market"]  # type: ignore[attr-defined]
@@ -519,50 +519,40 @@ class VolSurface:
 
     def total_variance(self, K: float, t: float) -> float:
         """Return total variance at strike K and time t (years).
-
-        Requires interpolation="linear" during fit.
-
+        
         Args:
             K: Strike price.
             t: Time to maturity in years.
 
         Returns:
-            Total variance w(K, t).
+            float: Total variance, defined as w(K, t) = sigma(K, t)^2 * t.
 
-        Raises:
-            ValueError: If interpolator is not available.
         """
         if self._interpolator is None:
-            raise ValueError(
-                "Interpolator not available. Fit with interpolation='linear'."
-            )
+            raise ValueError("Surface not fitted. Call fit() first.")
         return self._interpolator(K, t)
 
     def implied_vol(self, K: float, t: float) -> float:
         """Return implied volatility at strike K and time t (years).
 
-        Requires interpolation="linear" during fit.
-
         Args:
             K: Strike price.
-            t: Time to maturity in years.
+            t: Time to maturity in years (e.g., 0.5 for 6 months).
 
         Returns:
-            Implied volatility sigma(K, t).
+            float: Implied volatility in decimal form (e.g., 0.20 for 20%).
 
         Raises:
-            ValueError: If interpolator is not available.
+            ValueError: If the surface has not been fitted.
         """
         if self._interpolator is None:
-            raise ValueError(
-                "Interpolator not available. Fit with interpolation='linear'."
-            )
+            raise ValueError("Surface not fitted. Call fit() first.")
         return self._interpolator.implied_vol(K, t)
 
     def __call__(self, K: float, t: float) -> float:
         """Return implied volatility at strike K and time t (years).
 
-        Alias for implied_vol. Requires interpolation="linear" during fit.
+        Alias for :meth:`implied_vol`.
         """
         return self.implied_vol(K, t)
 
