@@ -2,7 +2,6 @@ from oipd import (
     VolCurve,
     VolSurface,
     MarketInputs,
-    ModelParams,
     sources,
 )
 

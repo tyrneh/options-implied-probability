@@ -29,36 +29,36 @@ from oipd.presentation.iv_plotting import plot_iv_smile, ForwardPriceAnnotation
 
 
 class VolCurve:
-    """Single-expiry implied-volatility estimator with sklearn-style API.
+    """Single-expiry implied-volatility smile fitter with sklearn-style API.
 
     Configure once, call ``fit`` to calibrate, then evaluate the fitted smile via
-    ``__call__``. Heavy lifting is delegated to the stateless pipeline.
+    ``__call__``. 
     """
 
     def __init__(
         self,
         *,
         method: str = "svi",
-        method_options: Optional[Mapping[str, Any]] = None,
-        solver: str = "brent",
         pricing_engine: str = "black76",
         price_method: str = "mid",
         max_staleness_days: int = 3,
     ) -> None:
-        """Initialize a VolCurve with calibration configuration.
+        """Initialize a VolCurve single-expiry volatility fitter.
 
-        Args:
-            method: Smile fitting method (e.g., ``"svi"``).
-            method_options: Optional method-specific options (e.g., random seed).
-            solver: Implied-vol solver to use (``"brent"`` or ``"newton"``).
-            pricing_engine: Pricing engine (``"black76"`` or ``"bs"``).
-            price_method: Price selection strategy (``"mid"`` or ``"last"``).
-            max_staleness_days: Maximum allowed quote age before filtering.
+        Parameters
+        ----------
+        method : str, default "svi"
+            Calibration algorithm to use (e.g., "svi").
+        pricing_engine : str, default "black76"
+            Pricing model for IV inversion: "black76" (futures) or "bs" (spot).
+        price_method : str, default "mid"
+            Quote type to fit against: "mid", "last", "bid", or "ask".
+        max_staleness_days : int, default 3
+            Maximum age of quotes in days (relative to valuation date) to include.
         """
-
         self.method = method
-        self.method_options = method_options
-        self.solver = solver
+        self.method_options = None  # Hidden advanced configuration
+        self.solver = "brent"  # Default solver, not exposed in __init__
         self.pricing_engine = pricing_engine
         self.price_method = price_method
         self.max_staleness_days = max_staleness_days
@@ -74,7 +74,6 @@ class VolCurve:
         market: MarketInputs,
         *,
         column_mapping: Optional[Mapping[str, str]] = None,
-        method_options: Optional[Mapping[str, Any]] = None,
     ) -> "VolCurve":
         """Fit the volatility smile and store fitted attributes on self.
 
@@ -84,9 +83,6 @@ class VolCurve:
             market: User-supplied market inputs (dates, rates, spot/forward).
             column_mapping: Optional mapping from user column names to OIPD
                 standard names (e.g., ``{"type": "option_type"}``).
-            method_options: Per-fit overrides for the calibration method. Falls
-                back to the configuration supplied at initialization when not
-                provided.
 
         Returns:
             VolCurve: The fitted estimator (for chaining).
@@ -122,7 +118,7 @@ class VolCurve:
             max_staleness_days=self.max_staleness_days,
             solver=self.solver,
             method=self.method,
-            method_options=method_options or self.method_options,
+            method_options=self.method_options,
             suppress_price_warning=True,
         )
 
@@ -368,7 +364,7 @@ class VolCurve:
 
 
 class VolSurface:
-    """Multi-expiry volatility surface estimator.
+    """Multi-expiry volatility surface fitter.
 
     Calibrates individual expiries using the same pipeline as ``VolCurve`` and
     exposes ``slice(expiry)`` snapshots as ``VolCurve`` objects.
@@ -378,27 +374,26 @@ class VolSurface:
         self,
         *,
         method: str = "svi",
-        method_options: Optional[Mapping[str, Any]] = None,
-        solver: str = "brent",
         pricing_engine: str = "black76",
         price_method: str = "mid",
         max_staleness_days: int = 3,
     ) -> None:
-        """Initialize a VolSurface with calibration configuration.
+        """Initialize a VolSurface multi-expiry volatility surface fitter.
 
-        Args:
-            method: Smile fitting method (e.g., ``"svi"``).
-            method_options: Optional method-specific options (e.g., random seed).
-            solver: Implied-vol solver to use (``"brent"`` or ``"newton"``).
-            pricing_engine: Pricing engine (``"black76"`` or ``"bs"``).
-            price_method: Price selection strategy (``"mid"`` or ``"last"``).
-            max_staleness_days: Maximum allowed quote age before filtering.
-            expiry_column: Column name holding option expiry values.
+        Parameters
+        ----------
+        method : str, default "svi"
+            Calibration algorithm to use (e.g., "svi" or "cubic_spline").
+        pricing_engine : str, default "black76"
+            Pricing model for IV inversion: "black76" (futures) or "bs" (spot).
+        price_method : str, default "mid"
+            Quote type to fit against: "mid", "last", "bid", or "ask".
+        max_staleness_days : int, default 3
+            Maximum age of quotes in days (relative to valuation date) to include.
         """
-
         self.method = method
-        self.method_options = method_options
-        self.solver = solver
+        self.method_options = None  # Hidden advanced configuration
+        self.solver = "brent"  # Default solver, not exposed in __init__
         self.pricing_engine = pricing_engine
         self.price_method = price_method
         self.max_staleness_days = max_staleness_days
@@ -412,7 +407,6 @@ class VolSurface:
         market: MarketInputs,
         *,
         column_mapping: Optional[Mapping[str, str]] = None,
-        method_options: Optional[Mapping[str, Any]] = None,
         horizon: Optional[Union[str, date, pd.Timestamp]] = None,
     ) -> "VolSurface":
         """Fit all expiries in the chain and store slice curves.
@@ -421,7 +415,6 @@ class VolSurface:
             chain: Option chain DataFrame containing multiple expiries.
             market: Explicit market parameters (price, rates, dividends).
             column_mapping: Optional mapping from user column names to OIPD standard names.
-            method_options: Per-fit overrides for the calibration method.
             horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date).
                      Expiries after this horizon will be ignored.
 
@@ -459,7 +452,7 @@ class VolSurface:
             chain=chain_input,
             market=market,
             column_mapping=column_mapping,
-            method_options=method_options or self.method_options,
+            method_options=self.method_options,
             pricing_engine=self.pricing_engine,
             price_method=self.price_method,
             max_staleness_days=self.max_staleness_days,
