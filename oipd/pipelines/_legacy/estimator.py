@@ -965,6 +965,3 @@ def _resolve_slice_vol_model(
     return base_model, replace(resolved_vol, method=requested_method), requested_method
 
 
-# ---------------------------------------------------------------------------
-# Public façade – what casual users will interact with
-# ---------------------------------------------------------------------------

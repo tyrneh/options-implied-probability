@@ -400,6 +400,7 @@ class VolSurface:
 
         self._model: FittedSurface | None = None
         self._interpolator: Any = None  # TotalVarianceInterpolator if enabled
+        self._market: Optional[MarketInputs] = None  # Stored for interpolated slices
 
     def fit(
         self,
@@ -464,20 +465,27 @@ class VolSurface:
         self._interpolator = build_interpolator_from_fitted_surface(
             self._model, check_arbitrage=True
         )
+        
+        # Store market for interpolated slice creation
+        self._market = market
 
         return self
 
     def slice(self, expiry: Any) -> VolCurve:
         """Return a VolCurve snapshot for the requested expiry.
 
+        If the expiry matches a fitted pillar, returns the original parametric
+        curve. Otherwise, returns a synthetic curve derived from the Total
+        Variance interpolator.
+
         Args:
             expiry: Expiry identifier (string, date, or pandas-compatible timestamp).
 
         Returns:
-            VolCurve: Snapshot carrying the fitted slice.
+            VolCurve: Snapshot carrying the fitted or interpolated slice.
 
         Raises:
-            ValueError: If fit has not been called or the expiry is unavailable.
+            ValueError: If fit has not been called.
         """
 
         if self._model is None:
@@ -485,15 +493,67 @@ class VolSurface:
 
         expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
 
-        # Delegate to the model to get the slice data
-        try:
+        # Check if this is an exact match to a fitted expiry
+        if expiry_timestamp in self.expiries:
+            # Return the real fitted VolCurve
             slice_data = self._model.get_slice(expiry_timestamp)
-        except ValueError as e:
-            # Re-raise with the same message format as before if needed, or just let it bubble
-            raise ValueError(f"Expiry {expiry} not found in fitted surface") from e
 
-        # slice_data is a dict with keys: "curve", "metadata", "resolved_market", "chain"
+            vol_curve = VolCurve(
+                method=self.method,
+                pricing_engine=self.pricing_engine,
+                price_method=self.price_method,
+                max_staleness_days=self.max_staleness_days,
+            )
+            vol_curve.method_options = self.method_options
+            vol_curve.solver = self.solver
+            vol_curve._vol_curve = slice_data["curve"]  # type: ignore[attr-defined]
+            vol_curve._metadata = slice_data["metadata"]  # type: ignore[attr-defined]
+            vol_curve._resolved_market = slice_data["resolved_market"]  # type: ignore[attr-defined]
+            vol_curve._chain = slice_data["chain"]  # type: ignore[attr-defined]
+            return vol_curve
 
+        # Interpolated slice: create a synthetic VolCurve
+        return self._create_interpolated_slice(expiry_timestamp)
+
+    def _create_interpolated_slice(self, expiry_timestamp: pd.Timestamp) -> VolCurve:
+        """Create a synthetic VolCurve for an arbitrary expiry via interpolation.
+
+        Args:
+            expiry_timestamp: The target expiry date.
+
+        Returns:
+            VolCurve: A synthetic curve that evaluates IVs using the interpolator.
+        """
+        if self._interpolator is None:
+            raise ValueError("Interpolator not available")
+        if self._market is None:
+            raise ValueError("Market data not stored")
+
+        # Calculate time to expiry in years
+        days = calculate_days_to_expiry(expiry_timestamp, self._market.valuation_date)
+        t = days / 365.0
+
+        if t <= 0:
+            raise ValueError(
+                f"Expiry {expiry_timestamp} is not after valuation date {self._market.valuation_date}"
+            )
+
+        # Reject long-end extrapolation: only allow interpolation up to last fitted expiry
+        last_pillar = max(self.expiries)
+        if expiry_timestamp > last_pillar:
+            raise ValueError(
+                f"Expiry {expiry_timestamp.date()} is beyond the last fitted pillar "
+                f"({last_pillar.date()}). Long-end extrapolation is not supported."
+            )
+
+        # Create a callable that wraps the interpolator
+        interpolator = self._interpolator
+
+        def interpolated_vol_curve(strikes: np.ndarray) -> np.ndarray:
+            """Synthetic vol curve that evaluates IV via surface interpolation."""
+            return np.array([interpolator.implied_vol(K, t) for K in strikes])
+
+        # Build a shell VolCurve
         vol_curve = VolCurve(
             method=self.method,
             pricing_engine=self.pricing_engine,
@@ -502,10 +562,15 @@ class VolSurface:
         )
         vol_curve.method_options = self.method_options
         vol_curve.solver = self.solver
-        vol_curve._vol_curve = slice_data["curve"]  # type: ignore[attr-defined]
-        vol_curve._metadata = slice_data["metadata"]  # type: ignore[attr-defined]
-        vol_curve._resolved_market = slice_data["resolved_market"]  # type: ignore[attr-defined]
-        vol_curve._chain = slice_data["chain"]  # type: ignore[attr-defined]
+        vol_curve._vol_curve = interpolated_vol_curve  # type: ignore[attr-defined]
+        vol_curve._metadata = {  # type: ignore[attr-defined]
+            "interpolated": True,
+            "expiry": expiry_timestamp,
+            "time_to_expiry_years": t,
+            "method": "total_variance_interpolation",
+        }
+        vol_curve._resolved_market = None  # type: ignore[attr-defined]
+        vol_curve._chain = None  # type: ignore[attr-defined]
         return vol_curve
 
     @property
