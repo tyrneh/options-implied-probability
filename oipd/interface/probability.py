@@ -13,6 +13,7 @@ from oipd.core.errors import CalculationError
 from oipd.market_inputs import (
     ResolvedMarket,
 )
+from oipd.presentation.plot_rnd import plot_rnd
 
 
 class ProbCurve:
@@ -155,8 +156,6 @@ class ProbCurve:
         Returns:
             matplotlib.figure.Figure: The plot figure.
         """
-        from oipd.presentation.plot_rnd import plot_rnd
-
         underlying_price = self._resolved_market.underlying_price
         valuation_date = self._resolved_market.valuation_date.strftime("%b %d, %Y")
         

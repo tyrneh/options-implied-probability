@@ -69,6 +69,15 @@ prob_appl = appl_vol_curve.implied_distribution()
 prob_appl.plot(kind="both")
 
 
+# --- Pricing Demo (VolCurve) --- #
+# Price a theoretical option at Strike=250 using the fitted curve
+theoretical_price = appl_vol_curve.price(strikes=[250.0], call_or_put="call")
+print(f"Theoretical Call Price (K=250): {theoretical_price[0]:.4f}")
+
+theoretical_put = appl_vol_curve.price(strikes=[250.0], call_or_put="put")
+print(f"Theoretical Put Price (K=250): {theoretical_put[0]:.4f}")
+
+
 # --- Example 2 - AAPL surface (multiple expiries) --- #
 
 # 3 INPUTS:
@@ -102,7 +111,13 @@ appl_surface.fit(df_appl, market, column_mapping=column_mapping, horizon="3m")
 appl_surface.plot(xlim=(-1, 1), ylim=(0, 0.1))
 
 # Return the IV at an arbitrary strike price and maturity
-appl_surface.implied_vol(K=100, t=0.1)
+iv_t = appl_surface.implied_vol(K=100, t=0.1)
+
+# --- Pricing Demo (VolSurface) --- #
+# Price an option at an arbitrary time (interpolated)
+# e.g., K=100, t=0.1 years
+surface_price = appl_surface.price(strikes=[100], t=0.1, call_or_put="call")
+print(f"Interpolated Surface Price (K=100, t=0.1y): {surface_price[0]:.4f}")
 
 # get a VolCurve slice at an expiry
 appl_slice = appl_surface.slice(expiry="2025-12-19")

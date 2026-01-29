@@ -13,9 +13,13 @@ import warnings
 from oipd.core.errors import CalculationError
 from oipd.core.utils import resolve_horizon, calculate_days_to_expiry
 from oipd.interface.probability import ProbCurve, ProbSurface
+from oipd.pricing.black_scholes import black_scholes_call_price
+from oipd.pricing import get_pricer
+from oipd.pricing.black76 import black76_call_price, ArrayLike
 from oipd.market_inputs import (
     MarketInputs,
     ResolvedMarket,
+    Provenance,
     resolve_market,
 )
 from oipd.pipelines.vol_curve import fit_vol_curve_internal, compute_fitted_smile
@@ -23,9 +27,6 @@ from oipd.pipelines.probability import derive_distribution_from_curve
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
 from oipd.pipelines.vol_surface.interpolator import build_interpolator_from_fitted_surface
-
-
-from oipd.presentation.iv_plotting import plot_iv_smile, ForwardPriceAnnotation
 
 
 class VolCurve:
@@ -388,6 +389,92 @@ class VolCurve:
             metadata=metadata,
         )
 
+    def price(
+        self,
+        strikes: ArrayLike,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> np.ndarray:
+        """Calculate theoretical option prices using the fitted volatility.
+
+        Uses the pricing engine specified at initialization (default "black76").
+
+        Args:
+            strikes: Strike price(s) to value.
+            call_or_put: Option type, "call" or "put".
+
+        Returns:
+            np.ndarray: Theoretical option prices.
+
+        Raises:
+            ValueError: If ``fit`` has not been called.
+        """
+        if self._resolved_market is None:
+            raise ValueError("Call fit before pricing options")
+
+        # 1. Gather Inputs
+        K = np.asarray(strikes, dtype=float)
+        sigma = self(K)
+        r = self._resolved_market.risk_free_rate
+
+        # Determine time to expiry
+        # If this is a synthetic curve, 'time_to_expiry_years' is in metadata
+        if self._metadata and "time_to_expiry_years" in self._metadata:
+            t = float(self._metadata["time_to_expiry_years"])
+        else:
+            # Otherwise derive from dates
+            expiry_date = self._metadata.get("expiry_date") if self._metadata else None
+            if expiry_date is None:
+                raise ValueError("Expiry date not found in metadata")
+            
+            days = calculate_days_to_expiry(expiry_date, self._resolved_market.valuation_date)
+            t = days / 365.0
+
+        # Safety clamp for t
+        t = max(t, 1e-6)
+
+        # 2. Select Engine & Dispatch
+        # We allow "black76" (futures/forward) or "bs" (spot)
+        engine_name = self.pricing_engine
+        pricer = get_pricer(engine_name)
+
+        if engine_name == "black76":
+            # Black-76 requires Forward (F)
+            F = self.forward
+            if F is None:
+                raise ValueError("Forward price not available for Black-76 pricing")
+            
+            # Helper handles the math: CallPrice = e^{-rT} [F N(d1) - K N(d2)]
+            call_price = pricer(F, K, sigma, t, r) # type: ignore
+            
+            if call_or_put == "put":
+                # Put-Call Parity (Futures/Forward): P = C - e^{-rT}(F - K)
+                # discount factor D = e^{-rT}
+                # P = C - D*F + D*K
+                df = np.exp(-r * t)
+                put_price = call_price - df * (F - K)
+                return put_price
+            else:
+                return call_price
+
+        elif engine_name == "bs":
+            # Black-Scholes requires Spot (S) and Div Yield (q)
+            S = self._resolved_market.underlying_price
+            q = self._resolved_market.dividend_yield
+            if q is None:
+                raise ValueError("Dividend yield (q) is required for Black-Scholes pricing but was not provided.")
+
+            call_price = pricer(S, K, sigma, t, r, q) # type: ignore
+
+            if call_or_put == "put":
+                # Put-Call Parity (Spot): P = C - S e^{-qT} + K e^{-rT}
+                put_price = call_price - S * np.exp(-q * t) + K * np.exp(-r * t)
+                return put_price
+            else:
+                return call_price
+
+        else:
+             raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
+
 
 class VolSurface:
     """Multi-expiry volatility surface fitter.
@@ -577,8 +664,6 @@ class VolSurface:
         forward_price = interpolator._forward_interp(t)
 
         # Construct synthetic ResolvedMarket for this expiry
-        from oipd.market_inputs import ResolvedMarket, Provenance
-
         synthetic_market = ResolvedMarket(
             risk_free_rate=self._market.risk_free_rate,
             underlying_price=forward_price,  # Use forward as "underlying" for Black-76
@@ -680,6 +765,93 @@ class VolSurface:
         Alias for :meth:`implied_vol`.
         """
         return self.implied_vol(K, t)
+
+    def forward_price(self, t: float) -> float:
+        """Return the interpolated forward price at time t.
+
+        Args:
+            t: Time to maturity in years.
+
+        Returns:
+            float: Forward price F(t).
+        """
+        if self._interpolator is None:
+            raise ValueError("Surface not fitted. Call fit() first.")
+        
+        return self._interpolator._forward_interp(t)
+
+    def price(
+        self,
+        strikes: ArrayLike,
+        t: float | str | date | pd.Timestamp,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> np.ndarray:
+        """Calculate theoretical option prices at arbitrary time t.
+        
+        High-performance method utilizing the internal interpolators directly.
+
+        Args:
+            strikes: Strike price(s).
+            t: Time to expiry (years as float) or Expiry Date (string/date).
+            call_or_put: "call" or "put".
+
+        Returns:
+            np.ndarray: Option prices.
+        """
+        if self._interpolator is None or self._market is None:
+            raise ValueError("Surface not fitted. Call fit() first.")
+
+        # 1. Resolve Time t
+        if isinstance(t, (str, date, pd.Timestamp)):
+            # Convert date to t
+            expiry_ts = pd.to_datetime(t).tz_localize(None)
+            days = calculate_days_to_expiry(expiry_ts, self._market.valuation_date)
+            t_years = days / 365.0
+        else:
+            t_years = float(t)
+
+        if t_years <= 0:
+             # Expired or invalid
+             return np.zeros_like(np.asarray(strikes), dtype=float)
+
+        # 2. Direct Math Kernel Queries
+        # Get Forward F and Vol sigma directly from interpolator (fast)
+        F = self._interpolator._forward_interp(t_years)
+        sigma = self._interpolator.implied_vol(np.asarray(strikes), t_years)
+        
+        K = np.asarray(strikes, dtype=float)
+        r = self._market.risk_free_rate
+
+        # 3. Dispatch to internal engine
+        # Using self.pricing_engine to stay consistent with fit()
+        engine_name = self.pricing_engine
+        
+        if engine_name == "black76":
+            # Direct Black-76 call
+            call_price = black76_call_price(F, K, sigma, t_years, r)
+            
+            if call_or_put == "put":
+                # Parity: P = C - D(F - K)
+                df = np.exp(-r * t_years)
+                return call_price - df * (F - K)
+            return call_price
+            
+        elif engine_name == "bs":
+             # If using BS, we need Spot S and Yield q
+             
+             S = self._market.underlying_price
+             q = self._market.dividend_yield
+             if q is None:
+                 raise ValueError("Dividend yield (q) is required for Black-Scholes pricing but was not provided.")
+             
+             call_price = black_scholes_call_price(S, K, sigma, t_years, r, q)
+             
+             if call_or_put == "put":
+                 return call_price - S * np.exp(-q * t_years) + K * np.exp(-r * t_years)
+             return call_price
+             
+        else:
+             raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
 
     def implied_distribution(self) -> ProbSurface:
         """Return the risk-neutral distribution surface for all fitted expiries.
