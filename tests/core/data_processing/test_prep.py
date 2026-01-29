@@ -32,12 +32,13 @@ def test_filter_stale_options_drops_entire_strike_when_any_leg_is_stale():
         ]
     )
 
-    filtered = filter_stale_options(
+    result = filter_stale_options(
         data,
         valuation_date=valuation,
         max_staleness_days=3,
         emit_warning=False,
     )
+    filtered = result[0]
 
     assert set(filtered["strike"].unique()) == {105.0}
     assert filtered.shape[0] == 2

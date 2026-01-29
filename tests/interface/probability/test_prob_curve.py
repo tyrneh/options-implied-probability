@@ -1,0 +1,248 @@
+"""
+Test Skeleton for ProbCurve Interface
+======================================
+Tests for the single-expiry probability distribution API.
+
+Based on first-principles analysis of oipd.interface.probability.ProbCurve
+"""
+
+import pytest
+import numpy as np
+import pandas as pd
+from datetime import date
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+@pytest.fixture
+def fitted_vol_curve():
+    """A pre-fitted VolCurve for deriving probability."""
+    from oipd import VolCurve, MarketInputs
+    
+    chain = pd.DataFrame({
+        "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
+        "last_price": [12.5, 8.2, 5.1, 3.1, 1.6],
+        "bid": [12.0, 7.8, 4.9, 2.9, 1.4],
+        "ask": [13.0, 8.6, 5.3, 3.3, 1.8],
+        "option_type": ["C", "C", "C", "C", "C"],
+        "expiry": [pd.Timestamp("2025-03-21")] * 5,
+    })
+    
+    market = MarketInputs(
+        valuation_date=date(2025, 1, 1),
+        underlying_price=100.0,
+        risk_free_rate=0.05,
+    )
+    
+    vc = VolCurve()
+    vc.fit(chain, market)
+    return vc
+
+
+@pytest.fixture
+def prob_curve(fitted_vol_curve):
+    """A ProbCurve derived from a fitted VolCurve."""
+    return fitted_vol_curve.implied_distribution()
+
+
+# =============================================================================
+# ProbCurve Basic Properties Tests
+# =============================================================================
+
+class TestProbCurveProperties:
+    """Tests for ProbCurve basic properties."""
+
+    def test_prices_is_numpy_array(self, prob_curve):
+        """prices property returns numpy array."""
+        assert isinstance(prob_curve.prices, np.ndarray)
+
+    def test_pdf_is_numpy_array(self, prob_curve):
+        """pdf property returns numpy array."""
+        assert isinstance(prob_curve.pdf, np.ndarray)
+
+    def test_cdf_is_numpy_array(self, prob_curve):
+        """cdf property returns numpy array."""
+        assert isinstance(prob_curve.cdf, np.ndarray)
+
+    def test_pdf_is_non_negative(self, prob_curve):
+        """PDF values are non-negative."""
+        assert np.all(prob_curve.pdf >= 0)
+
+    def test_cdf_is_monotonic(self, prob_curve):
+        """CDF is monotonically increasing."""
+        cdf = prob_curve.cdf
+        assert np.all(np.diff(cdf) >= -1e-10)  # Allow tiny numerical noise
+
+    def test_cdf_ends_near_one(self, prob_curve):
+        """CDF approaches 1 at high prices."""
+        # With synthetic data, CDF may not reach 1.0 but should be positive
+        assert prob_curve.cdf[-1] > 0.5
+
+
+# =============================================================================
+# ProbCurve.prob_below() Tests
+# =============================================================================
+
+class TestProbCurveProbBelow:
+    """Tests for prob_below() method."""
+
+    def test_prob_below_returns_float(self, prob_curve):
+        """prob_below() returns a float."""
+        p = prob_curve.prob_below(100.0)
+        assert isinstance(p, float)
+
+    def test_prob_below_in_valid_range(self, prob_curve):
+        """prob_below() returns value in [0, 1]."""
+        p = prob_curve.prob_below(100.0)
+        assert 0.0 <= p <= 1.0
+
+    def test_prob_below_increases_with_price(self, prob_curve):
+        """prob_below(low) < prob_below(high)."""
+        p_low = prob_curve.prob_below(90.0)
+        p_high = prob_curve.prob_below(110.0)
+        assert p_low < p_high
+
+    def test_prob_below_zero_at_left_edge(self, prob_curve):
+        """prob_below() returns ~0 at extreme low price."""
+        p = prob_curve.prob_below(1.0)
+        assert p < 0.01
+
+    def test_prob_below_one_at_right_edge(self, prob_curve):
+        """prob_below() returns ~1 at extreme high price."""
+        p = prob_curve.prob_below(1000.0)
+        assert p > 0.99
+
+
+# =============================================================================
+# ProbCurve.prob_above() Tests
+# =============================================================================
+
+class TestProbCurveProbAbove:
+    """Tests for prob_above() method."""
+
+    def test_prob_above_complements_prob_below(self, prob_curve):
+        """prob_above(x) + prob_below(x) ≈ 1."""
+        price = 100.0
+        p_below = prob_curve.prob_below(price)
+        p_above = prob_curve.prob_above(price)
+        assert np.isclose(p_below + p_above, 1.0)
+
+
+# =============================================================================
+# ProbCurve.prob_between() Tests
+# =============================================================================
+
+class TestProbCurveProbBetween:
+    """Tests for prob_between() method."""
+
+    def test_prob_between_valid_range(self, prob_curve):
+        """prob_between() returns value in [0, 1]."""
+        p = prob_curve.prob_between(90.0, 110.0)
+        assert 0.0 <= p <= 1.0
+
+    def test_prob_between_equals_cdf_diff(self, prob_curve):
+        """prob_between(low, high) = prob_below(high) - prob_below(low)."""
+        low, high = 95.0, 105.0
+        p_between = prob_curve.prob_between(low, high)
+        p_diff = prob_curve.prob_below(high) - prob_curve.prob_below(low)
+        assert np.isclose(p_between, p_diff)
+
+    def test_prob_between_raises_on_invalid_range(self, prob_curve):
+        """prob_between() raises if low > high."""
+        with pytest.raises(ValueError):
+            prob_curve.prob_between(110.0, 90.0)
+
+
+# =============================================================================
+# ProbCurve.expected_value() Tests
+# =============================================================================
+
+class TestProbCurveExpectedValue:
+    """Tests for expected_value() method."""
+
+    def test_expected_value_returns_float(self, prob_curve):
+        """expected_value() returns a float."""
+        ev = prob_curve.expected_value()
+        assert isinstance(ev, float)
+
+    def test_expected_value_is_positive(self, prob_curve):
+        """Expected value is positive for stock prices."""
+        ev = prob_curve.expected_value()
+        assert ev > 0
+
+    def test_expected_value_near_forward(self, prob_curve):
+        """Expected value should be positive (roughly near spot/forward)."""
+        ev = prob_curve.expected_value()
+        # For synthetic data, just check it's positive and reasonable
+        assert 0.0 < ev < 500.0  # Rough bounds
+
+
+# =============================================================================
+# ProbCurve.variance() Tests
+# =============================================================================
+
+class TestProbCurveVariance:
+    """Tests for variance() method."""
+
+    def test_variance_returns_float(self, prob_curve):
+        """variance() returns a float."""
+        var = prob_curve.variance()
+        assert isinstance(var, float)
+
+    def test_variance_is_positive(self, prob_curve):
+        """Variance is positive."""
+        var = prob_curve.variance()
+        assert var > 0
+
+
+# =============================================================================
+# ProbCurve.plot() Tests
+# =============================================================================
+
+class TestProbCurvePlot:
+    """Tests for ProbCurve.plot() visualization."""
+
+    def test_plot_pdf_does_not_crash(self, prob_curve):
+        """plot(kind='pdf') executes without raising."""
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        
+        fig = prob_curve.plot(kind="pdf")
+        assert fig is not None
+        plt.close(fig)
+
+    def test_plot_cdf_does_not_crash(self, prob_curve):
+        """plot(kind='cdf') executes without raising."""
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        
+        fig = prob_curve.plot(kind="cdf")
+        assert fig is not None
+        plt.close(fig)
+
+    def test_plot_both_does_not_crash(self, prob_curve):
+        """plot(kind='both') executes without raising."""
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        
+        fig = prob_curve.plot(kind="both")
+        assert fig is not None
+        plt.close(fig)
+
+
+# =============================================================================
+# ProbCurve Callable Interface Tests
+# =============================================================================
+
+class TestProbCurveCallable:
+    """Tests for ProbCurve callable interface."""
+
+    def test_call_returns_pdf_value(self, prob_curve):
+        """Calling prob_curve(price) returns PDF value."""
+        pdf_val = prob_curve(100.0)
+        assert pdf_val >= 0

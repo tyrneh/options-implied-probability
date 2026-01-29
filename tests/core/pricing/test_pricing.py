@@ -62,7 +62,7 @@ def test_pdf_integrates_to_one():
     df["bid"] = prices * 0.95  # Mock bid slightly below last_price
     df["ask"] = prices * 1.05  # Mock ask slightly above last_price
 
-    priced = select_price_column(df, "last")
+    priced, _ = select_price_column(df, "last")
     iv_df = compute_iv(
         priced,
         S,

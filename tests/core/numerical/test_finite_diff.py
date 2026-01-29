@@ -26,7 +26,7 @@ def _compute_pdf_pipeline(
     pricing_engine: str = "bs",
     dividend_yield: float | None = None,
 ):
-    priced = select_price_column(options_data, price_method)
+    priced, _ = select_price_column(options_data, price_method)
     iv_df = compute_iv(
         priced,
         underlying_price,
