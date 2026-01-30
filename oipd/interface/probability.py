@@ -225,6 +225,69 @@ class ProbCurve:
         mean = self.mean()
         return float(np.trapz(((self._cached_prices - mean) ** 2) * self._cached_pdf, self._cached_prices))
 
+    def skew(self) -> float:
+        """Return the skewness (3rd standardized moment) of the fitted PDF.
+
+        Skew = E[(X - mu)^3] / sigma^3.
+
+        Returns:
+            float: Skewness. (Positive = lean to right/fat right tail, but for prices usually negative/fat left tail).
+        """
+        if self._vol_curve is None:
+            raise ValueError("Call fit before accessing moments")
+
+        self._ensure_grid_generated()
+        mean = self.mean()
+        var = self.variance()
+        std = np.sqrt(var)
+
+        moment3 = np.trapz(
+            ((self._cached_prices - mean) ** 3) * self._cached_pdf, self._cached_prices
+        )
+        
+        return float(moment3 / (std ** 3))
+
+    def kurtosis(self) -> float:
+        """Return the excess kurtosis (4th standardized moment - 3) of the fitted PDF.
+
+        Excess Kurtosis = E[(X - mu)^4] / sigma^4 - 3.
+
+        Returns:
+            float: Excess Kurtosis (0 = Normal). Positive = Fat Tails.
+        """
+        if self._vol_curve is None:
+            raise ValueError("Call fit before accessing moments")
+
+        self._ensure_grid_generated()
+        mean = self.mean()
+        var = self.variance()
+        std = np.sqrt(var)
+
+        moment4 = np.trapz(
+            ((self._cached_prices - mean) ** 4) * self._cached_pdf, self._cached_prices
+        )
+        
+        # Excess Kurtosis
+        return float(moment4 / (std ** 4) - 3.0)
+
+    def quantile(self, q: float) -> float:
+        """Return the price level at a given probability quantile (Inverse CDF).
+
+        Args:
+            q: Probability level (0 < q < 1).
+
+        Returns:
+            float: Price S such that P(Asset < S) = q.
+        """
+        if not (0 < q < 1):
+             raise ValueError("Quantile q must be between 0 and 1")
+             
+        self._ensure_grid_generated()
+        
+        # Use interpolation on the cached CDF
+        # cdf_values are y, prices are x. We want x for a given y.
+        return float(np.interp(q, self._cached_cdf, self._cached_prices))
+
 
 
     @property

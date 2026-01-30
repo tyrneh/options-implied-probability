@@ -514,6 +514,194 @@ class VolCurve:
         else:
              raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
 
+    # -------------------------------------------------------------------------
+    # Greeks
+    # -------------------------------------------------------------------------
+
+    def _get_greeks_inputs(
+        self, strikes: ArrayLike
+    ) -> tuple[np.ndarray, np.ndarray, float, float, float | None]:
+        """Internal helper to gather common inputs for Greeks calculations."""
+        if self._resolved_market is None:
+            raise ValueError("Call fit before computing Greeks")
+
+        K = np.asarray(strikes, dtype=float)
+        sigma = self(K)
+        r = self._resolved_market.risk_free_rate
+
+        # Time to expiry
+        if self._metadata and "time_to_expiry_years" in self._metadata:
+            t = float(self._metadata["time_to_expiry_years"])
+        else:
+            expiry_date = self._metadata.get("expiry_date") if self._metadata else None
+            if expiry_date is None:
+                raise ValueError("Expiry date not found in metadata")
+            days = calculate_days_to_expiry(expiry_date, self._resolved_market.valuation_date)
+            t = days / 365.0
+        t = max(t, 1e-6)
+
+        q = self._resolved_market.dividend_yield
+        return K, sigma, t, r, q
+
+    def delta(
+        self,
+        strikes: ArrayLike,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> np.ndarray:
+        """Calculate Delta (∂V/∂S or ∂V/∂F) for the fitted smile.
+
+        Args:
+            strikes: Strike price(s).
+            call_or_put: Option type.
+
+        Returns:
+            np.ndarray: Delta values.
+        """
+        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
+
+        if self.pricing_engine == "black76":
+            from oipd.pricing.black76 import black76_delta
+            F = self.forward_price
+            if F is None:
+                raise ValueError("Forward price required for Black-76 Delta")
+            return black76_delta(F, K, sigma, t, r, call_or_put)
+        else:  # bs
+            from oipd.pricing.black_scholes import black_scholes_delta
+            S = self._resolved_market.underlying_price
+            if q is None:
+                raise ValueError("Dividend yield required for BS Delta")
+            return black_scholes_delta(S, K, sigma, t, r, q, call_or_put)
+
+    def gamma(self, strikes: ArrayLike) -> np.ndarray:
+        """Calculate Gamma (∂²V/∂S² or ∂²V/∂F²) for the fitted smile.
+
+        Args:
+            strikes: Strike price(s).
+
+        Returns:
+            np.ndarray: Gamma values (same for Call and Put).
+        """
+        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
+
+        if self.pricing_engine == "black76":
+            from oipd.pricing.black76 import black76_gamma
+            F = self.forward_price
+            if F is None:
+                raise ValueError("Forward price required for Black-76 Gamma")
+            return black76_gamma(F, K, sigma, t, r)
+        else:  # bs
+            from oipd.pricing.black_scholes import black_scholes_gamma
+            S = self._resolved_market.underlying_price
+            if q is None:
+                raise ValueError("Dividend yield required for BS Gamma")
+            return black_scholes_gamma(S, K, sigma, t, r, q)
+
+    def vega(self, strikes: ArrayLike) -> np.ndarray:
+        """Calculate Vega (∂V/∂σ) for the fitted smile.
+
+        Args:
+            strikes: Strike price(s).
+
+        Returns:
+            np.ndarray: Vega values (same for Call and Put).
+        """
+        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
+
+        if self.pricing_engine == "black76":
+            from oipd.pricing.black76 import black76_vega
+            F = self.forward_price
+            if F is None:
+                raise ValueError("Forward price required for Black-76 Vega")
+            return black76_vega(F, K, sigma, t, r)
+        else:  # bs
+            from oipd.pricing.black_scholes import black_scholes_call_vega
+            S = self._resolved_market.underlying_price
+            if q is None:
+                raise ValueError("Dividend yield required for BS Vega")
+            return black_scholes_call_vega(S, K, sigma, t, r, q)
+
+    def theta(
+        self,
+        strikes: ArrayLike,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> np.ndarray:
+        """Calculate Theta (∂V/∂t) for the fitted smile (per year).
+
+        Args:
+            strikes: Strike price(s).
+            call_or_put: Option type.
+
+        Returns:
+            np.ndarray: Theta values (negative = time decay).
+        """
+        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
+
+        if self.pricing_engine == "black76":
+            from oipd.pricing.black76 import black76_theta
+            F = self.forward_price
+            if F is None:
+                raise ValueError("Forward price required for Black-76 Theta")
+            return black76_theta(F, K, sigma, t, r, call_or_put)
+        else:  # bs
+            from oipd.pricing.black_scholes import black_scholes_theta
+            S = self._resolved_market.underlying_price
+            if q is None:
+                raise ValueError("Dividend yield required for BS Theta")
+            return black_scholes_theta(S, K, sigma, t, r, q, call_or_put)
+
+    def rho(
+        self,
+        strikes: ArrayLike,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> np.ndarray:
+        """Calculate Rho (∂V/∂r) for the fitted smile.
+
+        Args:
+            strikes: Strike price(s).
+            call_or_put: Option type.
+
+        Returns:
+            np.ndarray: Rho values.
+        """
+        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
+
+        if self.pricing_engine == "black76":
+            from oipd.pricing.black76 import black76_rho
+            F = self.forward_price
+            if F is None:
+                raise ValueError("Forward price required for Black-76 Rho")
+            return black76_rho(F, K, sigma, t, r, call_or_put)
+        else:  # bs
+            from oipd.pricing.black_scholes import black_scholes_rho
+            S = self._resolved_market.underlying_price
+            if q is None:
+                raise ValueError("Dividend yield required for BS Rho")
+            return black_scholes_rho(S, K, sigma, t, r, q, call_or_put)
+
+    def greeks(
+        self,
+        strikes: ArrayLike,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> pd.DataFrame:
+        """Calculate all Greeks for the fitted smile.
+
+        Args:
+            strikes: Strike price(s).
+            call_or_put: Option type.
+
+        Returns:
+            pd.DataFrame: Table with columns [strike, delta, gamma, vega, theta, rho].
+        """
+        K = np.asarray(strikes, dtype=float)
+        return pd.DataFrame({
+            "strike": K,
+            "delta": self.delta(K, call_or_put),
+            "gamma": self.gamma(K),
+            "vega": self.vega(K),
+            "theta": self.theta(K, call_or_put),
+            "rho": self.rho(K, call_or_put),
+        })
+
 
 class VolSurface:
     """Multi-expiry volatility surface fitter.
