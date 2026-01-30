@@ -79,6 +79,8 @@ def derive_distribution_from_curve(
     *,
     pricing_engine: str = "black76",
     vol_metadata: Optional[Dict[str, Any]] = None,
+    domain: Optional[Tuple[float, float]] = None,
+    points: int = 200,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Derive PDF/CDF from a pre-fitted volatility curve.
 
@@ -120,9 +122,33 @@ def derive_distribution_from_curve(
 
     # Determine strike grid - interpolated slices store default_domain in metadata
     strike_grid = None
-    default_domain = vol_meta.get("default_domain")
-    if default_domain:
-        strike_grid = np.linspace(default_domain[0], default_domain[1], 200)
+    target_domain = domain or vol_meta.get("default_domain")
+    
+    if target_domain:
+        strike_grid = np.linspace(target_domain[0], target_domain[1], points)
+    else:
+        # Fallback: Create a reasonable grid based on ATM vol and T
+        # Assume roughly log-normal distribution width ~ sigma * sqrt(T)
+        T = days_to_expiry / 365.0
+        atm_vol = vol_meta.get("at_money_vol")
+        if atm_vol is None:
+            raise CalculationError("Cannot determine default grid: 'at_money_vol' missing in metadata.")
+        
+        # Center around forward
+        F = pricing_underlying
+        
+        # 5 standard deviations covers >99.99% of mass
+        sigma_root_t = atm_vol * np.sqrt(T)
+        width = 5.0 * sigma_root_t
+        
+        # Grid range in log-moneyness then back to price
+        low_K = F * np.exp(-width - 0.5 * sigma_root_t**2)
+        high_K = F * np.exp(width - 0.5 * sigma_root_t**2)
+        
+        # Ensure positive
+        low_K = max(low_K, 0.01)
+        
+        strike_grid = np.linspace(low_K, high_K, points)
 
     # 2. Generate Price Curve from Vol
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
@@ -136,13 +162,9 @@ def derive_distribution_from_curve(
     )
 
     # 3. Determine Observation Bounds
-    observed_iv = vol_meta.get("observed_iv")
-    if observed_iv is not None and not observed_iv.empty:
-        observed_min_strike = float(observed_iv["strike"].min())
-        observed_max_strike = float(observed_iv["strike"].max())
-    else:
-        observed_min_strike = float(pricing_strike_grid.min())
-        observed_max_strike = float(pricing_strike_grid.max())
+    # We use the full grid range to allow the distribution to reflect the extrapolated tail
+    observed_min_strike = float(pricing_strike_grid.min())
+    observed_max_strike = float(pricing_strike_grid.max())
 
     # 4. Derive PDF
     pdf_prices, pdf_values = pdf_from_price_curve(

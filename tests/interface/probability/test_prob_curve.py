@@ -34,9 +34,10 @@ def fitted_vol_curve():
         valuation_date=date(2025, 1, 1),
         underlying_price=100.0,
         risk_free_rate=0.05,
+        dividend_yield=0.0,
     )
     
-    vc = VolCurve()
+    vc = VolCurve(pricing_engine="bs")
     vc.fit(chain, market)
     return vc
 
@@ -59,26 +60,28 @@ class TestProbCurveProperties:
         assert isinstance(prob_curve.prices, np.ndarray)
 
     def test_pdf_is_numpy_array(self, prob_curve):
-        """pdf property returns numpy array."""
-        assert isinstance(prob_curve.pdf, np.ndarray)
+        """pdf_values property returns numpy array."""
+        assert isinstance(prob_curve.pdf_values, np.ndarray)
 
     def test_cdf_is_numpy_array(self, prob_curve):
-        """cdf property returns numpy array."""
-        assert isinstance(prob_curve.cdf, np.ndarray)
+        """cdf_values property returns numpy array."""
+        assert isinstance(prob_curve.cdf_values, np.ndarray)
 
     def test_pdf_is_non_negative(self, prob_curve):
         """PDF values are non-negative."""
-        assert np.all(prob_curve.pdf >= 0)
+        assert np.all(prob_curve.pdf_values >= 0)
 
     def test_cdf_is_monotonic(self, prob_curve):
         """CDF is monotonically increasing."""
-        cdf = prob_curve.cdf
+        cdf = prob_curve.cdf_values
         assert np.all(np.diff(cdf) >= -1e-10)  # Allow tiny numerical noise
 
     def test_cdf_ends_near_one(self, prob_curve):
         """CDF approaches 1 at high prices."""
-        # With synthetic data, CDF may not reach 1.0 but should be positive
-        assert prob_curve.cdf[-1] > 0.5
+        # Check that the CDF converges to 1.0 for a very high price
+        # Using functional access allows checking far OTM
+        assert prob_curve.prob_below(500.0) > 0.99
+        assert prob_curve.prob_below(500.0) <= 1.01
 
 
 # =============================================================================
@@ -159,22 +162,22 @@ class TestProbCurveProbBetween:
 # ProbCurve.expected_value() Tests
 # =============================================================================
 
-class TestProbCurveExpectedValue:
-    """Tests for expected_value() method."""
+class TestProbCurveMean:
+    """Tests for mean() method."""
 
-    def test_expected_value_returns_float(self, prob_curve):
-        """expected_value() returns a float."""
-        ev = prob_curve.expected_value()
+    def test_mean_returns_float(self, prob_curve):
+        """mean() returns a float."""
+        ev = prob_curve.mean()
         assert isinstance(ev, float)
 
-    def test_expected_value_is_positive(self, prob_curve):
-        """Expected value is positive for stock prices."""
-        ev = prob_curve.expected_value()
+    def test_mean_is_positive(self, prob_curve):
+        """Mean is positive for stock prices."""
+        ev = prob_curve.mean()
         assert ev > 0
 
-    def test_expected_value_near_forward(self, prob_curve):
-        """Expected value should be positive (roughly near spot/forward)."""
-        ev = prob_curve.expected_value()
+    def test_mean_near_forward(self, prob_curve):
+        """Mean value should be positive (roughly near spot/forward)."""
+        ev = prob_curve.mean()
         # For synthetic data, just check it's positive and reasonable
         assert 0.0 < ev < 500.0  # Rough bounds
 

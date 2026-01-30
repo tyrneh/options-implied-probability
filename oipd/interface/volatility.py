@@ -8,12 +8,17 @@ from typing import Any, Dict, Literal, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import warnings
 
 from oipd.core.errors import CalculationError
-from oipd.core.utils import resolve_horizon, calculate_days_to_expiry
-from oipd.interface.probability import ProbCurve, ProbSurface
-from oipd.pricing.black_scholes import black_scholes_call_price
+from oipd.core.utils import calculate_days_to_expiry
+from oipd.core.vol_surface_fitting import fit_slice
+from oipd.core.vol_surface_fitting.shared.svi_types import SVICalibrationOptions
+from oipd.pipelines.vol_curve import fit_vol_curve_internal
+from oipd.pipelines.vol_surface import fit_surface as fit_vol_surface_internal
+from oipd.presentation.publication import _apply_publication_style, _style_publication_axes
 from oipd.pricing import get_pricer
 from oipd.pricing.black76 import black76_call_price, ArrayLike
 from oipd.market_inputs import (
@@ -27,6 +32,7 @@ from oipd.pipelines.probability import derive_distribution_from_curve
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
 from oipd.pipelines.vol_surface.interpolator import build_interpolator_from_fitted_surface
+from oipd.presentation.iv_plotting import ForwardPriceAnnotation, plot_iv_smile
 
 
 class VolCurve:
@@ -86,7 +92,7 @@ class VolCurve:
                 standard names (e.g., ``{"type": "option_type"}``).
 
         Returns:
-            VolCurve: The fitted estimator (for chaining).
+            VolCurve: The fitted vol smile instance.
 
         Raises:
             CalculationError: If calibration fails or produces no vol curve.
@@ -158,73 +164,99 @@ class VolCurve:
         self._chain = chain_input
         return self
 
-    def __call__(self, strikes: np.ndarray | list[float]) -> np.ndarray:
-        """Evaluate the fitted smile at the requested strikes.
+    def implied_vol(self, strikes: float | Sequence[float] | np.ndarray) -> np.ndarray:
+        """Return implied volatilities for the given strikes.
 
         Args:
-            strikes: Strike values (array-like).
+            strikes: Strike price(s) to evaluate. Can be a single float or array-like.
 
         Returns:
-            numpy.ndarray: Implied volatilities.
+            np.ndarray: Array of implied volatilities corresponding to the input strikes.
 
         Raises:
-            ValueError: If ``fit`` has not been called.
+             ValueError: If ``fit`` has not been called.
         """
-
         if self._vol_curve is None:
             raise ValueError("Call fit before evaluating the curve")
+        
+        # Convert inputs to array
+        # The underlying vol_curve (pipeline result) is a callable that expects floats/arrays
         return self._vol_curve(np.asarray(strikes, dtype=float))
 
-    @property
-    def at_money_vol(self) -> float:
-        """Return the at-the-money implied volatility.
+    def __call__(self, strikes: float | Sequence[float] | np.ndarray) -> np.ndarray:
+        """Alias for :meth:`implied_vol`."""
+        return self.implied_vol(strikes)
+
+    def total_variance(self, strikes: float | Sequence[float] | np.ndarray) -> np.ndarray:
+        """Return total variance (w = sigma^2 * T) for the given strikes.
+
+        Args:
+            strikes: Strike price(s) to evaluate.
 
         Returns:
-            float: ATM implied volatility.
+            np.ndarray: Array of total variances.
+        """
+        sigma = self.implied_vol(strikes)
+        
+        # Calculate T
+        if self._resolved_market is None or self._metadata is None:
+             raise ValueError("Model not fitted. Cannot calculate T.")
+        
+        expiry = self._metadata.get("expiry_date")
+        if expiry is None:
+             # Should not happen for standard fitted curves
+             raise ValueError("Expiry date not found in metadata.")
 
-        Raises:
-            ValueError: If ``fit`` has not been called.
+        T = calculate_days_to_expiry(expiry, self._resolved_market.valuation_date) / 365.0
+        # Ensure non-negative T logic is handled in calculate_days_to_expiry (returns 0 if expired)
+        return (sigma ** 2) * T
+
+    @property
+    def atm_vol(self) -> float:
+        """Return the At-The-Money (ATM) implied volatility.
+        ATM is defined as Strike = Forward Price.
+
+        Returns:
+            float: Implied volatility at the forward strike (decimal, e.g. 0.20 = 20%).
         """
         if self._vol_curve is None:
-            raise ValueError("Call fit before accessing ATM volatility")
+             raise ValueError("Call fit before accessing ATM volatility")
+             
+        # The underlying pipeline wrapper often attaches this property
         return getattr(self._vol_curve, "at_money_vol", np.nan)
 
-    def iv_smile(
+    @property
+    def expiries(self) -> tuple[Any]:
+        """Return the single expiry of this curve as a tuple.
+
+        Returns:
+             tuple[Any]: A 1-element tuple containing the expiry (Timestamp or Date), or empty if invalid.
+        """
+        if self._metadata is None:
+             return ()
+        return (self._metadata.get("expiry_date"),)
+
+    def iv_results(
         self,
         domain: Optional[tuple[float, float]] = None,
         points: int = 200,
         include_observed: bool = True,
     ) -> pd.DataFrame:
-        """Return the implied-volatility smile with fitted and market-observed values.
+        """Return a DataFrame for inspecting the fitted smile against market data.
+
+        Useful for plotting or debugging the calibration quality.
 
         Args:
-            domain: Optional (min, max) strike range. If None, inferred from observed data.
-            points: Number of points in the grid.
-            include_observed: Whether to include market-observed IVs. If False, only
-                ``strike`` and ``fitted_iv`` columns are returned.
+            domain: (min_strike, max_strike) range. If None, inferred from data.
+            points: Number of points to sample for the fitted curve.
+            include_observed: Whether to include discrete market data points (Bid/Ask/Mid IV).
 
         Returns:
-            DataFrame containing:
-
-            - ``strike``: Strike levels.
-            - ``fitted_iv``: Fitted implied volatility from the calibrated model.
-            - ``market_iv``: *(if include_observed=True)* Mid-price implied volatility
-              computed by inverting the mid option price using the same pricing model
-              (Black-76 or Black-Scholes), risk-free rate, dividend assumptions, and
-              time-to-expiry as specified during ``.fit()``.
-            - ``market_bid_iv``: *(if include_observed=True)* Bid-price implied volatility
-              computed using the same methodology.
-            - ``market_ask_iv``: *(if include_observed=True)* Ask-price implied volatility
-              computed using the same methodology.
-            - ``market_last_iv``: *(if include_observed=True)* Last-price implied volatility
-              computed using the same methodology (only included if bid/ask are unavailable).
-
-        Note:
-            The market IVs are **not** raw quotes from exchanges—they are computed by
-            the library by solving the inverse problem: "What σ makes the model price
-            match the observed option price?" This ensures consistency with the fitted
-            curve, which uses the same pricing assumptions.
+            pd.DataFrame: DataFrame with columns ['strike', 'fitted_iv', ...]
         """
+        if self._vol_curve is None or self._metadata is None:
+            raise ValueError("Call fit before inspecting the smile.")
+
         return compute_fitted_smile(
             vol_curve=self,
             metadata=self._metadata,
@@ -261,7 +293,7 @@ class VolCurve:
             matplotlib.figure.Figure: The plot figure.
         """
 
-        smile_df = self.iv_smile(include_observed=include_observed)
+        smile_df = self.iv_results(include_observed=include_observed)
 
         # Map our column names to what plot_iv_smile expects
         plot_df = smile_df.rename(
@@ -326,8 +358,12 @@ class VolCurve:
         return getattr(self._vol_curve, "params", {})
 
     @property
-    def forward(self) -> float | None:
-        """Return the parity-implied forward used in calibration if available."""
+    def forward_price(self) -> float | None:
+        """Return the parity-implied forward used in calibration if available.
+
+        Returns:
+            float: The forward price F, or None if not available/fitted.
+        """
 
         if self._metadata is None:
             raise ValueError("Call fit before accessing forward")
@@ -335,7 +371,11 @@ class VolCurve:
 
     @property
     def diagnostics(self) -> dict[str, Any] | None:
-        """Return calibration diagnostics captured during fitting."""
+        """Return calibration diagnostics captured during fitting.
+
+        Returns:
+             dict[str, Any]: Diagnostics dictionary (e.g. {"rmse": 0.001}).
+        """
 
         if self._metadata is None:
             raise ValueError("Call fit before accessing diagnostics")
@@ -343,14 +383,18 @@ class VolCurve:
 
     @property
     def resolved_market(self) -> ResolvedMarket:
-        """Return the resolved market snapshot used for calibration."""
+        """Return the resolved market snapshot used for calibration.
+
+        Returns:
+             ResolvedMarket: The standardized market inputs (dates, rates, spot).
+        """
 
         if self._resolved_market is None:
             raise ValueError("Call fit before accessing the resolved market")
         return self._resolved_market
 
     def implied_distribution(self) -> ProbCurve:
-        """Return the risk-neutral distribution implied by the fitted smile.
+        """Return the risk-neutral probability distribution implied by the fitted vol smile.
 
         Returns:
             ProbCurve: Fitted distribution object.
@@ -381,13 +425,8 @@ class VolCurve:
         )
 
         # Return Result Container
-        return ProbCurve(
-            prices=prices,
-            pdf=pdf,
-            cdf=cdf,
-            market=self._resolved_market,
-            metadata=metadata,
-        )
+        from oipd.interface.probability import ProbCurve
+        return ProbCurve(self)
 
     def price(
         self,
@@ -439,7 +478,7 @@ class VolCurve:
 
         if engine_name == "black76":
             # Black-76 requires Forward (F)
-            F = self.forward
+            F = self.forward_price
             if F is None:
                 raise ValueError("Forward price not available for Black-76 pricing")
             
@@ -595,7 +634,7 @@ class VolSurface:
             expiry: Expiry identifier (string, date, or pandas-compatible timestamp).
 
         Returns:
-            VolCurve: Snapshot carrying the fitted or interpolated slice.
+            VolCurve: A VolCurve object representing the smile at that expiry.
 
         Raises:
             ValueError: If fit has not been called.
@@ -720,7 +759,11 @@ class VolSurface:
 
     @property
     def expiries(self) -> tuple[pd.Timestamp, ...]:
-        """Return the fitted expiries available on this surface."""
+        """Return the fitted expiries available on this surface.
+
+        Returns:
+            tuple[pd.Timestamp, ...]: Sorted tuple of expiry timestamps.
+        """
 
         if self._model is None:
             return ()
@@ -788,8 +831,6 @@ class VolSurface:
     ) -> np.ndarray:
         """Calculate theoretical option prices at arbitrary time t.
         
-        High-performance method utilizing the internal interpolators directly.
-
         Args:
             strikes: Strike price(s).
             t: Time to expiry (years as float) or Expiry Date (string/date).
@@ -871,15 +912,82 @@ class VolSurface:
         # Iterate over fitted slices and derive distribution for each
         for expiry_timestamp in self.expiries:
             # We can use the slice() method to get a VolCurve, then ask it for distribution
-            # This is slightly inefficient as it creates a VolCurve object just to discard it,
-            # but it ensures consistent logic.
-            # Alternatively, we can manually construct the VolCurve from stored state.
-
-            # Let's use the slice() method for correctness and simplicity
             vol_curve = self.slice(expiry_timestamp)
             distributions[expiry_timestamp] = vol_curve.implied_distribution()
 
         return ProbSurface(distributions)
+
+    def atm_vol(self, t: float | str | date | pd.Timestamp) -> float:
+        """Return At-The-Money (ATM) implied volatility at time t.
+        
+        ATM is defined as Strike = Forward Price at time t.
+
+        Args:
+            t: Time to maturity in years (float) or Expiry Date.
+
+        Returns:
+            float: Interpolated ATM implied volatility.
+        """
+        if self._interpolator is None:
+             raise ValueError("Surface not fitted.")
+
+        # Resolve t to years
+        if isinstance(t, (str, date, pd.Timestamp)):
+             if self._market is None:
+                  raise ValueError("Market data not stored.")
+             expiry_ts = pd.to_datetime(t).tz_localize(None)
+             days = calculate_days_to_expiry(expiry_ts, self._market.valuation_date)
+             t_years = days / 365.0
+        else:
+             t_years = float(t)
+             
+        if t_years <= 0:
+             return 0.0
+
+        F = self.forward_price(t_years)
+        return self.implied_vol(F, t_years)
+
+    def iv_results(self) -> pd.DataFrame:
+        """Return a concatenated DataFrame of calibration results for all fitted expiries.
+
+        Returns:
+            pd.DataFrame: Long-format DataFrame with 'expiry' column added.
+        """
+        if self._model is None:
+            raise ValueError("Surface not fitted.")
+
+        dfs = []
+        for expiry in self.expiries:
+            # slice() ensures we get the real fitted curve
+            curve = self.slice(expiry)
+            try:
+                # curve.iv_results() returns the DataFrame for that slice
+                df = curve.iv_results()
+                df["expiry"] = expiry
+                dfs.append(df)
+            except ValueError:
+                continue
+        
+        if not dfs:
+            return pd.DataFrame()
+            
+        return pd.concat(dfs, ignore_index=True)
+
+    @property
+    def params(self) -> dict[pd.Timestamp, Any]:
+        """Return a dictionary of fitted parameters for each expiry pillar.
+
+        Returns:
+            dict: {expiry_timestamp: params_object}
+        """
+        if self._model is None:
+            return {}
+            
+        params_dict = {}
+        for expiry in self.expiries:
+             curve = self.slice(expiry)
+             params_dict[expiry] = curve.params
+        return params_dict
 
     def plot(
         self,

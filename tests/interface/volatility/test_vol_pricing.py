@@ -20,13 +20,15 @@ def sample_market():
 
 @pytest.fixture
 def single_expiry_chain():
-    # Create a synthetic chain for 30 days out with enough points for SVI (min 4-5)
+    """Create a synthetic option chain for a single expiry (30 days out).
+
+    Includes both Calls (roughly convex, ~20% vol) and Puts (derived via 
+    Put-Call Parity) to ensure compatibility with Black-76 pricing constraints.
+    """
     strikes = [80, 85, 90, 95, 100, 105, 110, 115, 120]
     expiry = pd.Timestamp("2025-01-31")
     
-    # Fake prices approx to 20% vol, roughly convex
-    # Just to pass the fit, exact SVI shape doesn't matter for pricing mechanics test
-    # as long as it fits something.
+    # Approx 20% vol prices
     data = {
         "expiry": [expiry] * len(strikes),
         "strike": strikes,
@@ -35,10 +37,28 @@ def single_expiry_chain():
         "last_price": [20.75, 16.0, 11.25, 6.75, 3.0, 1.05, 0.4, 0.15, 0.08],
         "option_type": ["call"] * len(strikes)
     }
-    return pd.DataFrame(data)
+    calls = pd.DataFrame(data)
+    
+    # Create Puts using approx parity: P = C - S + K*df
+    S = 100.0
+    r = 0.05
+    t = 30.0 / 365.0
+    df = np.exp(-r * t)
+    
+    puts = calls.copy()
+    puts["option_type"] = "put"
+    puts["last_price"] = (calls["last_price"] - S + calls["strike"] * df).abs()
+    puts["bid"] = (calls["bid"] - S + calls["strike"] * df).abs()
+    puts["ask"] = (calls["ask"] - S + calls["strike"] * df).abs()
+
+    return pd.concat([calls, puts], ignore_index=True)
 
 @pytest.fixture
 def multi_expiry_chain():
+    """Create a synthetic option chain with two expiries (30d and 60d).
+
+    Each expiry includes Calls and corresponding Puts generated via parity.
+    """
     strikes = [80, 85, 90, 95, 100, 105, 110, 115, 120]
     exp1 = pd.Timestamp("2025-01-31") # 30d
     exp2 = pd.Timestamp("2025-03-02") # 60d
@@ -59,7 +79,30 @@ def multi_expiry_chain():
         "last_price": [21.75, 17.25, 12.25, 7.75, 4.0, 1.65, 1.0, 0.5, 0.25],
         "option_type": ["call"] * len(strikes)
     }
-    return pd.concat([pd.DataFrame(data1), pd.DataFrame(data2)], ignore_index=True)
+    df1 = pd.DataFrame(data1)
+    df2 = pd.DataFrame(data2)
+    
+    # Generate Puts for parity (S=100, r=0.05)
+    S = 100.0
+    r = 0.05
+    
+    def add_puts(df_calls, t_days):
+        df_puts = df_calls.copy()
+        df_puts["option_type"] = "put"
+        t = t_days / 365.0
+        df_p = np.exp(-r * t)
+        
+        # P = C - S + K*df
+        # Use abs() to ensure no negative garbage from fake data
+        df_puts["last_price"] = (df_calls["last_price"] - S + df_calls["strike"] * df_p).abs()
+        df_puts["bid"] = (df_calls["bid"] - S + df_calls["strike"] * df_p).abs()
+        df_puts["ask"] = (df_calls["ask"] - S + df_calls["strike"] * df_p).abs()
+        return df_puts
+
+    df1_puts = add_puts(df1, 30)
+    df2_puts = add_puts(df2, 60)
+
+    return pd.concat([df1, df1_puts, df2, df2_puts], ignore_index=True)
 
 
 def test_vol_curve_price_black76(sample_market, single_expiry_chain):
@@ -74,7 +117,7 @@ def test_vol_curve_price_black76(sample_market, single_expiry_chain):
     
     # 2. Manual Verification
     # Recover state
-    F = vc.forward
+    F = vc.forward_price
     r = sample_market.risk_free_rate
     expiry_date = single_expiry_chain["expiry"].iloc[0].date()
     t = (expiry_date - sample_market.valuation_date).days / 365.0
@@ -116,7 +159,7 @@ def test_vol_curve_parity(sample_market, single_expiry_chain):
     P = vc.price([K], call_or_put="put")[0]
     
     # Parity: C - P = D * (F - K)
-    F = vc.forward
+    F = vc.forward_price
     t = 30.0 / 365.0
     r = 0.05
     df = np.exp(-r * t)

@@ -90,7 +90,7 @@ class TestProbSurfaceSlice:
     def test_slice_has_valid_pdf(self, prob_surface):
         """Sliced ProbCurve has valid PDF."""
         curve = prob_surface.slice(prob_surface.expiries[0])
-        assert np.all(curve.pdf >= 0)
+        assert np.all(curve.pdf_values >= 0)
 
     def test_slice_invalid_expiry_raises(self, prob_surface):
         """slice() with invalid expiry raises ValueError."""

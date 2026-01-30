@@ -89,8 +89,8 @@ class TestVolCurveFit:
         from oipd import VolCurve
         vc = VolCurve()
         vc.fit(sample_option_chain, market_inputs)
-        assert vc.forward is not None
-        assert vc.forward > 0
+        assert vc.forward_price is not None
+        assert vc.forward_price > 0
 
     def test_fit_with_column_mapping(self, market_inputs):
         """fit() works with custom column mapping."""
@@ -127,11 +127,11 @@ class TestVolCurvePreFitErrors:
             _ = vc.params
 
     def test_forward_before_fit_raises(self):
-        """Accessing .forward before fit() raises ValueError."""
+        """Accessing .forward_price before fit() raises ValueError."""
         from oipd import VolCurve
         vc = VolCurve()
         with pytest.raises(ValueError, match="Call fit before"):
-            _ = vc.forward
+            _ = vc.forward_price
 
     def test_call_before_fit_raises(self):
         """Calling vc(strikes) before fit() raises ValueError."""
@@ -180,31 +180,31 @@ class TestVolCurveCall:
 # =============================================================================
 
 class TestVolCurveIvSmile:
-    """Tests for VolCurve.iv_smile() DataFrame output."""
+    """Tests for VolCurve.iv_results() DataFrame output."""
 
     def test_iv_smile_returns_dataframe(self, sample_option_chain, market_inputs):
-        """iv_smile() returns a DataFrame."""
+        """iv_results() returns a DataFrame."""
         from oipd import VolCurve
         vc = VolCurve()
         vc.fit(sample_option_chain, market_inputs)
-        smile = vc.iv_smile()
+        smile = vc.iv_results()
         assert isinstance(smile, pd.DataFrame)
 
     def test_iv_smile_has_expected_columns(self, sample_option_chain, market_inputs):
-        """iv_smile() DataFrame has expected columns."""
+        """iv_results() DataFrame has expected columns."""
         from oipd import VolCurve
         vc = VolCurve()
         vc.fit(sample_option_chain, market_inputs)
-        smile = vc.iv_smile()
+        smile = vc.iv_results()
         expected_cols = {"strike", "fitted_iv"}
         assert expected_cols.issubset(set(smile.columns))
 
     def test_iv_smile_respects_points_arg(self, sample_option_chain, market_inputs):
-        """iv_smile(points=N) returns approximately N rows."""
+        """iv_results(points=N) returns approximately N rows."""
         from oipd import VolCurve
         vc = VolCurve()
         vc.fit(sample_option_chain, market_inputs)
-        smile = vc.iv_smile(points=50)
+        smile = vc.iv_results(points=50)
         # May include observed points, so check >= requested
         assert len(smile) >= 50
 
@@ -267,7 +267,7 @@ class TestVolCurveImpliedDistribution:
         vc = VolCurve()
         vc.fit(sample_option_chain, market_inputs)
         prob = vc.implied_distribution()
-        assert np.all(prob.pdf >= 0)
+        assert np.all(prob.pdf_values >= 0)
 
 
 # =============================================================================

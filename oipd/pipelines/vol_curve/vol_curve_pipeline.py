@@ -87,12 +87,7 @@ def fit_vol_curve_internal(
     # For Black-76, use forward price; for BS, use spot
     if pricing_engine == "black76":
         if forward_price is None:
-            warnings.warn(
-                "Black-76 requires a parity-implied forward but put quotes are missing. "
-                "Using spot price as fallback.",
-                UserWarning,
-            )
-            underlying_for_iv = effective_spot
+            raise CalculationError("Black-76 requires parity-implied forward but put quotes are missing.")
         else:
             underlying_for_iv = forward_price
     else:
@@ -212,8 +207,16 @@ def fit_vol_curve_internal(
         **fit_kwargs,
     )
 
+    # Calculate At-The-Money (ATM) Volatility
+    # Defined as IV at strike = forward
+    try:
+         atm_vol = float(vol_curve(underlying_for_iv))
+    except (TypeError, ValueError):
+         atm_vol = None
+
     # 9. Return vol curve + metadata (NO RND computation!)
     metadata = {
+        "at_money_vol": atm_vol,
         "forward_price": underlying_for_iv,
         "pricing_engine": pricing_engine,
         "method": method,

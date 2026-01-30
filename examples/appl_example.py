@@ -54,7 +54,7 @@ appl_vol_curve.plot(include_observed=True) #, xlim=(200, 300), ylim=(0, 1))
 plt.show()
 
 # get fitted vol as dataframe
-fitted_vol_df = appl_vol_curve.iv_smile()
+fitted_vol_df = appl_vol_curve.iv_results()
 fitted_vol_df.head()
 
 
