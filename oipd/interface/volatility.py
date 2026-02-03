@@ -13,14 +13,30 @@ import matplotlib.ticker as ticker
 import warnings
 
 from oipd.core.errors import CalculationError
-from oipd.core.utils import calculate_days_to_expiry
+from oipd.core.utils import calculate_days_to_expiry, resolve_horizon, calculate_time_to_expiry, convert_days_to_years
 from oipd.core.vol_surface_fitting import fit_slice
-from oipd.core.vol_surface_fitting.shared.svi_types import SVICalibrationOptions
+
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.pipelines.vol_surface import fit_surface as fit_vol_surface_internal
 from oipd.presentation.publication import _apply_publication_style, _style_publication_axes
 from oipd.pricing import get_pricer
-from oipd.pricing.black76 import black76_call_price, ArrayLike
+from oipd.pricing.black76 import (
+    black76_call_price,
+    black76_delta,
+    black76_gamma,
+    black76_vega,
+    black76_theta,
+    black76_rho,
+    ArrayLike,
+)
+from oipd.pricing.black_scholes import (
+    black_scholes_delta,
+    black_scholes_gamma,
+    black_scholes_vega,
+    black_scholes_theta,
+    black_scholes_rho,
+)
+
 from oipd.market_inputs import (
     MarketInputs,
     ResolvedMarket,
@@ -207,7 +223,7 @@ class VolCurve:
              # Should not happen for standard fitted curves
              raise ValueError("Expiry date not found in metadata.")
 
-        T = calculate_days_to_expiry(expiry, self._resolved_market.valuation_date) / 365.0
+        T = calculate_time_to_expiry(expiry, self._resolved_market.valuation_date)
         # Ensure non-negative T logic is handled in calculate_days_to_expiry (returns 0 if expired)
         return (sigma ** 2) * T
 
@@ -323,8 +339,7 @@ class VolCurve:
         # Calculate time to expiry for total variance conversion if needed
         t_to_expiry = None
         if self._resolved_market is not None and expiry_date is not None:
-            days = calculate_days_to_expiry(expiry_date, self._resolved_market.valuation_date)
-            t_to_expiry = days / 365.0
+            t_to_expiry = calculate_time_to_expiry(expiry_date, self._resolved_market.valuation_date)
 
         return plot_iv_smile(
             plot_df,
@@ -465,8 +480,7 @@ class VolCurve:
             if expiry_date is None:
                 raise ValueError("Expiry date not found in metadata")
             
-            days = calculate_days_to_expiry(expiry_date, self._resolved_market.valuation_date)
-            t = days / 365.0
+            t = calculate_time_to_expiry(expiry_date, self._resolved_market.valuation_date)
 
         # Safety clamp for t
         t = max(t, 1e-6)
@@ -536,12 +550,32 @@ class VolCurve:
             expiry_date = self._metadata.get("expiry_date") if self._metadata else None
             if expiry_date is None:
                 raise ValueError("Expiry date not found in metadata")
-            days = calculate_days_to_expiry(expiry_date, self._resolved_market.valuation_date)
-            t = days / 365.0
+            t = calculate_time_to_expiry(expiry_date, self._resolved_market.valuation_date)
         t = max(t, 1e-6)
 
         q = self._resolved_market.dividend_yield
         return K, sigma, t, r, q
+
+    def _dispatch_greek(
+        self,
+        func_black76: Callable,
+        func_bs: Callable,
+        strikes: ArrayLike,
+        **kwargs,
+    ) -> np.ndarray:
+        """Dispatch controller: routes the calculation to the appropriate pricing kernel (Black-76 or Black-Scholes)."""
+        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
+
+        if self.pricing_engine == "black76":
+            F = self.forward_price
+            if F is None:
+                raise ValueError(f"Forward price required for Black-76 Greeks")
+            return func_black76(F, K, sigma, t, r, **kwargs)
+        else:  # bs
+            S = self._resolved_market.underlying_price
+            if q is None:
+                raise ValueError(f"Dividend yield required for BS Greeks")
+            return func_bs(S, K, sigma, t, r, q, **kwargs)
 
     def delta(
         self,
@@ -557,20 +591,12 @@ class VolCurve:
         Returns:
             np.ndarray: Delta values.
         """
-        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
-
-        if self.pricing_engine == "black76":
-            from oipd.pricing.black76 import black76_delta
-            F = self.forward_price
-            if F is None:
-                raise ValueError("Forward price required for Black-76 Delta")
-            return black76_delta(F, K, sigma, t, r, call_or_put)
-        else:  # bs
-            from oipd.pricing.black_scholes import black_scholes_delta
-            S = self._resolved_market.underlying_price
-            if q is None:
-                raise ValueError("Dividend yield required for BS Delta")
-            return black_scholes_delta(S, K, sigma, t, r, q, call_or_put)
+        return self._dispatch_greek(
+            black76_delta,
+            black_scholes_delta,
+            strikes,
+            call_or_put=call_or_put,
+        )
 
     def gamma(self, strikes: ArrayLike) -> np.ndarray:
         """Calculate Gamma (∂²V/∂S² or ∂²V/∂F²) for the fitted smile.
@@ -581,20 +607,7 @@ class VolCurve:
         Returns:
             np.ndarray: Gamma values (same for Call and Put).
         """
-        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
-
-        if self.pricing_engine == "black76":
-            from oipd.pricing.black76 import black76_gamma
-            F = self.forward_price
-            if F is None:
-                raise ValueError("Forward price required for Black-76 Gamma")
-            return black76_gamma(F, K, sigma, t, r)
-        else:  # bs
-            from oipd.pricing.black_scholes import black_scholes_gamma
-            S = self._resolved_market.underlying_price
-            if q is None:
-                raise ValueError("Dividend yield required for BS Gamma")
-            return black_scholes_gamma(S, K, sigma, t, r, q)
+        return self._dispatch_greek(black76_gamma, black_scholes_gamma, strikes)
 
     def vega(self, strikes: ArrayLike) -> np.ndarray:
         """Calculate Vega (∂V/∂σ) for the fitted smile.
@@ -605,20 +618,7 @@ class VolCurve:
         Returns:
             np.ndarray: Vega values (same for Call and Put).
         """
-        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
-
-        if self.pricing_engine == "black76":
-            from oipd.pricing.black76 import black76_vega
-            F = self.forward_price
-            if F is None:
-                raise ValueError("Forward price required for Black-76 Vega")
-            return black76_vega(F, K, sigma, t, r)
-        else:  # bs
-            from oipd.pricing.black_scholes import black_scholes_call_vega
-            S = self._resolved_market.underlying_price
-            if q is None:
-                raise ValueError("Dividend yield required for BS Vega")
-            return black_scholes_call_vega(S, K, sigma, t, r, q)
+        return self._dispatch_greek(black76_vega, black_scholes_vega, strikes)
 
     def theta(
         self,
@@ -634,20 +634,12 @@ class VolCurve:
         Returns:
             np.ndarray: Theta values (negative = time decay).
         """
-        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
-
-        if self.pricing_engine == "black76":
-            from oipd.pricing.black76 import black76_theta
-            F = self.forward_price
-            if F is None:
-                raise ValueError("Forward price required for Black-76 Theta")
-            return black76_theta(F, K, sigma, t, r, call_or_put)
-        else:  # bs
-            from oipd.pricing.black_scholes import black_scholes_theta
-            S = self._resolved_market.underlying_price
-            if q is None:
-                raise ValueError("Dividend yield required for BS Theta")
-            return black_scholes_theta(S, K, sigma, t, r, q, call_or_put)
+        return self._dispatch_greek(
+            black76_theta,
+            black_scholes_theta,
+            strikes,
+            call_or_put=call_or_put,
+        )
 
     def rho(
         self,
@@ -663,20 +655,12 @@ class VolCurve:
         Returns:
             np.ndarray: Rho values.
         """
-        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
-
-        if self.pricing_engine == "black76":
-            from oipd.pricing.black76 import black76_rho
-            F = self.forward_price
-            if F is None:
-                raise ValueError("Forward price required for Black-76 Rho")
-            return black76_rho(F, K, sigma, t, r, call_or_put)
-        else:  # bs
-            from oipd.pricing.black_scholes import black_scholes_rho
-            S = self._resolved_market.underlying_price
-            if q is None:
-                raise ValueError("Dividend yield required for BS Rho")
-            return black_scholes_rho(S, K, sigma, t, r, q, call_or_put)
+        return self._dispatch_greek(
+            black76_rho,
+            black_scholes_rho,
+            strikes,
+            call_or_put=call_or_put,
+        )
 
     def greeks(
         self,
@@ -870,8 +854,8 @@ class VolSurface:
             raise ValueError("Market data not stored")
 
         # Calculate time to expiry in years
+        t = calculate_time_to_expiry(expiry_timestamp, self._market.valuation_date)
         days = calculate_days_to_expiry(expiry_timestamp, self._market.valuation_date)
-        t = days / 365.0
 
         if t <= 0:
             raise ValueError(
@@ -1034,8 +1018,7 @@ class VolSurface:
         if isinstance(t, (str, date, pd.Timestamp)):
             # Convert date to t
             expiry_ts = pd.to_datetime(t).tz_localize(None)
-            days = calculate_days_to_expiry(expiry_ts, self._market.valuation_date)
-            t_years = days / 365.0
+            t_years = calculate_time_to_expiry(expiry_ts, self._market.valuation_date)
         else:
             t_years = float(t)
 
@@ -1095,6 +1078,8 @@ class VolSurface:
         if self._model is None:
             raise ValueError("Call fit before deriving the distribution surface")
 
+        from oipd.interface.probability import ProbSurface
+
         distributions = {}
 
         # Iterate over fitted slices and derive distribution for each
@@ -1124,8 +1109,7 @@ class VolSurface:
              if self._market is None:
                   raise ValueError("Market data not stored.")
              expiry_ts = pd.to_datetime(t).tz_localize(None)
-             days = calculate_days_to_expiry(expiry_ts, self._market.valuation_date)
-             t_years = days / 365.0
+             t_years = calculate_time_to_expiry(expiry_ts, self._market.valuation_date)
         else:
              t_years = float(t)
              
@@ -1177,32 +1161,340 @@ class VolSurface:
              params_dict[expiry] = curve.params
         return params_dict
 
-    def plot(
+    # -------------------------------------------------------------------------
+    # Greeks
+    # -------------------------------------------------------------------------
+
+    def _dispatch_surface_greek(
         self,
-        *,
-        x_axis: Literal["strike", "log_moneyness"] = "log_moneyness",
-        y_axis: Literal["iv", "total_variance"] = "total_variance",
-        include_observed: bool = False,
-        figsize: tuple[float, float] = (10.0, 5.0),
-        title: Optional[str] = None,
-        xlim: Optional[tuple[float, float]] = None,
-        ylim: Optional[tuple[float, float]] = None,
-        label_format: Literal["date", "days"] = "date",
+        func_black76: Callable,
+        func_bs: Callable,
+        strikes: ArrayLike,
+        t: float | str | date | pd.Timestamp,
         **kwargs,
-    ) -> Any:
-        """Plot overlayed IV smiles for all fitted expiries.
+    ) -> np.ndarray:
+        """Centralized dispatch for Surface Greek calculations at arbitrary time t."""
+        if self._interpolator is None or self._market is None:
+            raise ValueError("Call fit before computing Greeks")
+
+        # 1. Resolve Time t
+        if isinstance(t, (str, date, pd.Timestamp)):
+            t_years = calculate_time_to_expiry(t, self._market.valuation_date)
+        else:
+            t_years = float(t)
+        
+        t_years = max(t_years, 1e-6)
+
+        # 2. Resolve Inputs from Interpolator
+        K = np.asarray(strikes, dtype=float)
+        sigma = self._interpolator.implied_vol(K, t_years)
+        r = self._market.risk_free_rate
+        q = self._market.dividend_yield
+
+        # 3. Dispatch to Match Pricing Engine
+        if self.pricing_engine == "black76":
+            F = self._interpolator._forward_interp(t_years)
+            return func_black76(F, K, sigma, t_years, r, **kwargs)
+        else:  # bs
+            S = self._market.underlying_price
+            if q is None:
+                raise ValueError("Dividend yield required for BS Greeks")
+            return func_bs(S, K, sigma, t_years, r, q, **kwargs)
+
+    def delta(
+        self,
+        strikes: ArrayLike,
+        t: float | str | date | pd.Timestamp,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> np.ndarray:
+        """Calculate Delta (∂V/∂S or ∂V/∂F) for the surface at time t.
 
         Args:
-            x_axis: X-axis mode ("strike", "log_moneyness").
-            y_axis: Metric to plot on y-axis ("iv" or "total_variance"). Defaults to "total_variance".
-            include_observed: Whether to include observed market data points (default False).
-            figsize: Figure size as (width, height) in inches.
-            title: Optional plot title.
-            xlim: Optional x-axis limits as (min, max).
-            ylim: Optional y-axis limits as (min, max).
-            label_format: How to label each curve - ``"date"`` (e.g., "Jan 17, 2025")
-                or ``"days"`` (e.g., "30d").
-            **kwargs: Additional arguments forwarded to matplotlib plot calls.
+            strikes: Strike price(s).
+            t: Time to expiry.
+            call_or_put: "call" or "put".
+
+        Returns:
+            np.ndarray: Delta values.
+        """
+        return self._dispatch_surface_greek(
+            black76_delta,
+            black_scholes_delta,
+            strikes,
+            t,
+            call_or_put=call_or_put,
+        )
+
+    def gamma(
+        self,
+        strikes: ArrayLike,
+        t: float | str | date | pd.Timestamp,
+    ) -> np.ndarray:
+        """Calculate Gamma (∂²V/∂S² or ∂²V/∂F²) for the surface at time t.
+
+        Args:
+            strikes: Strike price(s).
+            t: Time to expiry.
+
+        Returns:
+            np.ndarray: Gamma values.
+        """
+        return self._dispatch_surface_greek(
+            black76_gamma,
+            black_scholes_gamma,
+            strikes,
+            t,
+        )
+
+    def vega(
+        self,
+        strikes: ArrayLike,
+        t: float | str | date | pd.Timestamp,
+    ) -> np.ndarray:
+        """Calculate Vega (∂V/∂σ) for the surface at time t.
+
+        Args:
+            strikes: Strike price(s).
+            t: Time to expiry.
+
+        Returns:
+            np.ndarray: Vega values.
+        """
+        return self._dispatch_surface_greek(
+            black76_vega,
+            black_scholes_vega,
+            strikes,
+            t,
+        )
+
+    def theta(
+        self,
+        strikes: ArrayLike,
+        t: float | str | date | pd.Timestamp,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> np.ndarray:
+        """Calculate Theta (∂V/∂t) for the surface at time t (per year).
+
+        Args:
+            strikes: Strike price(s).
+            t: Time to expiry.
+            call_or_put: "call" or "put".
+
+        Returns:
+            np.ndarray: Theta values.
+        """
+        return self._dispatch_surface_greek(
+            black76_theta,
+            black_scholes_theta,
+            strikes,
+            t,
+            call_or_put=call_or_put,
+        )
+
+    def rho(
+        self,
+        strikes: ArrayLike,
+        t: float | str | date | pd.Timestamp,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> np.ndarray:
+        """Calculate Rho (∂V/∂r) for the surface at time t.
+
+        Args:
+            strikes: Strike price(s).
+            t: Time to expiry.
+            call_or_put: "call" or "put".
+
+        Returns:
+            np.ndarray: Rho values.
+        """
+        return self._dispatch_surface_greek(
+            black76_rho,
+            black_scholes_rho,
+            strikes,
+            t,
+            call_or_put=call_or_put,
+        )
+
+    def greeks(
+        self,
+        strikes: ArrayLike,
+        t: float | str | date | pd.Timestamp,
+        call_or_put: Literal["call", "put"] = "call",
+    ) -> pd.DataFrame:
+        """Calculate all Greeks for the surface at time t.
+
+        Args:
+            strikes: Strike price(s).
+            t: Time to expiry.
+            call_or_put: "call" or "put".
+
+        Returns:
+            pd.DataFrame: Table with columns [strike, delta, gamma, vega, theta, rho].
+        """
+        K = np.asarray(strikes, dtype=float)
+        return pd.DataFrame({
+            "strike": K,
+            "delta": self.delta(K, t, call_or_put),
+            "gamma": self.gamma(K, t),
+            "vega": self.vega(K, t),
+            "theta": self.theta(K, t, call_or_put),
+            "rho": self.rho(K, t, call_or_put),
+        })
+
+    def plot(
+            self,
+            *,
+            x_axis: Literal["strike", "log_moneyness"] = "log_moneyness",
+            y_axis: Literal["iv", "total_variance"] = "total_variance",
+            include_observed: bool = False,
+            figsize: tuple[float, float] = (10.0, 5.0),
+            title: Optional[str] = None,
+            xlim: Optional[tuple[float, float]] = None,
+            ylim: Optional[tuple[float, float]] = None,
+            label_format: Literal["date", "days"] = "date",
+            **kwargs,
+        ) -> Any:
+            """Plot overlayed IV smiles for all fitted expiries.
+
+            Args:
+                x_axis: X-axis mode ("strike", "log_moneyness").
+                y_axis: Metric to plot on y-axis ("iv" or "total_variance"). Defaults to "total_variance".
+                include_observed: Whether to include observed market data points (default False).
+                figsize: Figure size as (width, height) in inches.
+                title: Optional plot title.
+                xlim: Optional x-axis limits as (min, max).
+                ylim: Optional y-axis limits as (min, max).
+                label_format: How to label each curve - ``"date"`` (e.g., "Jan 17, 2025")
+                    or ``"days"`` (e.g., "30d").
+                **kwargs: Additional arguments forwarded to matplotlib plot calls.
+
+            Returns:
+                matplotlib.figure.Figure: The plot figure.
+
+            Raises:
+                ValueError: If ``fit`` has not been called.
+            """
+            if self._model is None:
+                raise ValueError("Call fit before plotting the surface")
+
+            _apply_publication_style(plt)
+
+            fig, ax = plt.subplots(figsize=figsize)
+
+            # Get color cycle
+            prop_cycle = plt.rcParams["axes.prop_cycle"]
+            colors = prop_cycle.by_key()["color"]
+
+            # Plot each expiry's IV smile by delegating to VolCurve.plot
+            for i, expiry_timestamp in enumerate(self.expiries):
+                vol_curve = self.slice(expiry_timestamp)
+                
+                # Generate label
+                if label_format == "days":
+                    resolved_market = vol_curve._resolved_market
+                    if resolved_market is not None:
+                        days = calculate_days_to_expiry(expiry_timestamp, resolved_market.valuation_date)
+                        label = f"{days}d"
+                    else:
+                        label = expiry_timestamp.strftime("%b %d, %Y")
+                else:
+                    label = expiry_timestamp.strftime("%b %d, %Y")
+
+                # Determine color: use kwargs if provided, else cycle
+                current_line_kwargs = {"label": label, **kwargs}
+                if "color" not in current_line_kwargs and "c" not in current_line_kwargs:
+                    current_line_kwargs["color"] = colors[i % len(colors)]
+
+                # Delegate to curve plotting
+                # We suppress individual chart decorations (titles, labels, legends)
+                # and handle them globally for the surface.
+                vol_curve.plot(
+                    ax=ax,
+                    x_axis=x_axis,
+                    y_axis=y_axis,
+                    include_observed=include_observed,
+                    title="",  # Suppress per-curve title
+                    show_axis_labels=False,  # Suppress per-curve axis labels
+                    show_legend=False,  # Suppress per-curve legend
+                    line_kwargs=current_line_kwargs,
+                    xlim=xlim,
+                    ylim=ylim,
+                )
+
+            # Global Surface Decorations
+            
+            # Axis labels
+            if x_axis == "log_moneyness":
+                ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
+            else:
+                ax.set_xlabel("Strike", fontsize=11)
+
+            if y_axis == "total_variance":
+                ax.set_ylabel("Total Variance", fontsize=11)
+            else:
+                ax.set_ylabel("Implied Volatility", fontsize=11)
+                # Format y-axis as percentage only for IV
+                ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+
+            # Legend
+            legend = ax.legend(loc="best", frameon=False)
+            if legend is not None:
+                for text in legend.get_texts():
+                    text.set_color("#333333")
+
+            # Apply publication styling to axes
+            _style_publication_axes(ax)
+
+            # Title
+            resolved_title = title or "Implied Volatility Surface"
+            if y_axis == "total_variance" and title is None:
+                resolved_title = "Total Variance Surface"
+                
+            plt.subplots_adjust(top=0.88)
+            fig.suptitle(
+                resolved_title,
+                fontsize=16,
+                fontweight="bold",
+                y=0.95,
+                color="#333333",
+            )
+
+            return fig
+
+
+    def plot_3d(
+        self,
+        *,
+        strike_range: Optional[tuple[float, float]] = None,
+        expiry_range: Optional[tuple[Any, Any]] = None,
+        n_strikes: int = 80,
+        n_expiries: int = 50,
+        view_angle: tuple[float, float] = (30, -45),
+        figsize: tuple[float, float] = (14, 10),
+        title: Optional[str] = None,
+        dark_mode: bool = True,
+        show_projections: bool = False,
+        cmap: str = "coolwarm",
+        zlim: Optional[tuple[float, float]] = None,
+        projection_type: Literal["ortho", "persp"] = "ortho",
+    ) -> Any:
+        """Visualize the fitted volatility surface in 3D.
+
+        Generates a 3D surface plot of Implied Volatility vs Strike and Expiry.
+
+        Args:
+            strike_range: Optional (min, max) tuple for strike axis. Auto-determined if None.
+            expiry_range: Optional (min, max) tuple for expiry axis (in days). Auto-determined if None.
+            n_strikes: Number of grid points for strike axis.
+            n_expiries: Number of grid points for expiry axis.
+            view_angle: (elevation, azimuth) for 3D camera.
+            figsize: Figure size (width, height).
+            title: Custom plot title.
+            dark_mode: If True, use dark theme.
+            show_projections: Deprecated. Projections are no longer rendered.
+            cmap: Matplotlib colormap.
+            zlim: Explicit limits for Z-axis (IV).
+            projection_type: 'ortho' for isometric-like view, 'persp' for perspective.
 
         Returns:
             matplotlib.figure.Figure: The plot figure.
@@ -1210,106 +1502,165 @@ class VolSurface:
         Raises:
             ValueError: If ``fit`` has not been called.
         """
-        if self._model is None:
-            raise ValueError("Call fit before plotting the surface")
+        if self._model is None or self._interpolator is None:
+            raise ValueError("Call fit before plotting the 3D surface")
 
-        try:
-            import matplotlib.pyplot as plt
-            import matplotlib.ticker as ticker
-        except ImportError as exc:
-            raise ImportError(
-                "Matplotlib is required for plotting. Install with: pip install matplotlib"
-            ) from exc
+        from oipd.presentation.surface_3d import plot_surface_3d
 
-        # Apply publication style
-        from oipd.presentation.publication import (
-            _apply_publication_style,
-            _style_publication_axes,
-        )
+        # -------------------------------------------------------------------------
+        # 1. Determine Time (Y-Axis) Domain
+        # -------------------------------------------------------------------------
+        all_expiries = sorted(self.expiries)
+        valuation_date = self._market.valuation_date
 
-        _apply_publication_style(plt)
+        if expiry_range is not None:
+            t_min = calculate_days_to_expiry(pd.to_datetime(expiry_range[0]), valuation_date)
+            t_max = calculate_days_to_expiry(pd.to_datetime(expiry_range[1]), valuation_date)
+        else:
+            t_min = calculate_days_to_expiry(all_expiries[0], valuation_date)
+            t_max = calculate_days_to_expiry(all_expiries[-1], valuation_date)
 
-        fig, ax = plt.subplots(figsize=figsize)
+        t_min = max(t_min, 1)  # At least 1 day
+        t_grid_days = np.linspace(t_min, t_max, n_expiries)
+        t_grid_years = convert_days_to_years(t_grid_days)
 
-        # Get color cycle
-        prop_cycle = plt.rcParams["axes.prop_cycle"]
-        colors = prop_cycle.by_key()["color"]
-
-        # Plot each expiry's IV smile by delegating to VolCurve.plot
-        for i, expiry_timestamp in enumerate(self.expiries):
-            vol_curve = self.slice(expiry_timestamp)
+        # -------------------------------------------------------------------------
+        # 2. Determine Strike (X-Axis) Domain
+        # -------------------------------------------------------------------------
+        if strike_range is not None:
+            k_min, k_max = strike_range
+        else:
+            # Auto-determine from the fitted data
+            # Use log-moneyness bounds from observations, then convert to strikes
+            all_lm = []
+            for t in self.expiries:
+                # Use public API to get slice for each expiry
+                vc = self.slice(t)
+                chain = vc._chain
+                # Parity-implied forward for this slice
+                F = vc.forward_price
+                
+                if chain is not None and "strike" in chain.columns and F is not None and F > 0:
+                    strikes = chain["strike"].to_numpy(dtype=float)
+                    # Calculate log-moneyness for these observations
+                    lm = np.log(strikes / F)
+                    all_lm.extend(lm[np.isfinite(lm)])
             
-            # Generate label
-            if label_format == "days":
-                resolved_market = vol_curve._resolved_market
-                if resolved_market is not None:
-                    days = calculate_days_to_expiry(expiry_timestamp, resolved_market.valuation_date)
-                    label = f"{days}d"
-                else:
-                    label = expiry_timestamp.strftime("%b %d, %Y")
+            if not all_lm:
+                # Fallback if no valid observations found
+                lm_min, lm_max = -0.5, 0.5
             else:
-                label = expiry_timestamp.strftime("%b %d, %Y")
+                k_arr = np.array(all_lm)
+                # Trim extreme outliers (top/bottom 2%) to focus on liquid strikes
+                lm_min, lm_max = np.nanquantile(k_arr, [0.02, 0.98])
+            
+            # Convert log-moneyness to strikes using median forward
+            median_t = np.median(t_grid_years)
+            median_forward = self._interpolator._forward_interp(median_t)
+            k_min = median_forward * np.exp(lm_min)
+            k_max = median_forward * np.exp(lm_max)
 
-            # Determine color: use kwargs if provided, else cycle
-            current_line_kwargs = {"label": label, **kwargs}
-            if "color" not in current_line_kwargs and "c" not in current_line_kwargs:
-                current_line_kwargs["color"] = colors[i % len(colors)]
+        k_grid = np.linspace(k_min, k_max, n_strikes)
 
-            # Delegate to curve plotting
-            # We suppress individual chart decorations (titles, labels, legends)
-            # and handle them globally for the surface.
-            vol_curve.plot(
-                ax=ax,
-                x_axis=x_axis,
-                y_axis=y_axis,
-                include_observed=include_observed,
-                title="",  # Suppress per-curve title
-                show_axis_labels=False,  # Suppress per-curve axis labels
-                show_legend=False,  # Suppress per-curve legend
-                line_kwargs=current_line_kwargs,
-                xlim=xlim,
-                ylim=ylim,
+        # -------------------------------------------------------------------------
+        # 3. Build Meshgrid & Evaluate Implied Vol
+        # -------------------------------------------------------------------------
+        X, Y = np.meshgrid(k_grid, t_grid_days)  # X = strikes, Y = days
+        Z = np.zeros_like(X)
+
+        for i, t_years in enumerate(t_grid_years):
+            forward = self._interpolator._forward_interp(t_years)
+            # The interpolator is callable with (K, t)
+            # It expects Strikes K (not log-moneyness)
+            total_var = self._interpolator(k_grid, t_years)
+            iv = np.sqrt(np.maximum(total_var / max(t_years, 1e-8), 1e-12))
+            # Convert from decimal (0.30) to percentage (30) for display
+            Z[i, :] = iv * 100
+
+        if show_projections:
+            warnings.warn(
+                "Wall projections are no longer rendered for 3D vol surfaces.",
+                UserWarning,
             )
 
-        # Global Surface Decorations
-        
-        # Axis labels
-        if x_axis == "log_moneyness":
-            ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
-        else:
-            ax.set_xlabel("Strike", fontsize=11)
-
-        if y_axis == "total_variance":
-             ax.set_ylabel("Total Variance", fontsize=11)
-        else:
-            ax.set_ylabel("Implied Volatility", fontsize=11)
-            # Format y-axis as percentage only for IV
-            ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
-
-        # Legend
-        legend = ax.legend(loc="best", frameon=False)
-        if legend is not None:
-            for text in legend.get_texts():
-                text.set_color("#333333")
-
-        # Apply publication styling to axes
-        _style_publication_axes(ax)
-
-        # Title
+        # -------------------------------------------------------------------------
+        # 4. Delegate to Generic Plotter
+        # -------------------------------------------------------------------------
         resolved_title = title or "Implied Volatility Surface"
-        if y_axis == "total_variance" and title is None:
-            resolved_title = "Total Variance Surface"
-            
-        plt.subplots_adjust(top=0.88)
-        fig.suptitle(
-            resolved_title,
-            fontsize=16,
-            fontweight="bold",
-            y=0.95,
-            color="#333333",
+        return plot_surface_3d(
+            X,
+            Y,
+            Z,
+            xlabel="Strike Price",
+            ylabel="Expiration (days)",
+            zlabel="Implied Vol (%)",
+            title=resolved_title,
+            cmap=cmap,
+            view_angle=view_angle,
+            figsize=figsize,
+            show_projections=False,
+            dark_mode=dark_mode,
+            zlim=zlim,
+            colorbar_label="Implied Volatility",
+            projection_type=projection_type,
         )
 
-        return fig
+
+    def plot_term_structure(
+        self,
+        at_money: Literal["forward", "spot"] = "forward",
+        title: Optional[str] = None,
+        figsize: tuple[float, float] = (10, 6),
+        marker: str = "",
+        line_color: Optional[str] = None,
+        num_points: int = 100,
+    ) -> Figure:
+        """Plot the ATM implied volatility term structure.
+
+        Visualizes how implied volatility changes across different expirations
+        for At-The-Money (ATM) options using surface interpolation.
+
+        Args:
+            at_money: Definition of ATM. "forward" (K=F) is standard for vol surfaces.
+                      "spot" (K=S) uses the current spot price.
+            title: Optional plot title.
+            figsize: Figure size (width, height) in inches.
+            marker: Marker style for data points. Use "" for no markers.
+            line_color: Optional color for the line.
+            num_points: Number of interpolation points across the expiry range.
+
+        Returns:
+            matplotlib.figure.Figure: The generated plot.
+
+        Raises:
+            ValueError: If the surface has not been fitted.
+        """
+        if self._model is None or self._interpolator is None:
+            raise ValueError("Call fit before plotting term structure")
+
+        from oipd.presentation.term_structure import plot_term_structure
+        from oipd.pipelines.vol_surface.term_structure import build_atm_term_structure
+
+        valuation_date = self._market.valuation_date
+
+        term_structure = build_atm_term_structure(
+            expiries=self.expiries,
+            valuation_date=valuation_date,
+            implied_vol=self._interpolator.implied_vol,
+            forward_price=self.forward_price,
+            spot_price=self._market.underlying_price,
+            at_money=at_money,
+            num_points=num_points,
+        )
+
+        return plot_term_structure(
+            days_to_expiry=term_structure["days_to_expiry"].to_numpy(),
+            atm_ivs=term_structure["atm_iv"].to_numpy() * 100.0,
+            title=title or f"ATM ({at_money.capitalize()}) Term Structure",
+            figsize=figsize,
+            marker=marker,
+            line_color=line_color,
+        )
 
 
 __all__ = ["VolCurve", "VolSurface"]

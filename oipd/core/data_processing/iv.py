@@ -9,11 +9,12 @@ import pandas as pd
 from scipy.optimize import brentq
 
 from oipd.core.errors import CalculationError
+from oipd.core.utils import convert_days_to_years
 from oipd.core.vol_surface_fitting import VolCurve, fit_surface
 from oipd.pricing.black76 import black76_call_price as _b76_price
 from oipd.pricing.black_scholes import (
     black_scholes_call_price as _bs_price,
-    black_scholes_call_vega as _bs_vega,
+    black_scholes_vega as _bs_vega,
 )
 
 
@@ -38,7 +39,7 @@ def compute_iv(
             "Effective underlying/forward price is required for IV extraction"
         )
 
-    years_to_expiry = days_to_expiry / 365.0
+    years_to_expiry = convert_days_to_years(days_to_expiry)
     prices_arr = options_data["price"].to_numpy(dtype=float)
     strikes_arr = options_data["strike"].to_numpy(dtype=float)
 

@@ -41,7 +41,7 @@ def black_scholes_call_price(
     return call
 
 
-def black_scholes_call_vega(
+def black_scholes_vega(
     S: ArrayLike,
     K: ArrayLike,
     sigma: ArrayLike,
@@ -49,7 +49,7 @@ def black_scholes_call_vega(
     r: float,
     q: float = 0.0,
 ):
-    """Analytical Vega (∂Price/∂σ) for Black-Scholes call."""
+    """Analytical Vega (∂Price/∂σ) for Black-Scholes. Same for Call and Put."""
     S = np.asarray(S, dtype=float)
     K = np.asarray(K, dtype=float)
     sigma = np.asarray(sigma, dtype=float)

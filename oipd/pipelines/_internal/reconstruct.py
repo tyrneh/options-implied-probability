@@ -8,6 +8,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 from scipy import interpolate
+from oipd.core.utils import convert_days_to_years
 
 from oipd.core.probability_density_conversion import (
     calculate_cdf_from_pdf,
@@ -74,7 +75,7 @@ class RebuiltSurface:
             maturity.
         """
 
-        maturity = max(float(days_to_expiry) / 365.0, 1e-8)
+        maturity = max(convert_days_to_years(days_to_expiry), 1e-8)
         days_override = int(days_to_expiry)
 
         if strike_grid is None and maturity in self._cache:
@@ -239,7 +240,7 @@ def rebuild_slice_from_svi(
     if missing:
         raise ValueError(f"SVI parameters missing required keys: {sorted(missing)}")
 
-    maturity_years = float(days_to_expiry) / 365.0
+    maturity_years = convert_days_to_years(days_to_expiry)
     if maturity_years <= 0.0:
         raise ValueError("days_to_expiry must be positive")
     if forward_price <= 0.0:

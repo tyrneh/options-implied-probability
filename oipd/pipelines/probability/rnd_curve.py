@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
-from oipd.core.utils import calculate_days_to_expiry
+from oipd.core.utils import calculate_days_to_expiry, convert_days_to_years
 from oipd.market_inputs import ResolvedMarket
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.core.probability_density_conversion import (
@@ -129,7 +129,7 @@ def derive_distribution_from_curve(
     else:
         # Fallback: Create a reasonable grid based on ATM vol and T
         # Assume roughly log-normal distribution width ~ sigma * sqrt(T)
-        T = days_to_expiry / 365.0
+        T = convert_days_to_years(days_to_expiry)
         atm_vol = vol_meta.get("at_money_vol")
         if atm_vol is None:
             raise CalculationError("Cannot determine default grid: 'at_money_vol' missing in metadata.")

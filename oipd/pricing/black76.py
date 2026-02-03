@@ -134,7 +134,13 @@ def black76_theta(
     r: float,
     call_or_put: str = "call",
 ) -> np.ndarray:
-    """Analytical Theta (∂V/∂t) for Black-76."""
+    """Analytical Theta (∂V/∂t) for Black-76.
+
+    Represents time decay; usually negative for long options.
+    Note: Standard Black-76 Theta definition often assumes F is constant.
+    This implementation calculates ∂V/∂t where t is time-to-expiry, so
+    it effectively returns -∂V/∂T.
+    """
     F = np.asarray(F, dtype=float)
     K = np.asarray(K, dtype=float)
     sigma = np.asarray(sigma, dtype=float)
@@ -145,64 +151,16 @@ def black76_theta(
     t = np.where(t < eps, eps, t)
 
     d1 = (np.log(F / K) + 0.5 * sigma**2 * t) / (sigma * np.sqrt(t))
-    d2 = d1 - sigma * np.sqrt(t)
     df = np.exp(-r * t)
     
-    # Common term: - (F * e^{-rT} * pdf(d1) * sigma) / (2 * sqrt(T))
-    term1 = - (F * df * norm.pdf(d1) * sigma) / (2 * np.sqrt(t))
+    call_price = df * (F * norm.cdf(d1) - K * norm.cdf(d1 - sigma * np.sqrt(t)))
     
-    # Sensitivity to discounting (r * V) is often included or separated.
-    # Standard Black-76 Theta includes the drift of the forward?
-    # Actually Black-76 V(F, t) = e^{-r(T-t)} * Black(F, K, sigma, T-t)
-    # Theta usually refers to derivative wrt calendar time passing (decreasing T).
-    # dV/dt = -dV/dT
-    
-    # Let's use dV/dT and flip sign.
-    # Call dV/dT = - (F e^{-rT} n(d1) sigma)/(2 sqrt(T)) - r K e^{-rT} N(d2) + r (CallPrice without discount?)
-    # Wait, simpler:
-    # V_call = e^{-rT} [F N(d1) - K N(d2)]
-    # terms from d(e^{-rT})/dT = -r V_call
-    # terms from d(N(d1))/dT ...
-    
-    # Standard Result for Black-76 Call Theta (derivative wrt time to expiry T):
-    # dC/dT = - (F e^{-rT} n(d1) sigma) / (2 sqrt(T)) - r * C
-    # But "Theta" usually means dC/dt (time passing), so it's -dC/dT.
-    # Theta_call = (F e^{-rT} n(d1) sigma) / (2 sqrt(T)) + r * C_call
-    
-    # Note: Many sources differ on sign convention. We return "sensitivity to DECREASE in time", i.e. dV/dt.
-    # Since t is "time to expiry", dV/dt = -dV/dT.
-    # So if dC/dT is negative (option loses value as T increases? No, option GAINS value as T increases).
-    # C(T) increases with T. So dC/dT > 0.
-    # So Theta = -dC/dT < 0.
-    
-    call_price = df * (F * norm.cdf(d1) - K * norm.cdf(d2))
-    dC_dT = (F * df * norm.pdf(d1) * sigma) / (2 * np.sqrt(t)) - r * call_price + r * F * df * norm.cdf(d1) 
-    # Wait, that derivative is messy.
-    # Use standard textbook formula for Black-76 Theta (per year):
-    # Theta_call = - (F * e^{-rT} * n(d1) * sigma) / (2 * sqrt(T)) + r * C_call - r * F * e^{-rT} * N(d1)??
-    # Actually, simplistic view:
-    # Theta_call approx = - (F * e^{-rT} * n(d1) * sigma) / (2 * sqrt(T)) + r * K * e^{-rT} * N(d2)
-    
-    term1_call = - (F * df * norm.pdf(d1) * sigma) / (2 * np.sqrt(t))
-    term2_call = r * K * df * norm.cdf(d2)
-    # Be careful with F drifting. Black-76 assumes F is constant (futures).
-    # If we treat F as spot, there is a drift. For Black-76, F is the underlying.
-    
-    theta_call = term1_call + term2_call - r * F * df * norm.cdf(d1) # This term accounts for forward discounting?
-    # Let's stick to the most robust source: Hull or similar.
-    # Hull for Futures Option (Black 76):
-    # Theta_call = - (F * e^{-rT} * n(d1) * sigma) / (2 * sqrt(T)) + r * K * e^{-rT} * N(d2) - r * F * e^{-rT} * N(d1)
-    # Simplifies to: - (F * e^{-rT} * n(d1) * sigma) / (2 * sqrt(T)) - r * C
-    
+    # Theta_call = - (F * e^{-rT} * n(d1) * sigma) / (2 * sqrt(T)) - r * C
     theta_call = - (F * df * norm.pdf(d1) * sigma) / (2 * np.sqrt(t)) - r * call_price
     
     if call_or_put == "put":
-        # Put Theta
-        # P = C - e^{-rT}(F - K)
-        # dP/dt = dC/dt - d/dt [e^{-rT}(F - K)]
-        #       = Theta_call - [-r * e^{-rT} * (F - K)] (assuming F constant)
-        #       = Theta_call + r * e^{-rT} * (F - K)
-        put_price = call_price - df * (F - K)
+        # Theta_put = Theta_call + r * e^{-rT} * (F - K)
+        # Derived from Put-Call Parity: P = C - e^{-rT}(F - K)
         return theta_call + r * df * (F - K)
         
     return theta_call
@@ -216,7 +174,11 @@ def black76_rho(
     r: float,
     call_or_put: str = "call",
 ) -> np.ndarray:
-    """Analytical Rho (∂V/∂r) for Black-76."""
+    """Analytical Rho (∂V/∂r) for Black-76.
+
+    Sensitivity to the risk-free rate. For Black-76 (futures/forwards), 
+    rates only affect the discount factor e^{-rT}.
+    """
     F = np.asarray(F, dtype=float)
     K = np.asarray(K, dtype=float)
     sigma = np.asarray(sigma, dtype=float)
@@ -230,9 +192,8 @@ def black76_rho(
     d2 = d1 - sigma * np.sqrt(t)
     df = np.exp(-r * t)
     
-    # Call Rho = -t * e^{-rT} * (F * N(d1) - K * N(d2)) = -t * CallPrice
-    # Because V = e^{-rT} * BlackPrice(F, K, ...). The risk free rate ONLY appears in the discount factor.
-    # dV/dr = -t * V
+    # Call Rho = -T * CallPrice
+    # Since V(F, t) = e^{-rT} * Black(F, K, ...), and r only appears in term 1.
     
     call_price = df * (F * norm.cdf(d1) - K * norm.cdf(d2))
     rho_call = -t * call_price

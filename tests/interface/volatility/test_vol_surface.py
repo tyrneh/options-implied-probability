@@ -18,24 +18,43 @@ from datetime import date
 
 @pytest.fixture
 def multi_expiry_chain():
-    """Option chain with multiple expiries."""
-    exp1 = pd.DataFrame({
-        "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
+    """Option chain with multiple expiries (calls and puts)."""
+    strikes = [90.0, 95.0, 100.0, 105.0, 110.0]
+    
+    exp1 = pd.Timestamp("2025-02-21")
+    calls1 = pd.DataFrame({
+        "strike": strikes,
         "last_price": [12.0, 8.0, 5.0, 3.0, 1.5],
         "bid": [11.5, 7.5, 4.5, 2.5, 1.2],
         "ask": [12.5, 8.5, 5.5, 3.5, 1.8],
         "option_type": ["C", "C", "C", "C", "C"],
-        "expiry": [pd.Timestamp("2025-02-21")] * 5,
+        "expiry": [exp1] * 5,
     })
-    exp2 = pd.DataFrame({
-        "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
+    
+    exp2 = pd.Timestamp("2025-05-21")
+    calls2 = pd.DataFrame({
+        "strike": strikes,
         "last_price": [14.0, 10.0, 7.0, 4.5, 2.5],
         "bid": [13.5, 9.5, 6.5, 4.0, 2.2],
         "ask": [14.5, 10.5, 7.5, 5.0, 2.8],
         "option_type": ["C", "C", "C", "C", "C"],
-        "expiry": [pd.Timestamp("2025-05-21")] * 5,
+        "expiry": [exp2] * 5,
     })
-    return pd.concat([exp1, exp2], ignore_index=True)
+    
+    calls = pd.concat([calls1, calls2], ignore_index=True)
+    
+    # Generate puts via parity: P = C - S + K * df
+    S, r = 100.0, 0.05
+    t_array = (calls["expiry"] - pd.Timestamp("2025-01-01")).dt.days / 365.0
+    df_array = np.exp(-r * t_array)
+    
+    puts = calls.copy()
+    puts["option_type"] = "P"
+    puts["last_price"] = (calls["last_price"] - S + calls["strike"] * df_array).abs()
+    puts["bid"] = (calls["bid"] - S + calls["strike"] * df_array).abs()
+    puts["ask"] = (calls["ask"] - S + calls["strike"] * df_array).abs()
+    
+    return pd.concat([calls, puts], ignore_index=True)
 
 
 @pytest.fixture
@@ -205,4 +224,20 @@ class TestVolSurfacePlot:
         vs.fit(multi_expiry_chain, market_inputs)
         fig = vs.plot()
         assert fig is not None
+        plt.close(fig)
+
+    def test_plot_term_structure_uses_interpolated_grid(self, multi_expiry_chain, market_inputs):
+        """plot_term_structure() uses an interpolated grid, not just pillars."""
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from oipd import VolSurface
+
+        vs = VolSurface(pricing_engine="bs")
+        vs.fit(multi_expiry_chain, market_inputs)
+        fig = vs.plot_term_structure()
+        ax = fig.axes[0]
+        assert ax.lines, "Expected a line to be plotted."
+        xdata = ax.lines[0].get_xdata()
+        assert len(xdata) > len(vs.expiries)
         plt.close(fig)

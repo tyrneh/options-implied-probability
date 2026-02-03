@@ -14,9 +14,10 @@ from oipd.market_inputs import (
     ResolvedMarket,
 )
 from oipd.presentation.plot_rnd import plot_rnd
+from oipd.presentation.probability_surface_plot import plot_probability_summary
 
 
-from oipd.core.utils import calculate_days_to_expiry
+from oipd.core.utils import calculate_days_to_expiry, calculate_time_to_expiry
 from oipd.pipelines.probability import derive_distribution_from_curve
 
 
@@ -101,8 +102,7 @@ class ProbCurve:
              T = float(self._metadata["time_to_expiry_years"])
         elif "expiry_date" in self._metadata:
              # Recalculate if not cached
-             days = calculate_days_to_expiry(self._metadata["expiry_date"], self._resolved_market.valuation_date)
-             T = days / 365.0
+             T = calculate_time_to_expiry(self._metadata["expiry_date"], self._resolved_market.valuation_date)
         else:
              raise ValueError("Expiry date not found in metadata. Cannot calculate T.")
              
@@ -148,8 +148,7 @@ class ProbCurve:
         if "time_to_expiry_years" in self._metadata:
              T = float(self._metadata["time_to_expiry_years"])
         else:
-             days = calculate_days_to_expiry(self._metadata.get("expiry_date"), self._resolved_market.valuation_date)
-             T = days / 365.0
+             T = calculate_time_to_expiry(self._metadata.get("expiry_date"), self._resolved_market.valuation_date)
         
         T = max(T, 1e-5)
         factor = np.exp(r * T)
@@ -441,6 +440,59 @@ class ProbSurface:
         """Return fitted expiries available on the probability surface."""
 
         return tuple(self._distributions.keys())
+
+    def plot_fan(
+        self,
+        *,
+        lower_percentile: float = 25.0,
+        upper_percentile: float = 75.0,
+        figsize: tuple[float, float] = (10.0, 6.0),
+        title: Optional[str] = None,
+    ) -> Any:
+        """Plot a fan chart of risk-neutral quantiles across expiries.
+
+        Args:
+            lower_percentile: Lower percentile bound for the shaded band (0-100).
+            upper_percentile: Upper percentile bound for the shaded band (0-100).
+            figsize: Figure size as (width, height) in inches.
+            title: Optional custom title for the plot.
+
+        Returns:
+            matplotlib.figure.Figure: The plot figure.
+
+        Raises:
+            ValueError: If the surface is empty or unavailable.
+        """
+        if not self._distributions:
+            raise ValueError("Call fit before plotting the probability surface")
+
+        frames: list[pd.DataFrame] = []
+        for expiry, curve in self._distributions.items():
+            strikes = np.asarray(curve.prices, dtype=float)
+            cdf_values = np.asarray(curve.cdf_values, dtype=float)
+            expiry_ts = pd.to_datetime(expiry)
+
+            frame = pd.DataFrame(
+                {
+                    "expiry_date": np.full(strikes.shape, expiry_ts),
+                    "strike": strikes,
+                    "cdf": cdf_values,
+                }
+            )
+            frames.append(frame)
+
+        if not frames:
+            raise ValueError("No probability slices available for plotting")
+
+        density_data = pd.concat(frames, ignore_index=True)
+
+        return plot_probability_summary(
+            density_data,
+            lower_percentile=lower_percentile,
+            upper_percentile=upper_percentile,
+            figsize=figsize,
+            title=title,
+        )
 
 
 __all__ = ["ProbCurve", "ProbSurface"]

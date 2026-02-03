@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import date
 from typing import Union
+import numpy as np
 
 def resolve_horizon(horizon: Union[str, date, pd.Timestamp], valuation_date: Union[date, pd.Timestamp]) -> pd.Timestamp:
     """
@@ -86,3 +87,26 @@ def calculate_days_to_expiry(
     delta = expiry - valuation_date
     return max(0, delta.days)
 
+
+def calculate_time_to_expiry(
+    expiry: Union[str, date, pd.Timestamp],
+    valuation_date: date,
+    days_per_year: float = 365.0,
+) -> float:
+    """Calculate time to expiry in years.
+
+    Args:
+        expiry: Expiry date (date, Timestamp, or ISO string).
+        valuation_date: Pricing/valuation anchor date.
+        days_per_year: Convention for converting days to years (default 365.0).
+
+    Returns:
+        Time to expiry in years (floored at 0).
+    """
+    days = calculate_days_to_expiry(expiry, valuation_date)
+    return convert_days_to_years(days, days_per_year)
+
+
+def convert_days_to_years(days: Union[int, float, np.ndarray], days_per_year: float = 365.0) -> Union[float, np.ndarray]:
+    """Convert days to years using a fixed day count convention (default ACT/365)."""
+    return days / days_per_year

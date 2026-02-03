@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from oipd.market_inputs import ResolvedMarket
-from oipd.core.utils import calculate_days_to_expiry
+from oipd.core.utils import calculate_days_to_expiry, convert_days_to_years
 
 
 def infer_forward_from_atm(
@@ -361,7 +361,7 @@ def apply_put_call_parity(
     days_to_expiry = calculate_days_to_expiry(expiry_val, resolved_market.valuation_date)
 
     discount_factor = float(
-        np.exp(-resolved_market.risk_free_rate * days_to_expiry / 365.0)
+        np.exp(-resolved_market.risk_free_rate * convert_days_to_years(days_to_expiry))
     )
     processed = preprocess_with_parity(options_data, spot, discount_factor)
     forward_price: Optional[float] = None

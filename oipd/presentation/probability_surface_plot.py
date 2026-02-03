@@ -46,17 +46,15 @@ def _quantile_from_cdf(strikes: np.ndarray, cdf: np.ndarray, q: float) -> float:
 def plot_probability_summary(
     density_data: pd.DataFrame,
     *,
-    include_median: bool,
     lower_percentile: float,
     upper_percentile: float,
     figsize: tuple[float, float],
     title: Optional[str],
 ) -> "matplotlib.figure.Figure":
-    """Plot forward and distribution quantiles over time.
+    """Plot distribution quantiles over time.
 
     Args:
         density_data: DataFrame from ``RNDSurface.density_surface(..., as_dataframe=True)``.
-        include_median: Whether to overlay the 50th percentile path implied by the CDF.
         lower_percentile: Lower bound percentile for the shaded confidence band.
         upper_percentile: Upper bound percentile for the shaded confidence band.
         figsize: Matplotlib figure size in inches ``(width, height)``.
@@ -85,7 +83,7 @@ def plot_probability_summary(
             "lower_percentile must be strictly less than upper_percentile"
         )
 
-    required_cols = {"expiry_date", "forward", "strike", "cdf"}
+    required_cols = {"expiry_date", "strike", "cdf"}
     missing = required_cols.difference(density_data.columns)
     if missing:
         raise InvalidInputError(
@@ -96,7 +94,6 @@ def plot_probability_summary(
     grouped = density_data.groupby("expiry_date", sort=True)
 
     dates: list[pd.Timestamp] = []
-    forwards: list[float] = []
     lower: list[float] = []
     upper: list[float] = []
     median: list[float] = []
@@ -116,10 +113,7 @@ def plot_probability_summary(
         except InvalidInputError:
             continue
 
-        forward_level = float(frame["forward"].mean())
-
         dates.append(expiry_ts)
-        forwards.append(forward_level)
         lower.append(q_low)
         upper.append(q_high)
         median.append(q_med)
@@ -129,7 +123,6 @@ def plot_probability_summary(
 
     order = np.argsort(dates)
     dates_sorted = [dates[i].to_pydatetime() for i in order]
-    forwards_sorted = np.asarray(forwards)[order]
     lower_sorted = np.asarray(lower)[order]
     upper_sorted = np.asarray(upper)[order]
     median_sorted = np.asarray(median)[order]
@@ -148,21 +141,11 @@ def plot_probability_summary(
 
     ax.plot(
         dates_sorted,
-        forwards_sorted,
+        median_sorted,
         color="#1f77b4",
         linewidth=2.0,
-        label="Forward price",
+        label="Implied median",
     )
-
-    if include_median:
-        ax.plot(
-            dates_sorted,
-            median_sorted,
-            color="#82aef5",
-            linewidth=2.0,
-            linestyle="--",
-            label="Implied median",
-        )
 
     ax.set_xlabel("Expiry date")
     ax.set_ylabel("Price")

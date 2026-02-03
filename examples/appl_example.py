@@ -69,6 +69,8 @@ prob_appl = appl_vol_curve.implied_distribution()
 prob_appl.plot(kind="both")
 
 
+# 
+
 # --- Pricing Demo (VolCurve) --- #
 # Price a theoretical option at Strike=250 using the fitted curve
 theoretical_price = appl_vol_curve.price(strikes=[250.0], call_or_put="call")
@@ -113,6 +115,17 @@ appl_surface.plot(xlim=(-1, 1), ylim=(0, 0.1))
 # Return the IV at an arbitrary strike price and maturity
 iv_t = appl_surface.implied_vol(K=100, t=0.1)
 
+appl_surface.plot_term_structure()
+
+appl_surface.plot_3d()
+
+
+# convert the surface to a probability surface
+prob_surface = appl_surface.implied_distribution()
+prob_surface.plot()
+
+
+
 # --- Pricing Demo (VolSurface) --- #
 # Price an option at an arbitrary time (interpolated)
 # e.g., K=100, t=0.1 years
@@ -133,9 +146,6 @@ appl_slice.implied_distribution().plot(kind="both")
 
 
 
-# convert the surface to a probability surface
-prob_surface = appl_surface.implied_distribution()
-prob_surface
 
 
 ### ----------------------------------------

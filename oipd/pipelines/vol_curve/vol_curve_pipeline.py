@@ -20,7 +20,7 @@ from oipd.core.vol_surface_fitting.shared.svi_types import SVICalibrationOptions
 from oipd.data_access.readers import DataFrameReader
 from oipd.pricing.utils import prepare_dividends
 from oipd.market_inputs import ResolvedMarket
-from oipd.core.utils import calculate_days_to_expiry
+from oipd.core.utils import calculate_days_to_expiry, convert_days_to_years
 
 
 def fit_vol_curve_internal(
@@ -202,7 +202,7 @@ def fit_vol_curve_internal(
         strikes,
         ivs,
         forward=underlying_for_iv,
-        maturity_years=days_to_expiry_slice / 365.0,
+        maturity_years=convert_days_to_years(days_to_expiry_slice),
         options=method_options,
         **fit_kwargs,
     )

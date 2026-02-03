@@ -43,9 +43,9 @@ def build_surface_interpolator(
             # Fallback: use the forward interpolator
             F_t = forward_interp(t)
 
-        def variance_curve(k: float) -> float:
+        def variance_curve(k: float | np.ndarray) -> float | np.ndarray:
             # k = ln(K/F), so K = F * exp(k)
-            K = F_t * float(np.exp(k))
+            K = F_t * np.exp(k)
             sigma = vol_curve(K)
             return sigma**2 * t
 

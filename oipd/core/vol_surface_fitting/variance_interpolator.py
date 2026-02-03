@@ -57,7 +57,7 @@ class TotalVarianceInterpolator:
         self._forward_interp = forward_interp
         self._check_arbitrage = check_arbitrage
 
-    def __call__(self, K: float, t: float) -> float:
+    def __call__(self, K: float | np.ndarray, t: float) -> float | np.ndarray:
         """Return the interpolated total variance at strike K and time t.
 
         Args:
@@ -66,6 +66,14 @@ class TotalVarianceInterpolator:
 
         Returns:
             Total variance w(K, t).
+
+        Note:
+            This class assumes volatility slices were fit independently (Local fitting).
+            Linear interpolation in total variance is used between slices.
+            
+            Because slices are independent, calendar arbitrage (w2 < w1) is possible. 
+            The `_check_arbitrage` logic acts as a safeguard to enforce time-monotonicity 
+            by clamping variance rather than re-calibrating the surface (MVP approach).
         """
         if t <= 0:
             return 0.0
@@ -101,14 +109,14 @@ class TotalVarianceInterpolator:
         w_2 = self._curves[idx](k)
 
         # Arbitrage check
-        if self._check_arbitrage and w_2 < w_1:
-            w_2 = w_1  # Clamp to prevent negative forward variance
+        if self._check_arbitrage:
+            w_2 = np.maximum(w_1, w_2)  # Clamp to prevent negative forward variance
 
         # Linear interpolation in total variance
         alpha = (T_2 - t) / (T_2 - T_1)
         return alpha * w_1 + (1 - alpha) * w_2
 
-    def implied_vol(self, K: float, t: float) -> float:
+    def implied_vol(self, K: float | np.ndarray, t: float) -> float | np.ndarray:
         """Return the interpolated implied volatility at strike K and time t.
 
         Args:
@@ -119,9 +127,16 @@ class TotalVarianceInterpolator:
             Implied volatility sigma(K, t).
         """
         w = self(K, t)
-        if t <= 0 or w < 0:
+        if t <= 0:
+            # Expiry edge case: IV is undefined at t=0, creating a discontinuity.
+            # Return 0.0 to prevent division by zero; treat as deterministic spot.
+            if isinstance(w, np.ndarray):
+                return np.zeros_like(w)
             return 0.0
-        return np.sqrt(w / t)
+        
+        # Clamp negative variance to 0 and vectorize
+        # Negative variance implies model arbitration/failure; clamp to 0.0 (0% vol) rather than crashing.
+        return np.sqrt(np.maximum(w, 0.0) / t)
 
     @property
     def pillar_times(self) -> list[float]:

@@ -7,6 +7,7 @@ from typing import Iterable, Literal, Tuple
 import numpy as np
 
 from oipd.core.errors import InvalidInputError
+from oipd.core.utils import convert_days_to_years
 from oipd.core.vol_surface_fitting import VolCurve
 from oipd.pricing import get_pricer
 
@@ -36,7 +37,7 @@ def price_curve_from_iv(
         raise InvalidInputError("strike_grid must be one-dimensional")
 
     sigma = vol_curve(strikes)
-    years = days_to_expiry / 365.0
+    years = convert_days_to_years(days_to_expiry)
     pricer = get_pricer(pricing_engine)
     q = dividend_yield or 0.0
     call_prices = pricer(underlying_price, strikes, sigma, years, risk_free_rate, q)

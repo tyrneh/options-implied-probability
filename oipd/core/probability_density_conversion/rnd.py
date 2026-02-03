@@ -10,6 +10,7 @@ from scipy.interpolate import interp1d
 from scipy.optimize import brentq
 
 from oipd.core.errors import InvalidInputError
+from oipd.core.utils import convert_days_to_years
 from .finite_diff import finite_diff_second_derivative
 
 
@@ -30,7 +31,7 @@ def pdf_from_price_curve(
         raise InvalidInputError("Strikes and prices must have the same shape")
 
     second_derivative = finite_diff_second_derivative(prices_arr, strikes_arr)
-    years = days_to_expiry / 365.0
+    years = convert_days_to_years(days_to_expiry)
     pdf = np.exp(risk_free_rate * years) * second_derivative
     pdf = np.maximum(pdf, 0.0)
 

@@ -45,7 +45,7 @@ def fitted_vol_surface():
         risk_free_rate=0.05,
     )
     
-    vs = VolSurface()
+    vs = VolSurface(pricing_engine="bs")
     vs.fit(chain, market)
     return vs
 
@@ -103,3 +103,21 @@ class TestProbSurfaceSlice:
         exp_str = first_exp.strftime("%Y-%m-%d")
         curve = prob_surface.slice(exp_str)
         assert curve is not None
+
+
+# =============================================================================
+# ProbSurface.plot_fan() Tests
+# =============================================================================
+
+class TestProbSurfacePlotFan:
+    """Tests for ProbSurface.plot_fan() visualization."""
+
+    def test_plot_fan_does_not_crash(self, prob_surface):
+        """plot_fan() executes without raising."""
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig = prob_surface.plot_fan()
+        assert fig is not None
+        plt.close(fig)

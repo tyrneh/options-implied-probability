@@ -18,15 +18,29 @@ from datetime import date
 
 @pytest.fixture
 def sample_option_chain():
-    """Minimal option chain with bid/ask/last prices."""
-    return pd.DataFrame({
-        "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
+    """Minimal option chain with bid/ask/last prices (calls and puts)."""
+    strikes = [90.0, 95.0, 100.0, 105.0, 110.0]
+    expiry = pd.Timestamp("2025-03-21")
+    
+    calls = pd.DataFrame({
+        "strike": strikes,
         "last_price": [12.5, 8.2, 5.1, 3.1, 1.6],
         "bid": [12.0, 7.8, 4.9, 2.9, 1.4],
         "ask": [13.0, 8.6, 5.3, 3.3, 1.8],
         "option_type": ["C", "C", "C", "C", "C"],
-        "expiry": [pd.Timestamp("2025-03-21")] * 5,
+        "expiry": [expiry] * 5,
     })
+    
+    # Generate puts via parity: P = C - S + K * df
+    S, r, T = 100.0, 0.05, 79 / 365.0  # ~79 days to expiry
+    df = np.exp(-r * T)
+    puts = calls.copy()
+    puts["option_type"] = "P"
+    puts["last_price"] = (calls["last_price"] - S + calls["strike"] * df).abs()
+    puts["bid"] = (calls["bid"] - S + calls["strike"] * df).abs()
+    puts["ask"] = (calls["ask"] - S + calls["strike"] * df).abs()
+    
+    return pd.concat([calls, puts], ignore_index=True)
 
 
 @pytest.fixture
@@ -95,12 +109,26 @@ class TestVolCurveFit:
     def test_fit_with_column_mapping(self, market_inputs):
         """fit() works with custom column mapping."""
         from oipd import VolCurve
-        df = pd.DataFrame({
-            "K": [90.0, 95.0, 100.0, 105.0, 110.0],
+        strikes = [90.0, 95.0, 100.0, 105.0, 110.0]
+        expiry = pd.Timestamp("2025-03-21")
+        
+        # Create calls
+        calls = pd.DataFrame({
+            "K": strikes,
             "price": [12.0, 7.0, 4.0, 2.0, 1.0],
             "type": ["C", "C", "C", "C", "C"],
-            "exp": [pd.Timestamp("2025-03-21")] * 5,
+            "exp": [expiry] * 5,
         })
+        
+        # Generate puts via parity
+        S, r, T = 100.0, 0.05, 79 / 365.0
+        df_val = np.exp(-r * T)
+        puts = calls.copy()
+        puts["type"] = "P"
+        puts["price"] = (calls["price"] - S + np.array(strikes) * df_val).abs()
+        
+        df = pd.concat([calls, puts], ignore_index=True)
+        
         mapping = {
             "K": "strike",
             "price": "last_price",
