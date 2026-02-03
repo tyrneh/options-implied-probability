@@ -106,6 +106,15 @@ class TestVolCurveFit:
         assert vc.forward_price is not None
         assert vc.forward_price > 0
 
+    def test_fit_populates_atm_vol(self, sample_option_chain, market_inputs):
+        """fit() populates ATM volatility."""
+        from oipd import VolCurve
+        vc = VolCurve()
+        vc.fit(sample_option_chain, market_inputs)
+        atm_vol = vc.atm_vol
+        assert np.isfinite(atm_vol)
+        assert atm_vol > 0
+
     def test_fit_with_column_mapping(self, market_inputs):
         """fit() works with custom column mapping."""
         from oipd import VolCurve
@@ -315,10 +324,11 @@ class TestVolCurveDiagnostics:
     """Tests for calibration diagnostics."""
 
     def test_diagnostics_available_after_fit(self, sample_option_chain, market_inputs):
-        """diagnostics property is available after fit (may be None or dict)."""
+        """diagnostics property is available after fit."""
         from oipd import VolCurve
         
         vc = VolCurve()
         vc.fit(sample_option_chain, market_inputs)
-        # Just accessing diagnostics should not raise
-        _ = vc.diagnostics
+        diagnostics = vc.diagnostics
+        assert diagnostics is not None
+        assert hasattr(diagnostics, "status")

@@ -147,6 +147,19 @@ class TestProbSurfaceSlice:
         curve = prob_surface.slice(prob_surface.expiries[0])
         assert np.all(curve.pdf_values >= 0)
 
+    def test_slice_metadata_and_market(self, prob_surface):
+        """Sliced ProbCurve exposes metadata and resolved market."""
+        curve = prob_surface.slice(prob_surface.expiries[0])
+        metadata = curve.metadata
+        assert isinstance(metadata, dict)
+        assert "expiry_date" in metadata
+        assert "forward_price" in metadata
+        assert "at_money_vol" in metadata
+        assert np.isfinite(metadata["at_money_vol"])
+        resolved_market = curve.resolved_market
+        assert resolved_market is not None
+        assert hasattr(resolved_market, "valuation_date")
+
     def test_slice_invalid_expiry_raises(self, prob_surface):
         """slice() with invalid expiry raises ValueError."""
         with pytest.raises(ValueError, match="not found"):

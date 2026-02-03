@@ -156,7 +156,8 @@ class TestVolCurveContract:
     def test_atm_vol_property_exists(self, fitted_vol_curve):
         result = fitted_vol_curve.atm_vol
         assert isinstance(result, (float, np.floating))
-        # Note: May be NaN if forward is not available, so just check it exists
+        assert np.isfinite(result)
+        assert result > 0
 
     def test_forward_price_property_exists(self, fitted_vol_curve):
         result = fitted_vol_curve.forward_price
@@ -169,8 +170,8 @@ class TestVolCurveContract:
 
     def test_diagnostics_property_exists(self, fitted_vol_curve):
         result = fitted_vol_curve.diagnostics
-        # diagnostics may be None or dict, just check attribute exists
-        assert hasattr(fitted_vol_curve, 'diagnostics')
+        assert result is not None
+        assert hasattr(result, "status")
 
     def test_expiries_property_exists(self, fitted_vol_curve):
         result = fitted_vol_curve.expiries
@@ -376,6 +377,18 @@ class TestProbCurveContract:
     def test_cdf_values_property_exists(self, prob_curve):
         result = prob_curve.cdf_values
         assert isinstance(result, np.ndarray)
+
+    def test_metadata_exists(self, prob_curve):
+        metadata = prob_curve.metadata
+        assert isinstance(metadata, dict)
+        assert "expiry_date" in metadata
+        assert "forward_price" in metadata
+        assert "at_money_vol" in metadata
+
+    def test_resolved_market_exists(self, prob_curve):
+        resolved_market = prob_curve.resolved_market
+        assert resolved_market is not None
+        assert hasattr(resolved_market, "valuation_date")
 
 
 # =============================================================================

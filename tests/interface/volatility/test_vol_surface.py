@@ -149,6 +149,19 @@ class TestVolSurfaceSlice:
         curve = vs.slice(vs.expiries[0])
         assert curve.params is not None
 
+    def test_slice_has_atm_vol_and_diagnostics(self, multi_expiry_chain, market_inputs):
+        """Sliced VolCurve exposes ATM vol and diagnostics."""
+        from oipd import VolSurface
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        curve = vs.slice(vs.expiries[0])
+        atm_vol = curve.atm_vol
+        assert np.isfinite(atm_vol)
+        assert atm_vol > 0
+        diagnostics = curve.diagnostics
+        assert diagnostics is not None
+        assert hasattr(diagnostics, "status")
+
     def test_slice_invalid_expiry_raises(self, multi_expiry_chain, market_inputs):
         """slice() with invalid expiry raises ValueError."""
         from oipd import VolSurface

@@ -129,6 +129,21 @@ class TestProbCurveProperties:
         assert prob_curve.prob_below(500.0) > 0.99
         assert prob_curve.prob_below(500.0) <= 1.01
 
+    def test_metadata_has_core_fields(self, prob_curve):
+        """metadata exposes core calibration fields."""
+        metadata = prob_curve.metadata
+        assert isinstance(metadata, dict)
+        assert "expiry_date" in metadata
+        assert "forward_price" in metadata
+        assert "at_money_vol" in metadata
+        assert np.isfinite(metadata["at_money_vol"])
+
+    def test_resolved_market_available(self, prob_curve):
+        """resolved_market is available on ProbCurve."""
+        resolved_market = prob_curve.resolved_market
+        assert resolved_market is not None
+        assert hasattr(resolved_market, "valuation_date")
+
 
 # =============================================================================
 # ProbCurve.prob_below() Tests
