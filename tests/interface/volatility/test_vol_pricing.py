@@ -209,7 +209,7 @@ def test_vol_surface_date_input(sample_market, multi_expiry_chain):
     
     np.testing.assert_allclose(p1, p2, rtol=1e-8)
 
-def test_pricing_bs_missing_dividend_error(single_expiry_chain):
+def test_pricing_bs_missing_dividend_error(single_expiry_chain, multi_expiry_chain):
     """Test that ValueError is raised if dividend_yield is missing for BS pricing."""
     # Create market with implicit None dividend_yield (or explicitly None if supported)
     # MarketInputs defaults use None for dividend_yield if not provided?
@@ -231,8 +231,7 @@ def test_pricing_bs_missing_dividend_error(single_expiry_chain):
         vc.price([100])
         
     vs = VolSurface(pricing_engine="bs")
-    vs.fit(single_expiry_chain, market_incomplete) # single chain works for surface too
+    vs.fit(multi_expiry_chain, market_incomplete)
     
     with pytest.raises(ValueError, match="Dividend yield.*required"):
         vs.price([100], t=0.1)
-

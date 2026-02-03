@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -19,6 +19,10 @@ from oipd.presentation.probability_surface_plot import plot_probability_summary
 
 from oipd.core.utils import calculate_days_to_expiry, calculate_time_to_expiry
 from oipd.pipelines.probability import derive_distribution_from_curve
+
+
+if TYPE_CHECKING:
+    from oipd.market_inputs import MarketInputs
 
 
 class ProbCurve:
@@ -45,6 +49,38 @@ class ProbCurve:
         self._cached_prices: Optional[np.ndarray] = None
         self._cached_pdf: Optional[np.ndarray] = None
         self._cached_cdf: Optional[np.ndarray] = None
+
+    @classmethod
+    def from_chain(
+        cls,
+        chain: pd.DataFrame,
+        market: "MarketInputs",
+        *,
+        column_mapping: Optional[Mapping[str, str]] = None,
+    ) -> "ProbCurve":
+        """Build a ProbCurve directly from a single-expiry option chain.
+
+        This convenience constructor fits an SVI volatility curve under the hood
+        and then derives the risk-neutral distribution.
+
+        Args:
+            chain: Option chain DataFrame containing a single expiry.
+            market: Market inputs required for calibration.
+            column_mapping: Optional mapping from input columns to OIPD
+                standard names.
+
+        Returns:
+            ProbCurve: The fitted risk-neutral probability curve.
+
+        Raises:
+            ValueError: If the chain contains multiple expiries or invalid expiry values.
+            CalculationError: If the underlying volatility calibration fails.
+        """
+        from oipd import VolCurve
+
+        vol_curve = VolCurve(method="svi")
+        vol_curve.fit(chain, market, column_mapping=column_mapping)
+        return vol_curve.implied_distribution()
 
     def _ensure_grid_generated(self) -> None:
         """Lazily generate a default evaluation grid for array properties and plotting.
@@ -421,6 +457,38 @@ class ProbSurface:
         self._resolved_markets = {
             ts: dist.resolved_market for ts, dist in self._distributions.items()
         }
+
+    @classmethod
+    def from_chain(
+        cls,
+        chain: pd.DataFrame,
+        market: "MarketInputs",
+        *,
+        column_mapping: Optional[Mapping[str, str]] = None,
+    ) -> "ProbSurface":
+        """Build a ProbSurface directly from a multi-expiry option chain.
+
+        This convenience constructor fits SVI slices under the hood and then
+        derives the risk-neutral distribution surface.
+
+        Args:
+            chain: Option chain DataFrame containing multiple expiries.
+            market: Market inputs required for calibration.
+            column_mapping: Optional mapping from input columns to OIPD
+                standard names.
+
+        Returns:
+            ProbSurface: The fitted risk-neutral probability surface.
+
+        Raises:
+            CalculationError: If the chain has fewer than two expiries or the
+                underlying volatility calibration fails.
+        """
+        from oipd import VolSurface
+
+        vol_surface = VolSurface(method="svi")
+        vol_surface.fit(chain, market, column_mapping=column_mapping)
+        return vol_surface.implied_distribution()
 
     def slice(self, expiry: Any) -> ProbCurve:
         """Return a ProbCurve (probability distribution function) for a specific expiry."""

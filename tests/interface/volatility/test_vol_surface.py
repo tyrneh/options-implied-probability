@@ -107,11 +107,22 @@ class TestVolSurfaceFit:
     def test_fit_with_horizon_filter(self, multi_expiry_chain, market_inputs):
         """fit() respects horizon parameter."""
         from oipd import VolSurface
+        from oipd.core.errors import CalculationError
         vs = VolSurface()
         # horizon="2m" from Jan 1 2025 should filter to ~Feb expiry
-        vs.fit(multi_expiry_chain, market_inputs, horizon="2m")
-        # Result depends on dates, just check it doesn't crash
-        assert vs.expiries is not None
+        with pytest.raises(CalculationError, match="at least two"):
+            vs.fit(multi_expiry_chain, market_inputs, horizon="2m")
+
+    def test_fit_rejects_single_expiry(self, multi_expiry_chain, market_inputs):
+        """fit() raises when only one expiry is provided."""
+        from oipd import VolSurface
+        from oipd.core.errors import CalculationError
+        vs = VolSurface()
+        single_expiry_chain = multi_expiry_chain[
+            multi_expiry_chain["expiry"] == multi_expiry_chain["expiry"].iloc[0]
+        ]
+        with pytest.raises(CalculationError, match="at least two"):
+            vs.fit(single_expiry_chain, market_inputs)
 
 
 # =============================================================================

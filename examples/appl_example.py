@@ -49,6 +49,14 @@ appl_vol_curve.fit(df_appl_slice, market, column_mapping=column_mapping)
 
 appl_vol_curve._metadata
 
+summary = {
+    "expiry": appl_vol_curve.expiries[0],
+    "forward_price": appl_vol_curve.forward_price,
+    "atm_vol": appl_vol_curve.atm_vol,
+    "diagnostics": appl_vol_curve.diagnostics,
+}
+summary
+
 # plot vol smile
 appl_vol_curve.plot(include_observed=True) #, xlim=(200, 300), ylim=(0, 1))
 plt.show()

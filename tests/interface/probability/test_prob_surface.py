@@ -17,36 +17,67 @@ from datetime import date
 # =============================================================================
 
 @pytest.fixture
-def fitted_vol_surface():
-    """A pre-fitted VolSurface for deriving probability surface."""
-    from oipd import VolSurface, MarketInputs
-    
-    exp1 = pd.DataFrame({
-        "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
-        "last_price": [12.0, 8.0, 5.0, 3.0, 1.5],
-        "bid": [11.5, 7.5, 4.5, 2.5, 1.2],
-        "ask": [12.5, 8.5, 5.5, 3.5, 1.8],
-        "option_type": ["C", "C", "C", "C", "C"],
-        "expiry": [pd.Timestamp("2025-02-21")] * 5,
-    })
-    exp2 = pd.DataFrame({
-        "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
-        "last_price": [14.0, 10.0, 7.0, 4.5, 2.5],
-        "bid": [13.5, 9.5, 6.5, 4.0, 2.2],
-        "ask": [14.5, 10.5, 7.5, 5.0, 2.8],
-        "option_type": ["C", "C", "C", "C", "C"],
-        "expiry": [pd.Timestamp("2025-05-21")] * 5,
-    })
-    chain = pd.concat([exp1, exp2], ignore_index=True)
-    
-    market = MarketInputs(
+def multi_expiry_chain():
+    """Option chain with multiple expiries (calls and puts)."""
+    strikes = [90.0, 95.0, 100.0, 105.0, 110.0]
+
+    exp1 = pd.Timestamp("2025-02-21")
+    calls1 = pd.DataFrame(
+        {
+            "strike": strikes,
+            "last_price": [12.0, 8.0, 5.0, 3.0, 1.5],
+            "bid": [11.5, 7.5, 4.5, 2.5, 1.2],
+            "ask": [12.5, 8.5, 5.5, 3.5, 1.8],
+            "option_type": ["C", "C", "C", "C", "C"],
+            "expiry": [exp1] * 5,
+        }
+    )
+
+    exp2 = pd.Timestamp("2025-05-21")
+    calls2 = pd.DataFrame(
+        {
+            "strike": strikes,
+            "last_price": [14.0, 10.0, 7.0, 4.5, 2.5],
+            "bid": [13.5, 9.5, 6.5, 4.0, 2.2],
+            "ask": [14.5, 10.5, 7.5, 5.0, 2.8],
+            "option_type": ["C", "C", "C", "C", "C"],
+            "expiry": [exp2] * 5,
+        }
+    )
+
+    calls = pd.concat([calls1, calls2], ignore_index=True)
+
+    S, r = 100.0, 0.05
+    t_array = (calls["expiry"] - pd.Timestamp("2025-01-01")).dt.days / 365.0
+    df_array = np.exp(-r * t_array)
+
+    puts = calls.copy()
+    puts["option_type"] = "P"
+    puts["last_price"] = (calls["last_price"] - S + calls["strike"] * df_array).abs()
+    puts["bid"] = (calls["bid"] - S + calls["strike"] * df_array).abs()
+    puts["ask"] = (calls["ask"] - S + calls["strike"] * df_array).abs()
+
+    return pd.concat([calls, puts], ignore_index=True)
+
+
+@pytest.fixture
+def market_inputs():
+    """Standard MarketInputs for probability surface tests."""
+    from oipd import MarketInputs
+    return MarketInputs(
         valuation_date=date(2025, 1, 1),
         underlying_price=100.0,
         risk_free_rate=0.05,
     )
-    
+
+
+@pytest.fixture
+def fitted_vol_surface(multi_expiry_chain, market_inputs):
+    """A pre-fitted VolSurface for deriving probability surface."""
+    from oipd import VolSurface
+
     vs = VolSurface(pricing_engine="bs")
-    vs.fit(chain, market)
+    vs.fit(multi_expiry_chain, market_inputs)
     return vs
 
 
@@ -54,6 +85,30 @@ def fitted_vol_surface():
 def prob_surface(fitted_vol_surface):
     """A ProbSurface derived from a fitted VolSurface."""
     return fitted_vol_surface.implied_distribution()
+
+
+# =============================================================================
+# ProbSurface.from_chain() Tests
+# =============================================================================
+
+class TestProbSurfaceFromChain:
+    """Tests for ProbSurface.from_chain() constructor."""
+
+    def test_from_chain_returns_probsurface(self, multi_expiry_chain, market_inputs):
+        """from_chain() returns a ProbSurface."""
+        from oipd import ProbSurface
+        prob = ProbSurface.from_chain(multi_expiry_chain, market_inputs)
+        assert isinstance(prob, ProbSurface)
+
+    def test_from_chain_rejects_single_expiry(self, multi_expiry_chain, market_inputs):
+        """from_chain() raises when only one expiry is provided."""
+        from oipd import ProbSurface
+        from oipd.core.errors import CalculationError
+        single_expiry_chain = multi_expiry_chain[
+            multi_expiry_chain["expiry"] == multi_expiry_chain["expiry"].iloc[0]
+        ]
+        with pytest.raises(CalculationError, match="at least two"):
+            ProbSurface.from_chain(single_expiry_chain, market_inputs)
 
 
 # =============================================================================

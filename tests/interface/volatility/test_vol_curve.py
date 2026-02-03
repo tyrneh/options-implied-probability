@@ -139,6 +139,15 @@ class TestVolCurveFit:
         vc.fit(df, market_inputs, column_mapping=mapping)
         assert vc.params is not None
 
+    def test_fit_rejects_multiple_expiries(self, sample_option_chain, market_inputs):
+        """fit() raises when chain contains multiple expiries."""
+        from oipd import VolCurve
+        vc = VolCurve()
+        bad_chain = sample_option_chain.copy()
+        bad_chain.loc[bad_chain.index[:5], "expiry"] = pd.Timestamp("2025-04-21")
+        with pytest.raises(ValueError, match="single expiry"):
+            vc.fit(bad_chain, market_inputs)
+
 
 # =============================================================================
 # VolCurve Pre-fit Validation Tests

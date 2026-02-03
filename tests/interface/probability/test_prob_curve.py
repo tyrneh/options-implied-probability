@@ -17,28 +17,52 @@ from datetime import date
 # =============================================================================
 
 @pytest.fixture
-def fitted_vol_curve():
-    """A pre-fitted VolCurve for deriving probability."""
-    from oipd import VolCurve, MarketInputs
-    
-    chain = pd.DataFrame({
-        "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
-        "last_price": [12.5, 8.2, 5.1, 3.1, 1.6],
-        "bid": [12.0, 7.8, 4.9, 2.9, 1.4],
-        "ask": [13.0, 8.6, 5.3, 3.3, 1.8],
-        "option_type": ["C", "C", "C", "C", "C"],
-        "expiry": [pd.Timestamp("2025-03-21")] * 5,
-    })
-    
-    market = MarketInputs(
+def single_expiry_chain():
+    """Single-expiry chain with calls and puts for parity."""
+    strikes = [90.0, 95.0, 100.0, 105.0, 110.0]
+    expiry = pd.Timestamp("2025-03-21")
+
+    calls = pd.DataFrame(
+        {
+            "strike": strikes,
+            "last_price": [12.5, 8.2, 5.1, 3.1, 1.6],
+            "bid": [12.0, 7.8, 4.9, 2.9, 1.4],
+            "ask": [13.0, 8.6, 5.3, 3.3, 1.8],
+            "option_type": ["C", "C", "C", "C", "C"],
+            "expiry": [expiry] * 5,
+        }
+    )
+
+    S, r, T = 100.0, 0.05, 79 / 365.0
+    df = np.exp(-r * T)
+    puts = calls.copy()
+    puts["option_type"] = "P"
+    puts["last_price"] = (calls["last_price"] - S + calls["strike"] * df).abs()
+    puts["bid"] = (calls["bid"] - S + calls["strike"] * df).abs()
+    puts["ask"] = (calls["ask"] - S + calls["strike"] * df).abs()
+
+    return pd.concat([calls, puts], ignore_index=True)
+
+
+@pytest.fixture
+def market_inputs():
+    """Standard MarketInputs for probability tests."""
+    from oipd import MarketInputs
+    return MarketInputs(
         valuation_date=date(2025, 1, 1),
         underlying_price=100.0,
         risk_free_rate=0.05,
         dividend_yield=0.0,
     )
-    
+
+
+@pytest.fixture
+def fitted_vol_curve(single_expiry_chain, market_inputs):
+    """A pre-fitted VolCurve for deriving probability."""
+    from oipd import VolCurve
+
     vc = VolCurve(pricing_engine="bs")
-    vc.fit(chain, market)
+    vc.fit(single_expiry_chain, market_inputs)
     return vc
 
 
@@ -46,6 +70,28 @@ def fitted_vol_curve():
 def prob_curve(fitted_vol_curve):
     """A ProbCurve derived from a fitted VolCurve."""
     return fitted_vol_curve.implied_distribution()
+
+
+# =============================================================================
+# ProbCurve.from_chain() Tests
+# =============================================================================
+
+class TestProbCurveFromChain:
+    """Tests for ProbCurve.from_chain() constructor."""
+
+    def test_from_chain_returns_probcurve(self, single_expiry_chain, market_inputs):
+        """from_chain() returns a ProbCurve."""
+        from oipd import ProbCurve
+        prob = ProbCurve.from_chain(single_expiry_chain, market_inputs)
+        assert isinstance(prob, ProbCurve)
+
+    def test_from_chain_rejects_multiple_expiries(self, single_expiry_chain, market_inputs):
+        """from_chain() raises on multi-expiry input."""
+        from oipd import ProbCurve
+        bad_chain = single_expiry_chain.copy()
+        bad_chain.loc[bad_chain.index[:5], "expiry"] = pd.Timestamp("2025-04-21")
+        with pytest.raises(ValueError, match="single expiry"):
+            ProbCurve.from_chain(bad_chain, market_inputs)
 
 
 # =============================================================================

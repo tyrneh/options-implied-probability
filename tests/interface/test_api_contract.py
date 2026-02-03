@@ -313,6 +313,11 @@ class TestVolSurfaceContract:
 class TestProbCurveContract:
     """Verify all PRD-documented ProbCurve methods exist and are callable."""
 
+    def test_from_chain_exists(self, single_expiry_chain, market_inputs):
+        from oipd import ProbCurve
+        result = ProbCurve.from_chain(single_expiry_chain, market_inputs)
+        assert isinstance(result, ProbCurve)
+
     def test_pdf_exists(self, prob_curve):
         result = prob_curve.pdf(100.0)
         assert isinstance(result, (float, np.floating))
@@ -379,6 +384,11 @@ class TestProbCurveContract:
 
 class TestProbSurfaceContract:
     """Verify all PRD-documented ProbSurface methods exist and are callable."""
+
+    def test_from_chain_exists(self, multi_expiry_chain, market_inputs):
+        from oipd import ProbSurface
+        result = ProbSurface.from_chain(multi_expiry_chain, market_inputs)
+        assert isinstance(result, ProbSurface)
 
     def test_slice_exists(self, prob_surface):
         from oipd.interface.probability import ProbCurve

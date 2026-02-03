@@ -111,6 +111,7 @@ class VolCurve:
             VolCurve: The fitted vol smile instance.
 
         Raises:
+            ValueError: If the expiry column is missing, invalid, or contains multiple expiries.
             CalculationError: If calibration fails or produces no vol curve.
         """
 
@@ -124,6 +125,20 @@ class VolCurve:
             raise ValueError(
                 "Input DataFrame must contain an 'expiry' column. "
                 "Use column_mapping={'your_col': 'expiry'} if needed."
+            )
+
+        expiry_series = pd.to_datetime(chain_input["expiry"], errors="coerce")
+        if expiry_series.isna().any():
+            raise ValueError("Invalid expiry values encountered during parsing.")
+        expiry_series = expiry_series.dt.tz_localize(None)
+        chain_input["expiry"] = expiry_series
+
+        unique_expiries = expiry_series.unique()
+        if len(unique_expiries) != 1:
+            raise ValueError(
+                "VolCurve.fit requires a single expiry in the input chain. "
+                f"Found {len(unique_expiries)} unique expiries. "
+                "Use VolSurface.fit for multiple expiries."
             )
 
         # resolved_market: A complete snapshot of market conditions (rates, spot, dividends)
@@ -237,9 +252,17 @@ class VolCurve:
         """
         if self._vol_curve is None:
              raise ValueError("Call fit before accessing ATM volatility")
-             
-        # The underlying pipeline wrapper often attaches this property
-        return getattr(self._vol_curve, "at_money_vol", np.nan)
+
+        if self._metadata is None:
+            raise ValueError("Call fit before accessing ATM volatility")
+
+        atm_vol = self._metadata.get("at_money_vol")
+        if atm_vol is None or not np.isfinite(atm_vol):
+            raise ValueError(
+                "ATM volatility missing or invalid in fit metadata. "
+                "Check that calibration succeeded and produced at_money_vol."
+            )
+        return float(atm_vol)
 
     @property
     def expiries(self) -> tuple[Any]:
@@ -394,7 +417,13 @@ class VolCurve:
 
         if self._metadata is None:
             raise ValueError("Call fit before accessing diagnostics")
-        return self._metadata.get("fit_diagnostics")
+        diagnostics = self._metadata.get("diagnostics")
+        if diagnostics is None:
+            raise ValueError(
+                "Diagnostics missing from fit metadata. "
+                "Check that calibration succeeded and stored diagnostics."
+            )
+        return diagnostics
 
     @property
     def resolved_market(self) -> ResolvedMarket:
@@ -747,7 +776,8 @@ class VolSurface:
             VolSurface: The fitted surface instance.
 
         Raises:
-            CalculationError: If calibration fails for any expiry or expiry column is missing.
+            CalculationError: If calibration fails, expiry column is missing or invalid,
+                or fewer than two expiries are provided.
         """
 
         chain_input = chain.copy()
@@ -760,18 +790,30 @@ class VolSurface:
                 "Use column_mapping to map your expiry column to 'expiry'."
             )
 
+        expiry_series = pd.to_datetime(chain_input["expiry"], errors="coerce")
+        if expiry_series.isna().any():
+            raise CalculationError("Invalid expiry values encountered during parsing.")
+        expiry_series = expiry_series.dt.tz_localize(None)
+        chain_input["expiry"] = expiry_series
+
         # Apply horizon filtering
         if horizon is not None:
             # Resolve cutoff date
             cutoff = resolve_horizon(horizon, market.valuation_date)
 
             # Filter chain
-            # Ensure expiry col is datetime
-            chain_input["expiry"] = pd.to_datetime(chain_input["expiry"]).dt.tz_localize(None)
             chain_input = chain_input[chain_input["expiry"] <= cutoff]
 
             if chain_input.empty:
                 raise CalculationError(f"No expiries found within horizon {horizon} (cutoff {cutoff})")
+
+        unique_expiries = chain_input["expiry"].unique()
+        if len(unique_expiries) < 2:
+            raise CalculationError(
+                "VolSurface.fit requires at least two unique expiries. "
+                f"Found {len(unique_expiries)} expiry. "
+                "Use VolCurve.fit for a single-expiry chain."
+            )
 
         self._model = fit_surface(
             chain=chain_input,
