@@ -6,6 +6,7 @@ from oipd.interface.volatility import VolCurve, VolSurface
 from oipd.market_inputs import MarketInputs
 from oipd.pricing.black76 import black76_call_price
 from oipd.pricing.black_scholes import black_scholes_call_price
+from oipd.core.utils import resolve_risk_free_rate
 
 
 # Fixtures
@@ -132,9 +133,13 @@ def test_vol_curve_price_black76(sample_market, single_expiry_chain):
     # 2. Manual Verification
     # Recover state
     F = vc.forward_price
-    r = sample_market.risk_free_rate
     expiry_date = single_expiry_chain["expiry"].iloc[0].date()
     t = (expiry_date - sample_market.valuation_date).days / 365.0
+    r = resolve_risk_free_rate(
+        sample_market.risk_free_rate,
+        sample_market.risk_free_rate_mode,
+        t,
+    )
     sigma = vc(strikes)
 
     expected = black76_call_price(F, np.array(strikes), sigma, t, r)
@@ -154,10 +159,14 @@ def test_vol_curve_price_bs(sample_market, single_expiry_chain):
 
     # 2. Manual Verification
     S = sample_market.underlying_price
-    r = sample_market.risk_free_rate
     q = 0.0
     expiry_date = single_expiry_chain["expiry"].iloc[0].date()
     t = (expiry_date - sample_market.valuation_date).days / 365.0
+    r = resolve_risk_free_rate(
+        sample_market.risk_free_rate,
+        sample_market.risk_free_rate_mode,
+        t,
+    )
     sigma = vc(strikes)
 
     expected = black_scholes_call_price(S, np.array(strikes), sigma, t, r, q)
@@ -177,7 +186,11 @@ def test_vol_curve_parity(sample_market, single_expiry_chain):
     # Parity: C - P = D * (F - K)
     F = vc.forward_price
     t = 30.0 / 365.0
-    r = 0.05
+    r = resolve_risk_free_rate(
+        sample_market.risk_free_rate,
+        sample_market.risk_free_rate_mode,
+        t,
+    )
     df = np.exp(-r * t)
 
     lhs = C - P
@@ -203,12 +216,17 @@ def test_vol_surface_price_interpolated(sample_market, multi_expiry_chain):
     F_interp = vs.forward_price(t_interp_years)
     sigma_interp = vs.implied_vol(100.0, t_interp_years)
 
+    r = resolve_risk_free_rate(
+        sample_market.risk_free_rate,
+        sample_market.risk_free_rate_mode,
+        t_interp_years,
+    )
     expected = black76_call_price(
         F_interp,
         np.array(strikes),
         np.array([sigma_interp]),
         t_interp_years,
-        sample_market.risk_free_rate,
+        r,
     )
 
     np.testing.assert_allclose(prices, expected, rtol=1e-8)

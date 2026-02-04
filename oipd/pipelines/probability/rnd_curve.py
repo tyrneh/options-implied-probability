@@ -8,7 +8,11 @@ import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
-from oipd.core.utils import calculate_days_to_expiry, convert_days_to_years
+from oipd.core.utils import (
+    calculate_days_to_expiry,
+    convert_days_to_years,
+    resolve_risk_free_rate,
+)
 from oipd.market_inputs import ResolvedMarket
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.core.probability_density_conversion import (
@@ -185,13 +189,27 @@ def derive_distribution_from_curve(
     vol_meta = vol_metadata or {}
     valuation_date = resolved_market.valuation_date
 
-    # 1. Prepare Pricing Inputs
+    # 1. Determine Days to Expiry and resolve rate convention
+    expiry_date = vol_meta.get("expiry_date")
+    if expiry_date is None:
+        raise CalculationError(
+            "Volatility metadata missing 'expiry_date'. Cannot derive distribution."
+        )
+
+    days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
+    years_to_expiry = convert_days_to_years(days_to_expiry)
+    rate_mode = resolved_market.source_meta["risk_free_rate_mode"]
+    effective_r = resolve_risk_free_rate(
+        resolved_market.risk_free_rate, rate_mode, years_to_expiry
+    )
+
+    # 2. Prepare Pricing Inputs
     if pricing_engine == "bs":
         effective_spot, effective_dividend = prepare_dividends(
             underlying=resolved_market.underlying_price,
             dividend_schedule=resolved_market.dividend_schedule,
             dividend_yield=resolved_market.dividend_yield,
-            r=resolved_market.risk_free_rate,
+            r=effective_r,
             valuation_date=valuation_date,
         )
         pricing_underlying = effective_spot
@@ -201,15 +219,6 @@ def derive_distribution_from_curve(
             "forward_price", resolved_market.underlying_price
         )
         effective_dividend = None
-
-    # 2a. Determine Days to Expiry
-    expiry_date = vol_meta.get("expiry_date")
-    if expiry_date is None:
-        raise CalculationError(
-            "Volatility metadata missing 'expiry_date'. Cannot derive distribution."
-        )
-
-    days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
 
     strike_grid = _build_strike_grid(
         resolved_market,
@@ -226,7 +235,7 @@ def derive_distribution_from_curve(
         pricing_underlying,
         strike_grid=strike_grid,
         days_to_expiry=days_to_expiry,
-        risk_free_rate=resolved_market.risk_free_rate,
+        risk_free_rate=effective_r,
         pricing_engine=pricing_engine,
         dividend_yield=effective_dividend,
     )
@@ -240,7 +249,7 @@ def derive_distribution_from_curve(
     pdf_prices, pdf_values = pdf_from_price_curve(
         pricing_strike_grid,
         pricing_call_prices,
-        risk_free_rate=resolved_market.risk_free_rate,
+        risk_free_rate=effective_r,
         days_to_expiry=days_to_expiry,
         min_strike=observed_min_strike,
         max_strike=observed_max_strike,

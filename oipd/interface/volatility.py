@@ -18,6 +18,7 @@ from oipd.core.utils import (
     resolve_horizon,
     calculate_time_to_expiry,
     convert_days_to_years,
+    resolve_risk_free_rate,
 )
 from oipd.core.vol_surface_fitting import fit_slice
 
@@ -525,7 +526,6 @@ class VolCurve:
         # 1. Gather Inputs
         K = np.asarray(strikes, dtype=float)
         sigma = self(K)
-        r = self._resolved_market.risk_free_rate
 
         # Determine time to expiry
         # If this is a synthetic curve, 'time_to_expiry_years' is in metadata
@@ -543,6 +543,9 @@ class VolCurve:
 
         # Safety clamp for t
         t = max(t, 1e-6)
+
+        rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
+        r = resolve_risk_free_rate(self._resolved_market.risk_free_rate, rate_mode, t)
 
         # 2. Select Engine & Dispatch
         # We allow "black76" (futures/forward) or "bs" (spot)
@@ -602,7 +605,6 @@ class VolCurve:
 
         K = np.asarray(strikes, dtype=float)
         sigma = self(K)
-        r = self._resolved_market.risk_free_rate
 
         # Time to expiry
         if self._metadata and "time_to_expiry_years" in self._metadata:
@@ -617,6 +619,8 @@ class VolCurve:
         t = max(t, 1e-6)
 
         q = self._resolved_market.dividend_yield
+        rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
+        r = resolve_risk_free_rate(self._resolved_market.risk_free_rate, rate_mode, t)
         return K, sigma, t, r, q
 
     def _dispatch_greek(
@@ -850,9 +854,7 @@ class VolSurface:
         # this should be disabled so we can fit same-day slices.
         if drop_same_day_expiries:
             valuation_date = market.valuation_date
-            chain_input = chain_input[
-                chain_input["expiry"].dt.date > valuation_date
-            ]
+            chain_input = chain_input[chain_input["expiry"].dt.date > valuation_date]
             if chain_input.empty:
                 raise CalculationError(
                     "All expiries are on or before valuation_date. "
@@ -976,7 +978,11 @@ class VolSurface:
             dividend_yield=self._market.dividend_yield,
             dividend_schedule=None,
             provenance=Provenance(price="user", dividends="none"),
-            source_meta={"interpolated": True, "expiry": expiry_timestamp},
+            source_meta={
+                "interpolated": True,
+                "expiry": expiry_timestamp,
+                "risk_free_rate_mode": self._market.risk_free_rate_mode,
+            },
         )
 
         # Derive default strike domain from nearest fitted slices
@@ -1128,7 +1134,9 @@ class VolSurface:
         sigma = self._interpolator.implied_vol(np.asarray(strikes), t_years)
 
         K = np.asarray(strikes, dtype=float)
-        r = self._market.risk_free_rate
+        r = resolve_risk_free_rate(
+            self._market.risk_free_rate, self._market.risk_free_rate_mode, t_years
+        )
 
         # 3. Dispatch to internal engine
         # Using self.pricing_engine to stay consistent with fit()
@@ -1286,7 +1294,9 @@ class VolSurface:
         # 2. Resolve Inputs from Interpolator
         K = np.asarray(strikes, dtype=float)
         sigma = self._interpolator.implied_vol(K, t_years)
-        r = self._market.risk_free_rate
+        r = resolve_risk_free_rate(
+            self._market.risk_free_rate, self._market.risk_free_rate_mode, t_years
+        )
         q = self._market.dividend_yield
 
         # 3. Dispatch to Match Pricing Engine
