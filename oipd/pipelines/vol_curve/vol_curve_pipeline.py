@@ -20,7 +20,11 @@ from oipd.core.vol_surface_fitting.shared.svi_types import SVICalibrationOptions
 from oipd.data_access.readers import DataFrameReader
 from oipd.pricing.utils import prepare_dividends
 from oipd.market_inputs import ResolvedMarket
-from oipd.core.utils import calculate_days_to_expiry, convert_days_to_years
+from oipd.core.utils import (
+    calculate_days_to_expiry,
+    convert_days_to_years,
+    resolve_risk_free_rate,
+)
 
 
 def fit_vol_curve_internal(
@@ -62,22 +66,40 @@ def fit_vol_curve_internal(
     """
     valuation_date = resolved_market.valuation_date
 
-    # 1. Prepare Dividends / Spot for Black-Scholes
+    # 1. Clean and normalize input
+    reader = DataFrameReader()
+    cleaned_options = reader.read(options_data.copy())
+
+    # Derive expiry for this slice (required for time to expiry and rate conversion)
+    if "expiry" not in cleaned_options.columns:
+        raise CalculationError("Options data missing 'expiry' column.")
+
+    expiry_val = cleaned_options["expiry"].iloc[0]
+    expiry_date = (
+        expiry_val.date()
+        if isinstance(expiry_val, pd.Timestamp)
+        else pd.to_datetime(expiry_val).date()
+    )
+    days_to_expiry_slice = calculate_days_to_expiry(expiry_date, valuation_date)
+    years_to_expiry = convert_days_to_years(days_to_expiry_slice)
+
+    rate_mode = resolved_market.source_meta["risk_free_rate_mode"]
+    effective_r = resolve_risk_free_rate(
+        resolved_market.risk_free_rate, rate_mode, years_to_expiry
+    )
+
+    # 2. Prepare Dividends / Spot for Black-Scholes
     if pricing_engine == "bs":
         effective_spot, effective_dividend = prepare_dividends(
             underlying=resolved_market.underlying_price,
             dividend_schedule=resolved_market.dividend_schedule,
             dividend_yield=resolved_market.dividend_yield,
-            r=resolved_market.risk_free_rate,
+            r=effective_r,
             valuation_date=valuation_date,
         )
     else:
         effective_spot = resolved_market.underlying_price
         effective_dividend = None
-
-    # 2. Clean and normalize input
-    reader = DataFrameReader()
-    cleaned_options = reader.read(options_data.copy())
 
     # 3. Apply put-call parity to get synthetic calls + infer forward price
     parity_adjusted, forward_price = apply_put_call_parity(
@@ -110,25 +132,12 @@ def fit_vol_curve_internal(
     if priced_options.empty:
         raise CalculationError("No valid options data after price selection")
 
-    # Calculate time to expiry for this slice
-    # priced_options came from cleaned_options which has 'expiry'
-    if "expiry" not in priced_options.columns:
-        raise CalculationError("Options data missing 'expiry' column.")
-
-    expiry_val = priced_options["expiry"].iloc[0]
-    expiry_date = (
-        expiry_val.date()
-        if isinstance(expiry_val, pd.Timestamp)
-        else pd.to_datetime(expiry_val).date()
-    )
-    days_to_expiry_slice = calculate_days_to_expiry(expiry_date, valuation_date)
-
     # 6. Compute implied volatilities
     options_with_iv = compute_iv(
         priced_options,
         underlying_for_iv,
         days_to_expiry=days_to_expiry_slice,
-        risk_free_rate=resolved_market.risk_free_rate,
+        risk_free_rate=effective_r,
         solver_method=solver,
         pricing_engine=pricing_engine,
         dividend_yield=effective_dividend,
@@ -150,7 +159,7 @@ def fit_vol_curve_internal(
         priced_options,
         "bid",
         underlying_for_iv,
-        resolved_market,
+        effective_r,
         solver,
         pricing_engine,
         effective_dividend,
@@ -160,7 +169,7 @@ def fit_vol_curve_internal(
         priced_options,
         "ask",
         underlying_for_iv,
-        resolved_market,
+        effective_r,
         solver,
         pricing_engine,
         effective_dividend,
@@ -170,7 +179,7 @@ def fit_vol_curve_internal(
         priced_options,
         "last_price",
         underlying_for_iv,
-        resolved_market,
+        effective_r,
         solver,
         pricing_engine,
         effective_dividend,
@@ -208,7 +217,7 @@ def fit_vol_curve_internal(
         strikes,
         ivs,
         forward=underlying_for_iv,
-        maturity_years=convert_days_to_years(days_to_expiry_slice),
+        maturity_years=years_to_expiry,
         options=method_options,
         **fit_kwargs,
     )
@@ -233,6 +242,7 @@ def fit_vol_curve_internal(
         "mid_price_filled": mid_price_filled,
         "staleness_report": staleness_stats,
         "expiry_date": expiry_date,
+        "risk_free_rate_continuous": effective_r,
         **fit_metadata,
     }
 
@@ -243,7 +253,7 @@ def _compute_observed_iv(
     source_df: pd.DataFrame,
     price_column: str,
     underlying_price: float,
-    resolved_market: ResolvedMarket,
+    risk_free_rate: float,
     solver: str,
     pricing_engine: str,
     dividend_yield: Optional[float],
@@ -266,7 +276,7 @@ def _compute_observed_iv(
             priced,
             underlying_price,
             days_to_expiry=days_to_expiry,
-            risk_free_rate=resolved_market.risk_free_rate,
+            risk_free_rate=risk_free_rate,
             solver_method=solver,
             pricing_engine=pricing_engine,
             dividend_yield=dividend_yield,

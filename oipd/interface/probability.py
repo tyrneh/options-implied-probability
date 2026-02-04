@@ -17,7 +17,11 @@ from oipd.presentation.plot_rnd import plot_rnd
 from oipd.presentation.probability_surface_plot import plot_probability_summary
 
 
-from oipd.core.utils import calculate_days_to_expiry, calculate_time_to_expiry
+from oipd.core.utils import (
+    calculate_days_to_expiry,
+    calculate_time_to_expiry,
+    resolve_risk_free_rate,
+)
 from oipd.pipelines.probability import derive_distribution_from_curve
 
 
@@ -133,7 +137,7 @@ class ProbCurve:
         # price(K+h) - 2*price(K) + price(K-h) / h^2
 
         # We need T and r for the discount factor
-        r = self._resolved_market.risk_free_rate
+        rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
 
         # Get T from metadata (standardized in VolCurve)
         if "time_to_expiry_years" in self._metadata:
@@ -149,6 +153,7 @@ class ProbCurve:
         # Clip T to avoid division by zero or extreme scaling
         T = max(T, 1e-5)
 
+        r = resolve_risk_free_rate(self._resolved_market.risk_free_rate, rate_mode, T)
         factor = np.exp(r * T)
 
         # Calculate C(K+h), C(K), C(K-h)
@@ -184,7 +189,7 @@ class ProbCurve:
             raise ValueError("ProbCurve must be initialized with a fitted VolCurve")
 
         # Get T and r
-        r = self._resolved_market.risk_free_rate
+        rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
         if "time_to_expiry_years" in self._metadata:
             T = float(self._metadata["time_to_expiry_years"])
         else:
@@ -193,6 +198,7 @@ class ProbCurve:
             )
 
         T = max(T, 1e-5)
+        r = resolve_risk_free_rate(self._resolved_market.risk_free_rate, rate_mode, T)
         factor = np.exp(r * T)
 
         h = 1e-4 * price
