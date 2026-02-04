@@ -18,7 +18,7 @@ from oipd import VolCurve, MarketInputs
 
 def generate_golden_master():
     # 1. Load Data
-    data_path = os.path.join(os.path.dirname(__file__), "../../data/AAPL_data.csv")
+    data_path = os.path.join(os.path.dirname(__file__), "AAPL_data.csv")
     df_appl = pd.read_csv(data_path)
     df_slice = df_appl[df_appl["expiration"] == "2026-01-16"]
 

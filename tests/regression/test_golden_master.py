@@ -30,7 +30,7 @@ def golden_master():
 @pytest.fixture
 def aapl_chain():
     """Load AAPL test data."""
-    data_path = os.path.join(os.path.dirname(__file__), "../../data/AAPL_data.csv")
+    data_path = os.path.join(os.path.dirname(__file__), "../data/AAPL_data.csv")
     return pd.read_csv(data_path)
 
 

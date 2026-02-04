@@ -9,6 +9,7 @@ __pycache__/
 example_script.py
 .yfinance_cache/*
 .yfinance_cache/
+!tests/data/*.csv
 
 # C extensions
 *.so
