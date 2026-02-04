@@ -100,6 +100,16 @@ class TestProbSurfaceFromChain:
         prob = ProbSurface.from_chain(multi_expiry_chain, market_inputs)
         assert isinstance(prob, ProbSurface)
 
+    def test_from_chain_accepts_max_staleness(self, multi_expiry_chain, market_inputs):
+        """from_chain() accepts max_staleness_days."""
+        from oipd import ProbSurface
+        prob = ProbSurface.from_chain(
+            multi_expiry_chain,
+            market_inputs,
+            max_staleness_days=1,
+        )
+        assert isinstance(prob, ProbSurface)
+
     def test_from_chain_rejects_single_expiry(self, multi_expiry_chain, market_inputs):
         """from_chain() raises when only one expiry is provided."""
         from oipd import ProbSurface

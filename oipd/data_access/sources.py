@@ -167,8 +167,8 @@ def fetch_chain(
         ticker: Symbol (e.g. "AAPL").
         expiries: One or more expiry dates. Can be a single string ("2025-01-01"),
             a date object, or a list of them.
-        horizon: Time horizon string (e.g. "3m") to automatically select expiries.
-                 (Not fully implemented, placeholder)
+        horizon: Time horizon string (e.g. "3m") to automatically select expiries
+            relative to today's date.
         vendor: Data provider alias. Currently only "yfinance" is supported.
         column_mapping: Optional dict to map vendor columns to standard names.
         cache_enabled: Whether to cache the network response (default: True).

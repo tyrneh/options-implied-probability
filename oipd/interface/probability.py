@@ -57,6 +57,7 @@ class ProbCurve:
         market: "MarketInputs",
         *,
         column_mapping: Optional[Mapping[str, str]] = None,
+        max_staleness_days: int = 3,
     ) -> "ProbCurve":
         """Build a ProbCurve directly from a single-expiry option chain.
 
@@ -68,6 +69,7 @@ class ProbCurve:
             market: Market inputs required for calibration.
             column_mapping: Optional mapping from input columns to OIPD
                 standard names.
+            max_staleness_days: Maximum age of quotes in days to include.
 
         Returns:
             ProbCurve: The fitted risk-neutral probability curve.
@@ -78,7 +80,7 @@ class ProbCurve:
         """
         from oipd import VolCurve
 
-        vol_curve = VolCurve(method="svi")
+        vol_curve = VolCurve(method="svi", max_staleness_days=max_staleness_days)
         vol_curve.fit(chain, market, column_mapping=column_mapping)
         return vol_curve.implied_distribution()
 
@@ -465,6 +467,7 @@ class ProbSurface:
         market: "MarketInputs",
         *,
         column_mapping: Optional[Mapping[str, str]] = None,
+        max_staleness_days: int = 3,
     ) -> "ProbSurface":
         """Build a ProbSurface directly from a multi-expiry option chain.
 
@@ -476,6 +479,7 @@ class ProbSurface:
             market: Market inputs required for calibration.
             column_mapping: Optional mapping from input columns to OIPD
                 standard names.
+            max_staleness_days: Maximum age of quotes in days to include.
 
         Returns:
             ProbSurface: The fitted risk-neutral probability surface.
@@ -486,7 +490,7 @@ class ProbSurface:
         """
         from oipd import VolSurface
 
-        vol_surface = VolSurface(method="svi")
+        vol_surface = VolSurface(method="svi", max_staleness_days=max_staleness_days)
         vol_surface.fit(chain, market, column_mapping=column_mapping)
         return vol_surface.implied_distribution()
 

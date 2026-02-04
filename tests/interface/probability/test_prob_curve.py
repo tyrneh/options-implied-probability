@@ -85,6 +85,16 @@ class TestProbCurveFromChain:
         prob = ProbCurve.from_chain(single_expiry_chain, market_inputs)
         assert isinstance(prob, ProbCurve)
 
+    def test_from_chain_accepts_max_staleness(self, single_expiry_chain, market_inputs):
+        """from_chain() accepts max_staleness_days."""
+        from oipd import ProbCurve
+        prob = ProbCurve.from_chain(
+            single_expiry_chain,
+            market_inputs,
+            max_staleness_days=1,
+        )
+        assert isinstance(prob, ProbCurve)
+
     def test_from_chain_rejects_multiple_expiries(self, single_expiry_chain, market_inputs):
         """from_chain() raises on multi-expiry input."""
         from oipd import ProbCurve
