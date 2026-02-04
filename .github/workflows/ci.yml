@@ -11,7 +11,7 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout code
@@ -34,7 +34,7 @@ jobs:
       #   run: flake8 .
       
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: lint   # only run tests if lint passes
 
     steps:

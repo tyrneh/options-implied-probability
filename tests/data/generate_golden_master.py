@@ -16,7 +16,15 @@ from datetime import date
 from oipd import VolCurve, MarketInputs
 
 
-def generate_golden_master():
+def generate_golden_master() -> None:
+    """Generate and persist the golden master JSON snapshot.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
     # 1. Load Data
     data_path = os.path.join(os.path.dirname(__file__), "AAPL_data.csv")
     df_appl = pd.read_csv(data_path)
@@ -86,7 +94,10 @@ def generate_golden_master():
     }
 
     # 7. Save
-    out_path = os.path.join(os.path.dirname(__file__), "golden_master.json")
+    out_path = os.getenv(
+        "OIPD_GOLDEN_MASTER_OUT",
+        os.path.join(os.path.dirname(__file__), "golden_master.json"),
+    )
     with open(out_path, "w") as f:
         json.dump(gm_data, f, indent=4)
 

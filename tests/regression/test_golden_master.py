@@ -9,6 +9,7 @@ These tests protect against unintentional changes to mathematical outputs.
 import pytest
 import json
 import os
+import sys
 import numpy as np
 import pandas as pd
 from datetime import date
@@ -22,7 +23,16 @@ from datetime import date
 @pytest.fixture
 def golden_master():
     """Load golden master reference data."""
-    gm_path = os.path.join(os.path.dirname(__file__), "../data/golden_master.json")
+    base_dir = os.path.dirname(__file__)
+    if sys.platform.startswith("linux"):
+        gm_path = os.path.join(base_dir, "../data/golden_master_linux.json")
+        if not os.path.exists(gm_path):
+            raise FileNotFoundError(
+                "Missing Linux golden master. Run the "
+                "`Generate Linux Golden Master` workflow."
+            )
+    else:
+        gm_path = os.path.join(base_dir, "../data/golden_master.json")
     with open(gm_path, "r") as f:
         return json.load(f)
 
