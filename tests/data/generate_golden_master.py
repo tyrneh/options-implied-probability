@@ -80,8 +80,8 @@ def generate_golden_master():
         },
         "distribution": {
             "prices": prob.prices.tolist(),
-            "pdf": prob.pdf.tolist(),
-            "cdf": prob.cdf.tolist(),
+            "pdf": prob.pdf_values.tolist(),
+            "cdf": prob.cdf_values.tolist(),
         },
     }
 

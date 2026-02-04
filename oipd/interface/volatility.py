@@ -151,6 +151,15 @@ class VolCurve:
                 "Use VolSurface.fit for multiple expiries."
             )
 
+        expiry_date = pd.to_datetime(unique_expiries[0]).date()
+        # NOTE: If we ever move to intraday time-to-expiry (minutes/seconds),
+        # this guard should be revisited to allow same-day expiries.
+        if expiry_date <= market.valuation_date:
+            raise CalculationError(
+                "Expiry must be strictly after valuation_date. "
+                "Choose a later expiry to fit a volatility curve."
+            )
+
         # resolved_market: A complete snapshot of market conditions (rates, spot, dividends)
         # derived from explicit user inputs.
         resolved_market = resolve_market(market)
@@ -834,6 +843,20 @@ class VolSurface:
             if chain_input.empty:
                 raise CalculationError(
                     f"No expiries found within horizon {horizon} (cutoff {cutoff})"
+                )
+
+        drop_same_day_expiries = True
+        # NOTE: If we ever move to intraday time-to-expiry (minutes/seconds),
+        # this should be disabled so we can fit same-day slices.
+        if drop_same_day_expiries:
+            valuation_date = market.valuation_date
+            chain_input = chain_input[
+                chain_input["expiry"].dt.date > valuation_date
+            ]
+            if chain_input.empty:
+                raise CalculationError(
+                    "All expiries are on or before valuation_date. "
+                    "Surface fitting requires positive time to expiry."
                 )
 
         unique_expiries = chain_input["expiry"].unique()

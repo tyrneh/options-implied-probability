@@ -91,7 +91,10 @@ def derive_distribution_from_curve(
         vol_metadata: Optional metadata from the vol fit (for diagnostics).
 
     Returns:
-        Tuple of ``(prices, pdf, cdf, metadata)``.
+        Tuple of ``(prices, pdf, cdf, metadata)``. When ``domain`` is not
+        provided and observed strikes are available in the metadata, the
+        distribution is evaluated on the observed strike grid to preserve
+        market-aligned points.
     """
     vol_meta = vol_metadata or {}
     valuation_date = resolved_market.valuation_date
@@ -126,8 +129,20 @@ def derive_distribution_from_curve(
     strike_grid = None
     target_domain = domain or vol_meta.get("default_domain")
 
+    observed_strikes: np.ndarray | None = None
+    observed_iv = vol_meta.get("observed_iv")
+    if observed_iv is not None:
+        try:
+            if not observed_iv.empty and "strike" in observed_iv.columns:
+                observed_strikes = observed_iv["strike"].to_numpy(dtype=float)
+        except Exception:
+            observed_strikes = None
+
     if target_domain:
         strike_grid = np.linspace(target_domain[0], target_domain[1], points)
+    elif observed_strikes is not None and observed_strikes.size > 0:
+        strike_grid = np.unique(observed_strikes)
+        strike_grid.sort()
     else:
         # Fallback: Create a reasonable grid based on ATM vol and T
         # Assume roughly log-normal distribution width ~ sigma * sqrt(T)

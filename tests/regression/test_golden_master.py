@@ -169,5 +169,5 @@ class TestDistributionRegression:
         expected_cdf = np.array(gm["distribution"]["cdf"])
 
         assert np.allclose(prob.prices, expected_prices, atol=1e-8)
-        assert np.allclose(prob.pdf, expected_pdf, atol=1e-8)
-        assert np.allclose(prob.cdf, expected_cdf, atol=1e-8)
+        assert np.allclose(prob.pdf_values, expected_pdf, atol=1e-8)
+        assert np.allclose(prob.cdf_values, expected_cdf, atol=1e-8)
