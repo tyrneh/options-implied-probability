@@ -7,11 +7,16 @@
 
 # Overview
 
-OIPD computes the market's expectations about the probable future prices of an asset, based on information contained in options data. 
+### OIPD provides 2 capabilities:
 
-While markets don't predict the future with certainty, under the efficient market hypothesis, these collective expectations represent the best available estimate of what might happen.
+**1. It computes the market's expectations about the probable future prices of an asset, based on information contained in options data.**
+   - While markets don't predict the future with certainty, under the efficient market view, these collective expectations represent the best available estimate of what might happen.
+   - Traditionally, extracting these “risk-neutral densities” were limited to quants or academics. OIPD makes this capability accessible to everyone.
 
-Traditionally, extracting these “risk-neutral densities” required institutional knowledge and resources, limited to specialist quant-desks. OIPD makes this capability accessible to everyone — delivering an institutional-grade tool in a simple, production-ready Python package.
+**2. For options traders, it also offers simple-to-use but rigorous pipeline to fit a volatility smile/surface, and use that theoretical fit to price options.**
+   - Fitting a vol surface well is a complex and expensive process, with the leading software provider costing $50k USD/month/seat. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
+
+
 
 <p align="center" style="margin-top: 80px;">
   <img src="https://github.com/tyrneh/options-implied-probability/blob/main/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
@@ -26,75 +31,87 @@ Traditionally, extracting these “risk-neutral densities” required institutio
 pip install oipd
 ```
 
-#### Usage
+### Quickstart tutorial in computing market-implied probability distributions
 
-![OIPDwalkthrough](https://github.com/user-attachments/assets/2da5506d-a720-4f93-820b-23b368d074bb)
+This quickstart will cover the functionality in (1) - computing market-implied probabilities. For a more technical tutorial including the functionality of (2) volatility fitting, see the full documentation [still WIP]. 
+
+#### A. Usage for computing a probability distribution on a specific future date
 
 ```python
-from oipd import RND, MarketInputs
-from datetime import date
+import matplotlib.pyplot as plt
 
-# 1 ─ point to a ticker and provide market info
+from oipd import MarketInputs, ProbCurve, sources
+
+# 1. we download data using the built-in yfinance connection
+ticker = "AAPL"                               # specify the stock ticker
+expiries = sources.list_expiry_dates(ticker)  # see all expiry dates
+single_expiry = expiries[1]                   # select one of the expiry dates you're interested in 
+
+chain, snapshot = sources.fetch_chain(ticker, expiries=single_expiry) # download the options chain data, and a snapshot at the time of download
+
+# 2. fill in the parameters 
 market = MarketInputs(
-    valuation_date=date.today(),      # the "as-of" date for the analysis
-    expiry_date=date(2025, 12, 19),   # option expiry date you care about
-    risk_free_rate=0.04,              # annualized risk-free rate
+    valuation_date=snapshot.date,               # date on which the options data was downloaded
+    underlying_price=snapshot.underlying_price, # the price of the underlying stock at the time when the options data was downloaded 
+    risk_free_rate=0.04,                        # the risk-free rate of return. Use the US Fed or Treasury yields that are closest to the horizon of the expiry date
 )
 
-# 2 - run estimator, auto fetching data from Yahoo Finance
-est = RND.from_ticker("AAPL", market)   
+# 3. compute the future probability distribution using the data and parameters
+prob = ProbCurve.from_chain(chain, market)
 
-# 3 ─ access results and plots
-est.prob_at_or_above(120)               # P(price >= $120)
-est.prob_below(100)                     # P(price < $100)
-est.plot()                              # plot probability and cumulative distribution functions 
-smile = est.iv_smile()                  # DataFrame with fitted, bid, and ask IVs by strike
-est.plot(kind="iv_smile")               # visualize fitted IV smile
+# 4. query the computed result to understand market-implied probabilities and other statistics
+prob.plot()
+plt.show()
+
+prob_below = prob.prob_below(100)   # P(price < 100)
+prob_above = prob.prob_above(120)   # P(price >= 120)
+q50 = prob.quantile(0.50)           # median implied price
+skew = prob.skew()                  # skew
+```
+
+
+#### B. Usage for computing probabilities over time
+
+```python
+import matplotlib.pyplot as plt
+
+from oipd import MarketInputs, ProbSurface, sources
+
+# 1. download multi-expiry data using the built-in yfinance connection
+ticker = "AAPL"
+chain_surface, snapshot_surface = sources.fetch_chain(
+    ticker,
+    horizon="3m",  # auto-fetch all listed expiries inside the horizon
+)
+
+# 2. fill in the parameters
+surface_market = MarketInputs(
+    valuation_date=snapshot_surface.date,               # date on which the options data was downloaded
+    underlying_price=snapshot_surface.underlying_price, # price of the underlying stock at download time
+    risk_free_rate=0.04,                                # risk-free rate for the horizon
+)
+
+# 3. compute the probability surface using the data and parameters
+surface = ProbSurface.from_chain(chain_surface, surface_market)
+
+# 4. query and visualize the surface
+surface.plot_fan() # Plot a fan chart of price probability over time
+plt.show()
+
+# 5. "slice" the surface to get a ProbCurve, and query its statistical properties in the same manner as in example A 
+surface.expiries                                  # list all the expiry dates that were captured
+curve = surface.slice(surface.expiries[0]) # get a slice on the first expiry
+curve.prob_below(100)                      # query probabilities and statistics 
+curve.kurtosis()                           
 ```
 
 OIPD also **supports manual CSV or DataFrame uploads**. 
 
-See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details, and the academic theory behind the technique. 
+See [more examples](examples/) for demos.
 
-See [more examples](examples/example.ipynb) with provided options data. 
-
-
-# Use cases
-
-**Event-driven strategies: assess market's belief about the likelihood of mergers**
-
-- Nippon Steel offered to acquire US Steel for $55 per share; in early 2025, US Steel was trading at $30 per share. Using OIPD, you find that the market believed US Steel had a ~20% probability of acquisition (price >= $55 by end of year)
-- If you believe that political backlash was overstated and the acquisition was likely to be approved, then you can quantify a trade's expected payoff. Compare your subjective belief with the market-priced probability to determine expected value of buying stock or calls
-
-**Risk management: compute forward-looking Value-at-Risk**
-
-- A 99% 12-month VaR of 3% is (i) backward-looking and (ii) assumes a parametric distribution, often unrealistic assumptions especially before catalysts
-- Ahead of earnings season, pull option-implied distributions for holdings. The forward-looking, non-parametric distribution point to a 6% portfolio-blended VaR
-
-**Treasury management: decide the next commodity hedge tranche**
-
-- As an airline, a portion of next year’s jet fuel demand is hedged; the rest floats. Use OIPD to estimate the probability of breaching your budget and the expected overspend (earnings-at-risk) on the unhedged slice
-- If OIPD shows higher price risk, add a small 5–10% hedged tranche using to pull P(breach)/EaR back within board guardrails
 
 # Community
 
 Pull requests welcome! Reach out on GitHub issues to discuss design choices.
 
 Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, discuss strategies, and get support. Message me with your feature requests, and let me know how you use this. 
-
-
-
-# Current Roadmap
-
-Convenience features:
-- integrate other data vendors (Alpaca, Deribit) for automatic stock and crypto options data fetching
-
-Algorithmic improvements:
-- implement no-arbitrage checks 
-- fit IV smile using SABR model
-- infer forward price using a band of near-ATM option-pairs, rather than the one nearest pair
-- American-option de-Americanisation module
-- full term-structure surface (`RNDTermSurface`)
-- Research in conversion from risk-neutral to physical probabilities 
-
-The list describes potential features and research directions; it is neither exhaustive nor a prescribed implementation schedule.
