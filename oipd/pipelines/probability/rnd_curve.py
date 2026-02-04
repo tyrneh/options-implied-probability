@@ -19,6 +19,93 @@ from oipd.core.probability_density_conversion import (
 from oipd.pricing.utils import prepare_dividends
 
 
+def _build_strike_grid(
+    resolved_market: ResolvedMarket,
+    vol_meta: Mapping[str, Any],
+    *,
+    pricing_underlying: float,
+    days_to_expiry: int,
+    domain: Optional[Tuple[float, float]] = None,
+    points: int = 200,
+) -> np.ndarray:
+    """Build a uniform strike grid for probability estimation.
+
+    Args:
+        resolved_market: Fully resolved market inputs.
+        vol_meta: Metadata from the volatility calibration.
+        pricing_underlying: Forward/spot used for pricing calls.
+        days_to_expiry: Days to expiry for the slice.
+        domain: Optional strike domain as (min, max).
+        points: Number of grid points to generate.
+
+    Returns:
+        np.ndarray: Uniformly spaced strike grid.
+
+    Raises:
+        CalculationError: If a valid strike domain cannot be inferred.
+    """
+    target_domain = domain or vol_meta.get("default_domain")
+    if target_domain is not None:
+        min_strike, max_strike = target_domain
+        min_strike = max(0.01, float(min_strike))
+        max_strike = float(max_strike)
+        if min_strike >= max_strike:
+            raise CalculationError(
+                "Strike domain must satisfy min_strike < max_strike."
+            )
+        return np.linspace(min_strike, max_strike, points)
+
+    observed_iv = vol_meta.get("observed_iv")
+    if observed_iv is not None:
+        try:
+            if not observed_iv.empty and "strike" in observed_iv.columns:
+                min_strike = float(observed_iv["strike"].min())
+                max_strike = float(observed_iv["strike"].max())
+                if np.isclose(min_strike, max_strike):
+                    padding = max(0.01, 0.05 * max(abs(min_strike), 1.0))
+                    lower_bound = max(0.01, min_strike - padding)
+                    upper_bound = max_strike + padding
+                else:
+                    padding = 0.05 * (max_strike - min_strike)
+                    lower_bound = min_strike - padding
+                    if lower_bound <= 0:
+                        lower_bound = min_strike * 0.5
+                    lower_bound = max(0.01, lower_bound)
+                    upper_bound = max_strike + padding
+
+                if lower_bound >= upper_bound:
+                    upper_bound = lower_bound + max(
+                        0.01, 0.05 * max(abs(max_strike), 1.0)
+                    )
+                return np.linspace(lower_bound, upper_bound, points)
+        except Exception:
+            pass
+
+    if days_to_expiry <= 0:
+        raise CalculationError(
+            "Days to expiry must be positive to build a strike grid."
+        )
+
+    atm_vol = vol_meta.get("at_money_vol")
+    if atm_vol is None:
+        raise CalculationError(
+            "Cannot determine default grid: 'at_money_vol' missing in metadata."
+        )
+
+    T = convert_days_to_years(days_to_expiry)
+    sigma_root_t = float(atm_vol) * np.sqrt(T)
+    width = 5.0 * sigma_root_t
+    forward = float(pricing_underlying)
+
+    low_strike = forward * np.exp(-width - 0.5 * sigma_root_t**2)
+    high_strike = forward * np.exp(width - 0.5 * sigma_root_t**2)
+    low_strike = max(low_strike, 0.01)
+    if low_strike >= high_strike:
+        high_strike = low_strike + max(0.01, 0.05 * max(abs(forward), 1.0))
+
+    return np.linspace(low_strike, high_strike, points)
+
+
 def derive_distribution_internal(
     options_data: pd.DataFrame,
     resolved_market: ResolvedMarket,
@@ -92,9 +179,8 @@ def derive_distribution_from_curve(
 
     Returns:
         Tuple of ``(prices, pdf, cdf, metadata)``. When ``domain`` is not
-        provided and observed strikes are available in the metadata, the
-        distribution is evaluated on the observed strike grid to preserve
-        market-aligned points.
+        provided, a uniform strike grid is constructed from the best available
+        domain estimate (metadata, observed strikes, or ATM-based fallback).
     """
     vol_meta = vol_metadata or {}
     valuation_date = resolved_market.valuation_date
@@ -125,49 +211,14 @@ def derive_distribution_from_curve(
 
     days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
 
-    # Determine strike grid - interpolated slices store default_domain in metadata
-    strike_grid = None
-    target_domain = domain or vol_meta.get("default_domain")
-
-    observed_strikes: np.ndarray | None = None
-    observed_iv = vol_meta.get("observed_iv")
-    if observed_iv is not None:
-        try:
-            if not observed_iv.empty and "strike" in observed_iv.columns:
-                observed_strikes = observed_iv["strike"].to_numpy(dtype=float)
-        except Exception:
-            observed_strikes = None
-
-    if target_domain:
-        strike_grid = np.linspace(target_domain[0], target_domain[1], points)
-    elif observed_strikes is not None and observed_strikes.size > 0:
-        strike_grid = np.unique(observed_strikes)
-        strike_grid.sort()
-    else:
-        # Fallback: Create a reasonable grid based on ATM vol and T
-        # Assume roughly log-normal distribution width ~ sigma * sqrt(T)
-        T = convert_days_to_years(days_to_expiry)
-        atm_vol = vol_meta.get("at_money_vol")
-        if atm_vol is None:
-            raise CalculationError(
-                "Cannot determine default grid: 'at_money_vol' missing in metadata."
-            )
-
-        # Center around forward
-        F = pricing_underlying
-
-        # 5 standard deviations covers >99.99% of mass
-        sigma_root_t = atm_vol * np.sqrt(T)
-        width = 5.0 * sigma_root_t
-
-        # Grid range in log-moneyness then back to price
-        low_K = F * np.exp(-width - 0.5 * sigma_root_t**2)
-        high_K = F * np.exp(width - 0.5 * sigma_root_t**2)
-
-        # Ensure positive
-        low_K = max(low_K, 0.01)
-
-        strike_grid = np.linspace(low_K, high_K, points)
+    strike_grid = _build_strike_grid(
+        resolved_market,
+        vol_meta,
+        pricing_underlying=pricing_underlying,
+        days_to_expiry=days_to_expiry,
+        domain=domain,
+        points=points,
+    )
 
     # 2. Generate Price Curve from Vol
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(

@@ -11,10 +11,10 @@
 
 **1. It computes the market's expectations about the probable future prices of an asset, based on information contained in options data.**
    - While markets don't predict the future with certainty, under the efficient market view, these collective expectations represent the best available estimate of what might happen.
-   - Traditionally, extracting these “risk-neutral densities” required institutional knowledge and resources, limited to specialist quants or academics. OIPD makes this capability accessible to everyone.
+   - Traditionally, extracting these “risk-neutral densities” were limited to quants or academics. OIPD makes this capability accessible to everyone.
 
 **2. For options traders, it also offers simple-to-use but rigorous pipeline to fit a volatility smile/surface, and use that theoretical fit to price options.**
-   - Fitting a vol surface well is a complex and expensive process, with the leading software vendor charging $50k USD/month. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
+   - Fitting a vol surface well is a complex and expensive process, with the leading software provider costing $50k USD/month/seat. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
 
 
 
@@ -33,7 +33,7 @@ pip install oipd
 
 ### Quickstart tutorial in computing market-implied probability distributions
 
-This quickstart will cover the functionality in (1) - computing market-implied probabilities. For a more technical tutorial including the functionality of (2) volatility fitting, see the full documentation. 
+This quickstart will cover the functionality in (1) - computing market-implied probabilities. For a more technical tutorial including the functionality of (2) volatility fitting, see the full documentation [still WIP]. 
 
 #### A. Usage for computing a probability distribution on a specific future date
 
@@ -107,9 +107,7 @@ curve.kurtosis()
 
 OIPD also **supports manual CSV or DataFrame uploads**. 
 
-See [`TECHNICAL_README.md`](TECHNICAL_README.md) for more details, and the academic theory behind the technique. 
-
-See [more examples](examples/example.ipynb) with provided options data. 
+See [more examples](examples/) for demos.
 
 
 # Community
