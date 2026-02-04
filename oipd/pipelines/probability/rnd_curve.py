@@ -112,18 +112,20 @@ def derive_distribution_from_curve(
             "forward_price", resolved_market.underlying_price
         )
         effective_dividend = None
-    
+
     # 2a. Determine Days to Expiry
     expiry_date = vol_meta.get("expiry_date")
     if expiry_date is None:
-        raise CalculationError("Volatility metadata missing 'expiry_date'. Cannot derive distribution.")
-    
+        raise CalculationError(
+            "Volatility metadata missing 'expiry_date'. Cannot derive distribution."
+        )
+
     days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
 
     # Determine strike grid - interpolated slices store default_domain in metadata
     strike_grid = None
     target_domain = domain or vol_meta.get("default_domain")
-    
+
     if target_domain:
         strike_grid = np.linspace(target_domain[0], target_domain[1], points)
     else:
@@ -132,22 +134,24 @@ def derive_distribution_from_curve(
         T = convert_days_to_years(days_to_expiry)
         atm_vol = vol_meta.get("at_money_vol")
         if atm_vol is None:
-            raise CalculationError("Cannot determine default grid: 'at_money_vol' missing in metadata.")
-        
+            raise CalculationError(
+                "Cannot determine default grid: 'at_money_vol' missing in metadata."
+            )
+
         # Center around forward
         F = pricing_underlying
-        
+
         # 5 standard deviations covers >99.99% of mass
         sigma_root_t = atm_vol * np.sqrt(T)
         width = 5.0 * sigma_root_t
-        
+
         # Grid range in log-moneyness then back to price
         low_K = F * np.exp(-width - 0.5 * sigma_root_t**2)
         high_K = F * np.exp(width - 0.5 * sigma_root_t**2)
-        
+
         # Ensure positive
         low_K = max(low_K, 0.01)
-        
+
         strike_grid = np.linspace(low_K, high_K, points)
 
     # 2. Generate Price Curve from Vol

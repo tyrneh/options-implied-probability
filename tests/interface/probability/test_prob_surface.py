@@ -16,6 +16,7 @@ from datetime import date
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def multi_expiry_chain():
     """Option chain with multiple expiries (calls and puts)."""
@@ -64,6 +65,7 @@ def multi_expiry_chain():
 def market_inputs():
     """Standard MarketInputs for probability surface tests."""
     from oipd import MarketInputs
+
     return MarketInputs(
         valuation_date=date(2025, 1, 1),
         underlying_price=100.0,
@@ -91,18 +93,21 @@ def prob_surface(fitted_vol_surface):
 # ProbSurface.from_chain() Tests
 # =============================================================================
 
+
 class TestProbSurfaceFromChain:
     """Tests for ProbSurface.from_chain() constructor."""
 
     def test_from_chain_returns_probsurface(self, multi_expiry_chain, market_inputs):
         """from_chain() returns a ProbSurface."""
         from oipd import ProbSurface
+
         prob = ProbSurface.from_chain(multi_expiry_chain, market_inputs)
         assert isinstance(prob, ProbSurface)
 
     def test_from_chain_accepts_max_staleness(self, multi_expiry_chain, market_inputs):
         """from_chain() accepts max_staleness_days."""
         from oipd import ProbSurface
+
         prob = ProbSurface.from_chain(
             multi_expiry_chain,
             market_inputs,
@@ -114,6 +119,7 @@ class TestProbSurfaceFromChain:
         """from_chain() raises when only one expiry is provided."""
         from oipd import ProbSurface
         from oipd.core.errors import CalculationError
+
         single_expiry_chain = multi_expiry_chain[
             multi_expiry_chain["expiry"] == multi_expiry_chain["expiry"].iloc[0]
         ]
@@ -124,6 +130,7 @@ class TestProbSurfaceFromChain:
 # =============================================================================
 # ProbSurface Basic Properties Tests
 # =============================================================================
+
 
 class TestProbSurfaceProperties:
     """Tests for ProbSurface basic properties."""
@@ -141,13 +148,14 @@ class TestProbSurfaceProperties:
 # ProbSurface.slice() Tests
 # =============================================================================
 
+
 class TestProbSurfaceSlice:
     """Tests for ProbSurface.slice() method."""
 
     def test_slice_returns_probcurve(self, prob_surface):
         """slice(expiry) returns a ProbCurve object."""
         from oipd.interface.probability import ProbCurve
-        
+
         first_exp = prob_surface.expiries[0]
         curve = prob_surface.slice(first_exp)
         assert isinstance(curve, ProbCurve)
@@ -187,12 +195,14 @@ class TestProbSurfaceSlice:
 # ProbSurface.plot_fan() Tests
 # =============================================================================
 
+
 class TestProbSurfacePlotFan:
     """Tests for ProbSurface.plot_fan() visualization."""
 
     def test_plot_fan_does_not_crash(self, prob_surface):
         """plot_fan() executes without raising."""
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 

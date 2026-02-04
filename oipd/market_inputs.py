@@ -38,7 +38,6 @@ class MarketInputs:
         elif isinstance(self.valuation_date, datetime):
             object.__setattr__(self, "valuation_date", self.valuation_date.date())
 
-
     # Optional fields second
     underlying_price: Optional[float] = None
     dividend_yield: Optional[float] = None
@@ -129,9 +128,6 @@ class ResolvedMarket:
         return self.underlying_price
 
 
-
-
-
 def resolve_market(
     inputs: MarketInputs,
 ) -> ResolvedMarket:
@@ -199,4 +195,3 @@ def resolve_market(
             "risk_free_rate_input": inputs.risk_free_rate,
         },
     )
-

@@ -16,6 +16,7 @@ from datetime import date
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def single_expiry_chain():
     """Single-expiry chain with calls and puts for parity."""
@@ -48,6 +49,7 @@ def single_expiry_chain():
 def market_inputs():
     """Standard MarketInputs for probability tests."""
     from oipd import MarketInputs
+
     return MarketInputs(
         valuation_date=date(2025, 1, 1),
         underlying_price=100.0,
@@ -76,18 +78,21 @@ def prob_curve(fitted_vol_curve):
 # ProbCurve.from_chain() Tests
 # =============================================================================
 
+
 class TestProbCurveFromChain:
     """Tests for ProbCurve.from_chain() constructor."""
 
     def test_from_chain_returns_probcurve(self, single_expiry_chain, market_inputs):
         """from_chain() returns a ProbCurve."""
         from oipd import ProbCurve
+
         prob = ProbCurve.from_chain(single_expiry_chain, market_inputs)
         assert isinstance(prob, ProbCurve)
 
     def test_from_chain_accepts_max_staleness(self, single_expiry_chain, market_inputs):
         """from_chain() accepts max_staleness_days."""
         from oipd import ProbCurve
+
         prob = ProbCurve.from_chain(
             single_expiry_chain,
             market_inputs,
@@ -95,9 +100,12 @@ class TestProbCurveFromChain:
         )
         assert isinstance(prob, ProbCurve)
 
-    def test_from_chain_rejects_multiple_expiries(self, single_expiry_chain, market_inputs):
+    def test_from_chain_rejects_multiple_expiries(
+        self, single_expiry_chain, market_inputs
+    ):
         """from_chain() raises on multi-expiry input."""
         from oipd import ProbCurve
+
         bad_chain = single_expiry_chain.copy()
         bad_chain.loc[bad_chain.index[:5], "expiry"] = pd.Timestamp("2025-04-21")
         with pytest.raises(ValueError, match="single expiry"):
@@ -107,6 +115,7 @@ class TestProbCurveFromChain:
 # =============================================================================
 # ProbCurve Basic Properties Tests
 # =============================================================================
+
 
 class TestProbCurveProperties:
     """Tests for ProbCurve basic properties."""
@@ -159,6 +168,7 @@ class TestProbCurveProperties:
 # ProbCurve.prob_below() Tests
 # =============================================================================
 
+
 class TestProbCurveProbBelow:
     """Tests for prob_below() method."""
 
@@ -193,6 +203,7 @@ class TestProbCurveProbBelow:
 # ProbCurve.prob_above() Tests
 # =============================================================================
 
+
 class TestProbCurveProbAbove:
     """Tests for prob_above() method."""
 
@@ -207,6 +218,7 @@ class TestProbCurveProbAbove:
 # =============================================================================
 # ProbCurve.prob_between() Tests
 # =============================================================================
+
 
 class TestProbCurveProbBetween:
     """Tests for prob_between() method."""
@@ -233,6 +245,7 @@ class TestProbCurveProbBetween:
 # ProbCurve.expected_value() Tests
 # =============================================================================
 
+
 class TestProbCurveMean:
     """Tests for mean() method."""
 
@@ -257,6 +270,7 @@ class TestProbCurveMean:
 # ProbCurve.variance() Tests
 # =============================================================================
 
+
 class TestProbCurveVariance:
     """Tests for variance() method."""
 
@@ -275,15 +289,17 @@ class TestProbCurveVariance:
 # ProbCurve.plot() Tests
 # =============================================================================
 
+
 class TestProbCurvePlot:
     """Tests for ProbCurve.plot() visualization."""
 
     def test_plot_pdf_does_not_crash(self, prob_curve):
         """plot(kind='pdf') executes without raising."""
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        
+
         fig = prob_curve.plot(kind="pdf")
         assert fig is not None
         plt.close(fig)
@@ -291,9 +307,10 @@ class TestProbCurvePlot:
     def test_plot_cdf_does_not_crash(self, prob_curve):
         """plot(kind='cdf') executes without raising."""
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        
+
         fig = prob_curve.plot(kind="cdf")
         assert fig is not None
         plt.close(fig)
@@ -301,9 +318,10 @@ class TestProbCurvePlot:
     def test_plot_both_does_not_crash(self, prob_curve):
         """plot(kind='both') executes without raising."""
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        
+
         fig = prob_curve.plot(kind="both")
         assert fig is not None
         plt.close(fig)
@@ -312,6 +330,7 @@ class TestProbCurvePlot:
 # =============================================================================
 # ProbCurve Callable Interface Tests
 # =============================================================================
+
 
 class TestProbCurveCallable:
     """Tests for ProbCurve callable interface."""

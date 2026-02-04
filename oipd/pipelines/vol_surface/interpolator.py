@@ -7,7 +7,9 @@ from typing import Any, Dict, Mapping
 import numpy as np
 
 from oipd.core.vol_surface_fitting.forward_interpolator import ForwardInterpolator
-from oipd.core.vol_surface_fitting.variance_interpolator import TotalVarianceInterpolator
+from oipd.core.vol_surface_fitting.variance_interpolator import (
+    TotalVarianceInterpolator,
+)
 from oipd.core.utils import calculate_days_to_expiry
 from oipd.pipelines.vol_surface.models import FittedSurface
 
@@ -86,14 +88,14 @@ def build_interpolator_from_fitted_surface(
         # ResolvedMarket must be present in the slice data from fit_surface
         resolved_market = slice_data.get("resolved_market")
         if not resolved_market:
-             # Should not happen if coming from fit_surface
-             raise ValueError(f"ResolvedMarket missing for expiry {expiry_ts}")
-             
+            # Should not happen if coming from fit_surface
+            raise ValueError(f"ResolvedMarket missing for expiry {expiry_ts}")
+
         # Calculate T locally
         days = calculate_days_to_expiry(expiry_ts, resolved_market.valuation_date)
         t = days / 365.0
         slices[t] = slice_data["curve"]
-        
+
         forward = slice_data["metadata"].get("forward_price")
         if forward is None:
             raise ValueError(
@@ -101,6 +103,4 @@ def build_interpolator_from_fitted_surface(
             )
         forwards[t] = forward
 
-    return build_surface_interpolator(
-        slices, forwards, check_arbitrage=check_arbitrage
-    )
+    return build_surface_interpolator(slices, forwards, check_arbitrage=check_arbitrage)

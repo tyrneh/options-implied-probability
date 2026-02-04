@@ -87,7 +87,9 @@ def fit_vol_curve_internal(
     # For Black-76, use forward price; for BS, use spot
     if pricing_engine == "black76":
         if forward_price is None:
-            raise CalculationError("Black-76 requires parity-implied forward but put quotes are missing.")
+            raise CalculationError(
+                "Black-76 requires parity-implied forward but put quotes are missing."
+            )
         else:
             underlying_for_iv = forward_price
     else:
@@ -112,9 +114,13 @@ def fit_vol_curve_internal(
     # priced_options came from cleaned_options which has 'expiry'
     if "expiry" not in priced_options.columns:
         raise CalculationError("Options data missing 'expiry' column.")
-    
+
     expiry_val = priced_options["expiry"].iloc[0]
-    expiry_date = expiry_val.date() if isinstance(expiry_val, pd.Timestamp) else pd.to_datetime(expiry_val).date()
+    expiry_date = (
+        expiry_val.date()
+        if isinstance(expiry_val, pd.Timestamp)
+        else pd.to_datetime(expiry_val).date()
+    )
     days_to_expiry_slice = calculate_days_to_expiry(expiry_date, valuation_date)
 
     # 6. Compute implied volatilities
@@ -210,9 +216,9 @@ def fit_vol_curve_internal(
     # Calculate At-The-Money (ATM) Volatility
     # Defined as IV at strike = forward
     try:
-         atm_vol = float(vol_curve(underlying_for_iv))
+        atm_vol = float(vol_curve(underlying_for_iv))
     except (TypeError, ValueError):
-         atm_vol = None
+        atm_vol = None
 
     # 9. Return vol curve + metadata (NO RND computation!)
     metadata = {
@@ -326,7 +332,7 @@ def compute_fitted_smile(
                 # Add 5% padding
                 padding = 0.05 * (max_strike - min_strike)
                 lower_bound = min_strike - padding
-                
+
                 # Prevent lower bound from dropping too close to zero or negative
                 # If padding pushes below zero, we clamp to 50% of the minimum strike
                 # to maintain a reasonable visualization range.

@@ -1,7 +1,9 @@
 """Unit tests for TotalVarianceInterpolator."""
 
 import numpy as np
-from oipd.core.vol_surface_fitting.variance_interpolator import TotalVarianceInterpolator
+from oipd.core.vol_surface_fitting.variance_interpolator import (
+    TotalVarianceInterpolator,
+)
 from oipd.core.vol_surface_fitting.forward_interpolator import ForwardInterpolator
 
 

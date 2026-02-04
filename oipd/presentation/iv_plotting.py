@@ -151,7 +151,6 @@ def plot_iv_smile(
     """
     plt, ticker, style_axes = _resolve_plot_style(style)
 
-
     line_config = dict(line_kwargs or {})
     if "color" not in line_config:
         line_config["color"] = "#1976D2" if style == "publication" else "tab:blue"
@@ -193,7 +192,9 @@ def plot_iv_smile(
         fig = target_ax.figure
 
     strike_values = smile["strike"].to_numpy(dtype=float)
-    target_ax.plot(_to_axis(strike_values), _transform_y(smile["fitted_iv"]), **line_config)
+    target_ax.plot(
+        _to_axis(strike_values), _transform_y(smile["fitted_iv"]), **line_config
+    )
 
     if include_observed:
         observed_kwargs = dict(scatter_kwargs or {})
@@ -437,7 +438,7 @@ def plot_iv_smile(
             target_ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
         else:
             target_ax.set_xlabel("Strike", fontsize=11)
-    
+
         if y_axis == "total_variance":
             target_ax.set_ylabel("Total Variance", fontsize=11)
         else:
@@ -445,7 +446,7 @@ def plot_iv_smile(
     else:
         target_ax.set_xlabel("")
         target_ax.set_ylabel("")
-    
+
     if y_axis != "total_variance":
         target_ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
 
@@ -515,10 +516,10 @@ def plot_iv_smile(
         )
     else:
         resolved_title = "Implied Volatility Smile"
-    
+
     if y_axis == "total_variance":
         resolved_title = resolved_title.replace("Implied Volatility", "Total Variance")
-        
+
     if not created_fig:
         target_ax.set_title(
             resolved_title,
@@ -604,7 +605,6 @@ def plot_iv_surface(
         CalculationError: If observations are empty or num_points is too small.
         ValueError: If layout is invalid.
     """
-
 
     if not observations:
         raise CalculationError("Surface calibration has no observations to plot")

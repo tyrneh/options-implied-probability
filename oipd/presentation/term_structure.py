@@ -13,7 +13,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
-from oipd.presentation.publication import _apply_publication_style, _style_publication_axes
+from oipd.presentation.publication import (
+    _apply_publication_style,
+    _style_publication_axes,
+)
 
 
 def plot_term_structure(
@@ -59,7 +62,7 @@ def plot_term_structure(
     # Style Configuration
     # -------------------------------------------------------------------------
     _apply_publication_style(plt)
-    
+
     bg_color = "white"
     text_color = "#333333"  # Matches publication style
     grid_color = "#CCCCCC"  # Matches publication style
@@ -96,7 +99,6 @@ def plot_term_structure(
     # -------------------------------------------------------------------------
     # Helper: Apply standard publication axis styling
     # -------------------------------------------------------------------------
-    
 
     _style_publication_axes(ax)
 

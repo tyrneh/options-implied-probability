@@ -355,10 +355,14 @@ def apply_put_call_parity(
     # Calculate time to expiry from the DataFrame's expiry column
     # We assume the DataFrame contains data for a single expiry (standard for parity checks)
     if "expiry" not in options_data.columns:
-        raise ValueError("Options data must contain an 'expiry' column for parity adjustments.")
-    
+        raise ValueError(
+            "Options data must contain an 'expiry' column for parity adjustments."
+        )
+
     expiry_val = options_data["expiry"].iloc[0]
-    days_to_expiry = calculate_days_to_expiry(expiry_val, resolved_market.valuation_date)
+    days_to_expiry = calculate_days_to_expiry(
+        expiry_val, resolved_market.valuation_date
+    )
 
     discount_factor = float(
         np.exp(-resolved_market.risk_free_rate * convert_days_to_years(days_to_expiry))

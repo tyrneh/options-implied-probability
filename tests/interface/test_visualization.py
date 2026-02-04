@@ -13,6 +13,7 @@ import pandas as pd
 from datetime import date
 
 import matplotlib
+
 matplotlib.use("Agg")  # Non-interactive backend for CI
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
@@ -22,10 +23,12 @@ from matplotlib.figure import Figure
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def market_inputs():
     """Standard MarketInputs for all tests."""
     from oipd import MarketInputs
+
     return MarketInputs(
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
@@ -66,34 +69,38 @@ def single_expiry_chain():
 def multi_expiry_chain():
     """Option chain with 2 expiries for VolSurface."""
     strikes = [80, 90, 100, 110, 120]
-    
+
     exp1 = pd.Timestamp("2025-01-31")
-    calls1 = pd.DataFrame({
-        "expiry": [exp1] * len(strikes),
-        "strike": strikes,
-        "bid": [20.5, 11.0, 3.5, 0.8, 0.2],
-        "ask": [21.0, 11.5, 4.0, 1.2, 0.4],
-        "last_price": [20.75, 11.25, 3.75, 1.0, 0.3],
-        "option_type": ["call"] * len(strikes),
-    })
+    calls1 = pd.DataFrame(
+        {
+            "expiry": [exp1] * len(strikes),
+            "strike": strikes,
+            "bid": [20.5, 11.0, 3.5, 0.8, 0.2],
+            "ask": [21.0, 11.5, 4.0, 1.2, 0.4],
+            "last_price": [20.75, 11.25, 3.75, 1.0, 0.3],
+            "option_type": ["call"] * len(strikes),
+        }
+    )
 
     exp2 = pd.Timestamp("2025-04-01")
-    calls2 = pd.DataFrame({
-        "expiry": [exp2] * len(strikes),
-        "strike": strikes,
-        "bid": [22.5, 13.0, 5.5, 1.8, 0.6],
-        "ask": [23.0, 13.5, 6.0, 2.2, 0.8],
-        "last_price": [22.75, 13.25, 5.75, 2.0, 0.7],
-        "option_type": ["call"] * len(strikes),
-    })
-    
+    calls2 = pd.DataFrame(
+        {
+            "expiry": [exp2] * len(strikes),
+            "strike": strikes,
+            "bid": [22.5, 13.0, 5.5, 1.8, 0.6],
+            "ask": [23.0, 13.5, 6.0, 2.2, 0.8],
+            "last_price": [22.75, 13.25, 5.75, 2.0, 0.7],
+            "option_type": ["call"] * len(strikes),
+        }
+    )
+
     calls = pd.concat([calls1, calls2], ignore_index=True)
-    
+
     # Generate puts
     S, r = 100.0, 0.05
     t_array = (calls["expiry"] - pd.Timestamp("2025-01-01")).dt.days / 365.0
     df_array = np.exp(-r * t_array)
-    
+
     puts = calls.copy()
     puts["option_type"] = "put"
     puts["last_price"] = (calls["last_price"] - S + calls["strike"] * df_array).abs()
@@ -107,6 +114,7 @@ def multi_expiry_chain():
 def fitted_vol_curve(single_expiry_chain, market_inputs):
     """Pre-fitted VolCurve."""
     from oipd import VolCurve
+
     return VolCurve().fit(single_expiry_chain, market_inputs)
 
 
@@ -114,6 +122,7 @@ def fitted_vol_curve(single_expiry_chain, market_inputs):
 def fitted_vol_surface(multi_expiry_chain, market_inputs):
     """Pre-fitted VolSurface."""
     from oipd import VolSurface
+
     return VolSurface().fit(multi_expiry_chain, market_inputs)
 
 
@@ -132,6 +141,7 @@ def prob_surface(fitted_vol_surface):
 # =============================================================================
 # VolCurve Visualization Tests
 # =============================================================================
+
 
 class TestVolCurveVisualization:
     """Smoke tests for VolCurve plotting methods."""
@@ -156,6 +166,7 @@ class TestVolCurveVisualization:
 # =============================================================================
 # VolSurface Visualization Tests
 # =============================================================================
+
 
 class TestVolSurfaceVisualization:
     """Smoke tests for VolSurface plotting methods."""
@@ -204,6 +215,7 @@ class TestVolSurfaceVisualization:
 # ProbCurve Visualization Tests
 # =============================================================================
 
+
 class TestProbCurveVisualization:
     """Smoke tests for ProbCurve plotting methods."""
 
@@ -229,6 +241,7 @@ class TestProbCurveVisualization:
 # =============================================================================
 # ProbSurface Visualization Tests
 # =============================================================================
+
 
 class TestProbSurfaceVisualization:
     """Smoke tests for ProbSurface plotting methods."""

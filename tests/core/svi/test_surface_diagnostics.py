@@ -9,8 +9,8 @@ from oipd.core.vol_surface_fitting.shared.ssvi import (
     check_ssvi_constraints,
 )
 from oipd.core.vol_surface_fitting.shared.svi import SVIParameters, check_butterfly
-# Legacy RND/ModelParams tests removed
 
+# Legacy RND/ModelParams tests removed
 
 
 def test_check_butterfly_reports_min_margin():

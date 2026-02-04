@@ -1,4 +1,3 @@
-
 """
 Generate Golden Master Data
 ===========================
@@ -8,12 +7,14 @@ VolCurve and ProbCurve API.
 Usage:
     python tests/data/generate_golden_master.py
 """
+
 import json
 import os
 import pandas as pd
 import numpy as np
 from datetime import date
 from oipd import VolCurve, MarketInputs
+
 
 def generate_golden_master():
     # 1. Load Data
@@ -25,7 +26,7 @@ def generate_golden_master():
     val_date = date(2025, 1, 15)
     risk_free_rate = 0.045
     underlying_price = 220.0
-    
+
     # Expiry from data (for metadata)
     expiry_date_str = "2026-01-16"
     expiry_date = date.fromisoformat(expiry_date_str)
@@ -68,7 +69,11 @@ def generate_golden_master():
             "underlying": underlying_price,
             "generated_by": "VolCurve",
         },
-        "svi_params": {k: float(v) for k, v in vc.params.items() if isinstance(v, (int, float, np.number))},
+        "svi_params": {
+            k: float(v)
+            for k, v in vc.params.items()
+            if isinstance(v, (int, float, np.number))
+        },
         "test_points": {
             "strikes": test_strikes,
             "implied_vols": test_ivs,
@@ -77,15 +82,16 @@ def generate_golden_master():
             "prices": prob.prices.tolist(),
             "pdf": prob.pdf.tolist(),
             "cdf": prob.cdf.tolist(),
-        }
+        },
     }
 
     # 7. Save
     out_path = os.path.join(os.path.dirname(__file__), "golden_master.json")
     with open(out_path, "w") as f:
         json.dump(gm_data, f, indent=4)
-    
+
     print(f"Saved golden master to {out_path}")
+
 
 if __name__ == "__main__":
     generate_golden_master()

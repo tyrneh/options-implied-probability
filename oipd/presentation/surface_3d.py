@@ -153,7 +153,9 @@ def plot_surface_3d(
                 term_ivs = term_ivs[sort_idx]
                 x_span = x_max - x_min
                 offset = max(term_structure_offset_ratio, 0.0) * x_span
-                wall_x = x_min - offset if term_structure_wall == "x_min" else x_max + offset
+                wall_x = (
+                    x_min - offset if term_structure_wall == "x_min" else x_max + offset
+                )
                 wall_xs = np.full_like(term_days, wall_x)
                 if term_structure_color is None:
                     # Color the term structure by the same IV colormap as the surface.
@@ -221,7 +223,7 @@ def plot_surface_3d(
 
     ax.set_zlim(zlim)
     ax.view_init(elev=view_angle[0], azim=view_angle[1])
-    
+
     # Reverse Y-axis so 0 days is at the back (furthest), max days toward viewer
     ax.invert_yaxis()
 

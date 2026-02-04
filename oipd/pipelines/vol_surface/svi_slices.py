@@ -80,7 +80,6 @@ def fit_independent_slices(
             price_method=price_method,
             max_staleness_days=max_staleness_days,
             solver=solver,
-
             method=method,
             method_options=method_options,
             suppress_price_warning=True,
@@ -106,9 +105,7 @@ def fit_independent_slices(
         count = len(expiries_with_mid_fills)
         # Show first 3 and last 1 if too many
         if count > 4:
-            details = (
-                f"{', '.join(expiries_with_mid_fills[:3])} ... {expiries_with_mid_fills[-1]}"
-            )
+            details = f"{', '.join(expiries_with_mid_fills[:3])} ... {expiries_with_mid_fills[-1]}"
         else:
             details = ", ".join(expiries_with_mid_fills)
 
@@ -120,21 +117,33 @@ def fit_independent_slices(
     if staleness_reports:
         total_removed = sum(r["removed_count"] for r in staleness_reports)
         affected_count = len(staleness_reports)
-        
+
         # Try to find global min/max age
-        min_ages = [r["min_age"] for r in staleness_reports if isinstance(r.get("min_age"), (int, float))]
-        max_ages = [r["max_age"] for r in staleness_reports if isinstance(r.get("max_age"), (int, float))]
-        
+        min_ages = [
+            r["min_age"]
+            for r in staleness_reports
+            if isinstance(r.get("min_age"), (int, float))
+        ]
+        max_ages = [
+            r["max_age"]
+            for r in staleness_reports
+            if isinstance(r.get("max_age"), (int, float))
+        ]
+
         age_info = ""
         if min_ages and max_ages:
             global_min = min(min_ages)
             global_max = max(max_ages)
             age_info = f" (most recent: {global_min} days, oldest: {global_max} days)"
 
-        affected_expiries = [r["expiry_str"] for r in staleness_reports if "expiry_str" in r]
-        
+        affected_expiries = [
+            r["expiry_str"] for r in staleness_reports if "expiry_str" in r
+        ]
+
         if len(affected_expiries) > 4:
-            expiry_detail = f"{', '.join(affected_expiries[:3])} ... {affected_expiries[-1]}"
+            expiry_detail = (
+                f"{', '.join(affected_expiries[:3])} ... {affected_expiries[-1]}"
+            )
         else:
             expiry_detail = ", ".join(affected_expiries)
 

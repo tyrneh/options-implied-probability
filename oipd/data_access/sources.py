@@ -87,16 +87,16 @@ def list_expiry_dates(
 
 
 def _normalize_expiries(
-    expiries: Union[str, date, List[str], List[date]]
+    expiries: Union[str, date, List[str], List[date]],
 ) -> List[date]:
     """
     Normalize flexible expiry inputs into a strict list of date objects.
-    
+
     The Funnel Pattern: Loose inputs in -> Strict list of dates out.
     """
     if isinstance(expiries, (str, date)):
         expiries = [expiries]  # type: ignore
-    
+
     normalized: List[date] = []
     for exp in expiries:
         if isinstance(exp, str):
@@ -123,10 +123,12 @@ def _filter_expiries_by_horizon(
     try:
         value = int(horizon[:-1])
     except ValueError:
-        raise ValueError(f"Invalid horizon format '{horizon}'. Expected e.g. '3m', '1y'.")
+        raise ValueError(
+            f"Invalid horizon format '{horizon}'. Expected e.g. '3m', '1y'."
+        )
 
     now = datetime.now().date()
-    
+
     if unit == "w":
         cutoff = now + pd.DateOffset(weeks=value)
     elif unit == "m":
@@ -138,16 +140,21 @@ def _filter_expiries_by_horizon(
 
     # Convert cutoff to date object (DateOffset returns dynamic timestamp behavior)
     # pd.Timestamp(now) + DateOffset results in Timestamp
-    cutoff_date = (pd.Timestamp(now) + pd.DateOffset(weeks=value if unit=='w' else 0, 
-                                                     months=value if unit=='m' else 0,
-                                                     years=value if unit=='y' else 0)).date()
+    cutoff_date = (
+        pd.Timestamp(now)
+        + pd.DateOffset(
+            weeks=value if unit == "w" else 0,
+            months=value if unit == "m" else 0,
+            years=value if unit == "y" else 0,
+        )
+    ).date()
 
     filtered = []
     for exp_str in available_expiries:
         d = date.fromisoformat(exp_str)
         if now <= d <= cutoff_date:
             filtered.append(d)
-            
+
     return filtered
 
 
@@ -179,24 +186,28 @@ def fetch_chain(
     """
     # 1. Validation (Exclusive arguments)
     if expiries is not None and horizon is not None:
-        raise ValueError("Ambiguous request: specify 'expiries' OR 'horizon', not both.")
+        raise ValueError(
+            "Ambiguous request: specify 'expiries' OR 'horizon', not both."
+        )
     if expiries is None and horizon is None:
         raise ValueError("Must specify either 'expiries' or 'horizon'.")
-    
+
     # 2. Get adapter
     adapter = get_adapter(vendor)
-    
+
     # 3. Determine target dates
     if horizon is not None:
         # Fetch all available expiries from vendor
         all_expiry_strs = adapter.list_expiry_dates(ticker)
         if not all_expiry_strs:
             raise ValueError(f"No expiries found for {ticker}")
-            
+
         target_dates = _filter_expiries_by_horizon(all_expiry_strs, horizon)
-        
+
         if not target_dates:
-             raise ValueError(f"No expiries found within horizon '{horizon}' for {ticker}")
+            raise ValueError(
+                f"No expiries found within horizon '{horizon}' for {ticker}"
+            )
 
     else:
         # Normalize expiries (Funnel Pattern)

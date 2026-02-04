@@ -24,28 +24,32 @@ def multi_expiry_chain():
     # Expiry 1: 30 days
     expiry1 = pd.Timestamp("2025-01-31")
     strikes = [80, 90, 100, 110, 120]
-    
+
     # Simple smile data for 30d
-    calls1 = pd.DataFrame({
-        "expiry": [expiry1] * len(strikes),
-        "strike": strikes,
-        "bid": [20.5, 11.0, 3.5, 0.8, 0.2],
-        "ask": [21.0, 11.5, 4.0, 1.2, 0.4],
-        "last_price": [20.75, 11.25, 3.75, 1.0, 0.3],
-        "option_type": ["call"] * len(strikes),
-    })
+    calls1 = pd.DataFrame(
+        {
+            "expiry": [expiry1] * len(strikes),
+            "strike": strikes,
+            "bid": [20.5, 11.0, 3.5, 0.8, 0.2],
+            "ask": [21.0, 11.5, 4.0, 1.2, 0.4],
+            "last_price": [20.75, 11.25, 3.75, 1.0, 0.3],
+            "option_type": ["call"] * len(strikes),
+        }
+    )
 
     # Expiry 2: 90 days
     expiry2 = pd.Timestamp("2025-04-01")
     # Higher prices due to more time value
-    calls2 = pd.DataFrame({
-        "expiry": [expiry2] * len(strikes),
-        "strike": strikes,
-        "bid": [22.5, 13.0, 5.5, 1.8, 0.6],
-        "ask": [23.0, 13.5, 6.0, 2.2, 0.8],
-        "last_price": [22.75, 13.25, 5.75, 2.0, 0.7],
-        "option_type": ["call"] * len(strikes),
-    })
+    calls2 = pd.DataFrame(
+        {
+            "expiry": [expiry2] * len(strikes),
+            "strike": strikes,
+            "bid": [22.5, 13.0, 5.5, 1.8, 0.6],
+            "ask": [23.0, 13.5, 6.0, 2.2, 0.8],
+            "last_price": [22.75, 13.25, 5.75, 2.0, 0.7],
+            "option_type": ["call"] * len(strikes),
+        }
+    )
 
     calls = pd.concat([calls1, calls2], ignore_index=True)
 
@@ -56,7 +60,7 @@ def multi_expiry_chain():
     # calculate t for each row
     t_array = (calls["expiry"] - pd.Timestamp("2025-01-01")).dt.days / 365.0
     df_array = np.exp(-r * t_array)
-    
+
     puts = calls.copy()
     puts["option_type"] = "put"
     # P = C - S + K * df
@@ -73,13 +77,13 @@ class TestVolSurfaceGreeks:
     def test_surface_delta_interpolated(self, multi_expiry_chain, market_inputs):
         """Surface should calculate Delta at arbitrary time t."""
         vs = VolSurface().fit(multi_expiry_chain, market_inputs)
-        
+
         # Test at t=60 days (interpolated between 30 and 90)
         t_target = 60 / 365.0
         strikes = [90, 100, 110]
-        
+
         delta = vs.delta(strikes, t=t_target)
-        
+
         assert isinstance(delta, np.ndarray)
         assert len(delta) == 3
         # Basic check: Call delta is positive
@@ -103,7 +107,7 @@ class TestVolSurfaceGreeks:
         """greeks() should return DataFrame with correct columns."""
         vs = VolSurface().fit(multi_expiry_chain, market_inputs)
         df = vs.greeks([100], t=0.2)
-        
+
         assert isinstance(df, pd.DataFrame)
         expected_cols = ["strike", "delta", "gamma", "vega", "theta", "rho"]
         assert list(df.columns) == expected_cols
@@ -113,7 +117,7 @@ class TestVolSurfaceGreeks:
         """Test BS engine execution path."""
         # Use BS engine
         vs = VolSurface(pricing_engine="bs").fit(multi_expiry_chain, market_inputs)
-        
+
         # Should work without error
         delta = vs.delta([100], t=0.2)
         assert np.isfinite(delta[0])

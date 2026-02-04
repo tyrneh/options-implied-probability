@@ -70,7 +70,7 @@ def filter_stale_options(
         min_age = int(removed_days.min()) if not removed_days.empty else "N/A"
         max_age = int(removed_days.max()) if not removed_days.empty else "N/A"
         strike_desc = unique_stale_strikes if unique_stale_strikes else "N/A"
-        
+
         stats = {
             "removed_count": removed_count,
             "max_staleness_days": max_staleness_days,
@@ -92,7 +92,7 @@ def filter_stale_options(
 
 
 def select_price_column(
-    options_data: pd.DataFrame, 
+    options_data: pd.DataFrame,
     price_method: Literal["last", "mid"],
     *,
     emit_warning: bool = True,
@@ -116,8 +116,6 @@ def select_price_column(
         CalculationError: When the requested pricing convention cannot be
             satisfied given the available columns.
     """
-
-
 
     data = options_data.copy()
     was_filled = False

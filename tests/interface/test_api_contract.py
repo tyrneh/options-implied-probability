@@ -18,10 +18,12 @@ from matplotlib.figure import Figure
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def market_inputs():
     """Standard MarketInputs for all tests."""
     from oipd import MarketInputs
+
     return MarketInputs(
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
@@ -62,34 +64,38 @@ def single_expiry_chain():
 def multi_expiry_chain():
     """Option chain with 2 expiries for VolSurface."""
     strikes = [80, 90, 100, 110, 120]
-    
+
     exp1 = pd.Timestamp("2025-01-31")
-    calls1 = pd.DataFrame({
-        "expiry": [exp1] * len(strikes),
-        "strike": strikes,
-        "bid": [20.5, 11.0, 3.5, 0.8, 0.2],
-        "ask": [21.0, 11.5, 4.0, 1.2, 0.4],
-        "last_price": [20.75, 11.25, 3.75, 1.0, 0.3],
-        "option_type": ["call"] * len(strikes),
-    })
+    calls1 = pd.DataFrame(
+        {
+            "expiry": [exp1] * len(strikes),
+            "strike": strikes,
+            "bid": [20.5, 11.0, 3.5, 0.8, 0.2],
+            "ask": [21.0, 11.5, 4.0, 1.2, 0.4],
+            "last_price": [20.75, 11.25, 3.75, 1.0, 0.3],
+            "option_type": ["call"] * len(strikes),
+        }
+    )
 
     exp2 = pd.Timestamp("2025-04-01")
-    calls2 = pd.DataFrame({
-        "expiry": [exp2] * len(strikes),
-        "strike": strikes,
-        "bid": [22.5, 13.0, 5.5, 1.8, 0.6],
-        "ask": [23.0, 13.5, 6.0, 2.2, 0.8],
-        "last_price": [22.75, 13.25, 5.75, 2.0, 0.7],
-        "option_type": ["call"] * len(strikes),
-    })
-    
+    calls2 = pd.DataFrame(
+        {
+            "expiry": [exp2] * len(strikes),
+            "strike": strikes,
+            "bid": [22.5, 13.0, 5.5, 1.8, 0.6],
+            "ask": [23.0, 13.5, 6.0, 2.2, 0.8],
+            "last_price": [22.75, 13.25, 5.75, 2.0, 0.7],
+            "option_type": ["call"] * len(strikes),
+        }
+    )
+
     calls = pd.concat([calls1, calls2], ignore_index=True)
-    
+
     # Generate puts
     S, r = 100.0, 0.05
     t_array = (calls["expiry"] - pd.Timestamp("2025-01-01")).dt.days / 365.0
     df_array = np.exp(-r * t_array)
-    
+
     puts = calls.copy()
     puts["option_type"] = "put"
     puts["last_price"] = (calls["last_price"] - S + calls["strike"] * df_array).abs()
@@ -103,6 +109,7 @@ def multi_expiry_chain():
 def fitted_vol_curve(single_expiry_chain, market_inputs):
     """Pre-fitted VolCurve."""
     from oipd import VolCurve
+
     return VolCurve().fit(single_expiry_chain, market_inputs)
 
 
@@ -110,6 +117,7 @@ def fitted_vol_curve(single_expiry_chain, market_inputs):
 def fitted_vol_surface(multi_expiry_chain, market_inputs):
     """Pre-fitted VolSurface."""
     from oipd import VolSurface
+
     return VolSurface().fit(multi_expiry_chain, market_inputs)
 
 
@@ -129,11 +137,13 @@ def prob_surface(fitted_vol_surface):
 # VolCurve Contract Tests
 # =============================================================================
 
+
 class TestVolCurveContract:
     """Verify all PRD-documented VolCurve methods exist and are callable."""
 
     def test_fit_exists_and_returns_self(self, single_expiry_chain, market_inputs):
         from oipd import VolCurve
+
         vc = VolCurve()
         result = vc.fit(single_expiry_chain, market_inputs)
         assert result is vc
@@ -212,6 +222,7 @@ class TestVolCurveContract:
 
     def test_implied_distribution_exists(self, fitted_vol_curve):
         from oipd.interface.probability import ProbCurve
+
         result = fitted_vol_curve.implied_distribution()
         assert isinstance(result, ProbCurve)
 
@@ -220,17 +231,20 @@ class TestVolCurveContract:
 # VolSurface Contract Tests
 # =============================================================================
 
+
 class TestVolSurfaceContract:
     """Verify all PRD-documented VolSurface methods exist and are callable."""
 
     def test_fit_exists_and_returns_self(self, multi_expiry_chain, market_inputs):
         from oipd import VolSurface
+
         vs = VolSurface()
         result = vs.fit(multi_expiry_chain, market_inputs)
         assert result is vs
 
     def test_slice_exists(self, fitted_vol_surface):
         from oipd import VolCurve
+
         first_exp = fitted_vol_surface.expiries[0]
         result = fitted_vol_surface.slice(first_exp)
         assert isinstance(result, VolCurve)
@@ -303,6 +317,7 @@ class TestVolSurfaceContract:
 
     def test_implied_distribution_exists(self, fitted_vol_surface):
         from oipd.interface.probability import ProbSurface
+
         result = fitted_vol_surface.implied_distribution()
         assert isinstance(result, ProbSurface)
 
@@ -311,11 +326,13 @@ class TestVolSurfaceContract:
 # ProbCurve Contract Tests
 # =============================================================================
 
+
 class TestProbCurveContract:
     """Verify all PRD-documented ProbCurve methods exist and are callable."""
 
     def test_from_chain_exists(self, single_expiry_chain, market_inputs):
         from oipd import ProbCurve
+
         result = ProbCurve.from_chain(single_expiry_chain, market_inputs)
         assert isinstance(result, ProbCurve)
 
@@ -395,16 +412,19 @@ class TestProbCurveContract:
 # ProbSurface Contract Tests
 # =============================================================================
 
+
 class TestProbSurfaceContract:
     """Verify all PRD-documented ProbSurface methods exist and are callable."""
 
     def test_from_chain_exists(self, multi_expiry_chain, market_inputs):
         from oipd import ProbSurface
+
         result = ProbSurface.from_chain(multi_expiry_chain, market_inputs)
         assert isinstance(result, ProbSurface)
 
     def test_slice_exists(self, prob_surface):
         from oipd.interface.probability import ProbCurve
+
         first_exp = prob_surface.expiries[0]
         result = prob_surface.slice(first_exp)
         assert isinstance(result, ProbCurve)

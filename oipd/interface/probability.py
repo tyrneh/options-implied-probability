@@ -44,7 +44,7 @@ class ProbCurve:
         self._vol_curve = vol_curve
         self._resolved_market = vol_curve.resolved_market
         self._metadata = vol_curve._metadata or {}
-        
+
         # Cached grid values (lazy-loaded on property access)
         self._cached_prices: Optional[np.ndarray] = None
         self._cached_pdf: Optional[np.ndarray] = None
@@ -92,15 +92,15 @@ class ProbCurve:
         This allows ``.pdf_values`` and ``.plot()`` to be used without providing explicit ranges.
         """
         if self._cached_prices is not None:
-             return
+            return
 
         prices, pdf, cdf, _ = derive_distribution_from_curve(
-            self._vol_curve, 
+            self._vol_curve,
             self._resolved_market,
             pricing_engine=self._vol_curve.pricing_engine,
-            vol_metadata=self._metadata
+            vol_metadata=self._metadata,
         )
-        
+
         self._cached_prices = prices
         self._cached_pdf = pdf
         self._cached_cdf = cdf
@@ -117,48 +117,50 @@ class ProbCurve:
 
         if self._vol_curve is None:
             raise ValueError("ProbCurve must be initialized with a fitted VolCurve")
-        
+
         prices = np.asarray(price, dtype=float)
-        
+
         # Breeden-Litzenberger: PDF = e^{rT} * d^2C / dK^2
-        # We approximate d^2C/dK^2 using finite differences on the VolCurve.price() 
+        # We approximate d^2C/dK^2 using finite differences on the VolCurve.price()
         # centered around the requested prices.
-        
+
         # Use a small epsilon for finite difference
         # Ideally relative to strike, but absolute is safer for 0 strike edge cases
-        h = 1e-4 * prices 
-        h = np.maximum(h, 1e-4) # Floor epsilon
-        
+        h = 1e-4 * prices
+        h = np.maximum(h, 1e-4)  # Floor epsilon
+
         # Vectorized 2nd derivative calculation
         # price(K+h) - 2*price(K) + price(K-h) / h^2
-        
+
         # We need T and r for the discount factor
         r = self._resolved_market.risk_free_rate
-        
+
         # Get T from metadata (standardized in VolCurve)
         if "time_to_expiry_years" in self._metadata:
-             T = float(self._metadata["time_to_expiry_years"])
+            T = float(self._metadata["time_to_expiry_years"])
         elif "expiry_date" in self._metadata:
-             # Recalculate if not cached
-             T = calculate_time_to_expiry(self._metadata["expiry_date"], self._resolved_market.valuation_date)
+            # Recalculate if not cached
+            T = calculate_time_to_expiry(
+                self._metadata["expiry_date"], self._resolved_market.valuation_date
+            )
         else:
-             raise ValueError("Expiry date not found in metadata. Cannot calculate T.")
-             
+            raise ValueError("Expiry date not found in metadata. Cannot calculate T.")
+
         # Clip T to avoid division by zero or extreme scaling
         T = max(T, 1e-5)
-        
+
         factor = np.exp(r * T)
-        
+
         # Calculate C(K+h), C(K), C(K-h)
         # Note: VolCurve.price() is vectorized
         c_up = self._vol_curve.price(prices + h, call_or_put="call")
         c_mid = self._vol_curve.price(prices, call_or_put="call")
         c_dn = self._vol_curve.price(prices - h, call_or_put="call")
-        
-        d2c_dk2 = (c_up - 2 * c_mid + c_dn) / (h ** 2)
-        
+
+        d2c_dk2 = (c_up - 2 * c_mid + c_dn) / (h**2)
+
         pdf_vals = factor * d2c_dk2
-        
+
         return pdf_vals
 
     def __call__(self, price: float | np.ndarray) -> np.ndarray:
@@ -177,34 +179,34 @@ class ProbCurve:
 
         # CDF = 1 + e^{rT} * dC/dK (for Calls)
         # dC/dK = (C(K+h) - C(K-h)) / 2h
-        
+
         if self._vol_curve is None:
             raise ValueError("ProbCurve must be initialized with a fitted VolCurve")
 
         # Get T and r
         r = self._resolved_market.risk_free_rate
         if "time_to_expiry_years" in self._metadata:
-             T = float(self._metadata["time_to_expiry_years"])
+            T = float(self._metadata["time_to_expiry_years"])
         else:
-             T = calculate_time_to_expiry(self._metadata.get("expiry_date"), self._resolved_market.valuation_date)
-        
+            T = calculate_time_to_expiry(
+                self._metadata.get("expiry_date"), self._resolved_market.valuation_date
+            )
+
         T = max(T, 1e-5)
         factor = np.exp(r * T)
-        
+
         h = 1e-4 * price
         h = max(h, 1e-4)
-        
+
         c_up = self._vol_curve.price(price + h, call_or_put="call")
         c_dn = self._vol_curve.price(price - h, call_or_put="call")
-        
+
         dc_dk = (c_up - c_dn) / (2 * h)
-        
+
         # CDF = 1 + e^{rT} * dC/dK
         cdf_val = 1.0 + factor * dc_dk
-        
+
         return float(cdf_val)
-
-
 
     def prob_above(self, price: float) -> float:
         """Probability that the asset price is at or above ``price``.
@@ -217,7 +219,6 @@ class ProbCurve:
         """
 
         return 1.0 - self.prob_below(price)
-
 
     def prob_between(self, low: float, high: float) -> float:
         """Probability that the asset price lies in ``[low, high]``.
@@ -242,11 +243,13 @@ class ProbCurve:
         """
 
         if self._vol_curve is None:
-             raise ValueError("Call fit before accessing moments")
-             
+            raise ValueError("Call fit before accessing moments")
+
         # Moments require integration over a grid
         self._ensure_grid_generated()
-        return float(np.trapz(self._cached_prices * self._cached_pdf, self._cached_prices))
+        return float(
+            np.trapz(self._cached_prices * self._cached_pdf, self._cached_prices)
+        )
 
     def variance(self) -> float:
         """Return the variance under the fitted PDF.
@@ -257,10 +260,15 @@ class ProbCurve:
 
         if self._vol_curve is None:
             raise ValueError("Call fit before accessing moments")
-            
+
         self._ensure_grid_generated()
         mean = self.mean()
-        return float(np.trapz(((self._cached_prices - mean) ** 2) * self._cached_pdf, self._cached_prices))
+        return float(
+            np.trapz(
+                ((self._cached_prices - mean) ** 2) * self._cached_pdf,
+                self._cached_prices,
+            )
+        )
 
     def skew(self) -> float:
         """Return the skewness (3rd standardized moment) of the fitted PDF.
@@ -281,8 +289,8 @@ class ProbCurve:
         moment3 = np.trapz(
             ((self._cached_prices - mean) ** 3) * self._cached_pdf, self._cached_prices
         )
-        
-        return float(moment3 / (std ** 3))
+
+        return float(moment3 / (std**3))
 
     def kurtosis(self) -> float:
         """Return the excess kurtosis (4th standardized moment - 3) of the fitted PDF.
@@ -303,9 +311,9 @@ class ProbCurve:
         moment4 = np.trapz(
             ((self._cached_prices - mean) ** 4) * self._cached_pdf, self._cached_prices
         )
-        
+
         # Excess Kurtosis
-        return float(moment4 / (std ** 4) - 3.0)
+        return float(moment4 / (std**4) - 3.0)
 
     def quantile(self, q: float) -> float:
         """Return the price level at a given probability quantile (Inverse CDF).
@@ -317,15 +325,13 @@ class ProbCurve:
             float: Price S such that P(Asset < S) = q.
         """
         if not (0 < q < 1):
-             raise ValueError("Quantile q must be between 0 and 1")
-             
+            raise ValueError("Quantile q must be between 0 and 1")
+
         self._ensure_grid_generated()
-        
+
         # Use interpolation on the cached CDF
         # cdf_values are y, prices are x. We want x for a given y.
         return float(np.interp(q, self._cached_cdf, self._cached_prices))
-
-
 
     @property
     def prices(self) -> np.ndarray:
@@ -409,22 +415,24 @@ class ProbCurve:
         """
         underlying_price = self._resolved_market.underlying_price
         valuation_date = self._resolved_market.valuation_date.strftime("%b %d, %Y")
-        
+
         # Get expiry_date from metadata (stored by vol_curve_pipeline)
         expiry_date_raw = self._metadata.get("expiry_date")
         expiry_date = expiry_date_raw.strftime("%b %d, %Y") if expiry_date_raw else None
 
         # Determine grid
         if xlim is not None:
-             # Generate dynamic grid based on xlim
-             grid_prices = np.linspace(xlim[0], xlim[1], points)
-             grid_pdf = self.pdf(grid_prices)
-             grid_cdf = np.array([self.prob_below(p) for p in grid_prices]) # list comp for scalar cdf
+            # Generate dynamic grid based on xlim
+            grid_prices = np.linspace(xlim[0], xlim[1], points)
+            grid_pdf = self.pdf(grid_prices)
+            grid_cdf = np.array(
+                [self.prob_below(p) for p in grid_prices]
+            )  # list comp for scalar cdf
         else:
-             # Use default cached grid
-             grid_prices = self.prices
-             grid_pdf = self.pdf_values
-             grid_cdf = self.cdf_values
+            # Use default cached grid
+            grid_prices = self.prices
+            grid_pdf = self.pdf_values
+            grid_cdf = self.cdf_values
 
         return plot_rnd(
             prices=grid_prices,
@@ -502,9 +510,7 @@ class ProbSurface:
 
         expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
         if expiry_timestamp not in self._distributions:
-            raise ValueError(
-                f"Expiry {expiry} not found in fitted probability surface"
-            )
+            raise ValueError(f"Expiry {expiry} not found in fitted probability surface")
         return self._distributions[expiry_timestamp]
 
     @property

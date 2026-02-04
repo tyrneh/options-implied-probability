@@ -10,7 +10,7 @@ from oipd.core.vol_surface_fitting.forward_interpolator import ForwardInterpolat
 
 class VarianceCurve(Protocol):
     """Protocol for objects that can return total variance at log-moneyness.
-    
+
     This is the mathematical dual of the user-facing ``VolCurve``, but defined
     in the coordinate system best suited for interpolation:
     - Input: log-moneyness $k = \ln(K/F)$ (instead of Strike K)
@@ -70,9 +70,9 @@ class TotalVarianceInterpolator:
         Note:
             This class assumes volatility slices were fit independently (Local fitting).
             Linear interpolation in total variance is used between slices.
-            
-            Because slices are independent, calendar arbitrage (w2 < w1) is possible. 
-            The `_check_arbitrage` logic acts as a safeguard to enforce time-monotonicity 
+
+            Because slices are independent, calendar arbitrage (w2 < w1) is possible.
+            The `_check_arbitrage` logic acts as a safeguard to enforce time-monotonicity
             by clamping variance rather than re-calibrating the surface (MVP approach).
         """
         if t <= 0:
@@ -133,7 +133,7 @@ class TotalVarianceInterpolator:
             if isinstance(w, np.ndarray):
                 return np.zeros_like(w)
             return 0.0
-        
+
         # Clamp negative variance to 0 and vectorize
         # Negative variance implies model arbitration/failure; clamp to 0.0 (0% vol) rather than crashing.
         return np.sqrt(np.maximum(w, 0.0) / t)

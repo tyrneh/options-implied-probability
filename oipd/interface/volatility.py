@@ -13,12 +13,20 @@ import matplotlib.ticker as ticker
 import warnings
 
 from oipd.core.errors import CalculationError
-from oipd.core.utils import calculate_days_to_expiry, resolve_horizon, calculate_time_to_expiry, convert_days_to_years
+from oipd.core.utils import (
+    calculate_days_to_expiry,
+    resolve_horizon,
+    calculate_time_to_expiry,
+    convert_days_to_years,
+)
 from oipd.core.vol_surface_fitting import fit_slice
 
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.pipelines.vol_surface import fit_surface as fit_vol_surface_internal
-from oipd.presentation.publication import _apply_publication_style, _style_publication_axes
+from oipd.presentation.publication import (
+    _apply_publication_style,
+    _style_publication_axes,
+)
 from oipd.pricing import get_pricer
 from oipd.pricing.black76 import (
     black76_call_price,
@@ -47,7 +55,9 @@ from oipd.pipelines.vol_curve import fit_vol_curve_internal, compute_fitted_smil
 from oipd.pipelines.probability import derive_distribution_from_curve
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
-from oipd.pipelines.vol_surface.interpolator import build_interpolator_from_fitted_surface
+from oipd.pipelines.vol_surface.interpolator import (
+    build_interpolator_from_fitted_surface,
+)
 from oipd.presentation.iv_plotting import ForwardPriceAnnotation, plot_iv_smile
 
 
@@ -55,7 +65,7 @@ class VolCurve:
     """Single-expiry implied-volatility smile fitter with sklearn-style API.
 
     Configure once, call ``fit`` to calibrate, then evaluate the fitted smile via
-    ``__call__``. 
+    ``__call__``.
     """
 
     def __init__(
@@ -178,7 +188,7 @@ class VolCurve:
             max_staleness = stats.get("max_staleness_days", self.max_staleness_days)
             min_age = stats.get("min_age", "N/A")
             max_age = stats.get("max_age", "N/A")
-            
+
             warnings.warn(
                 f"Filtered {removed_count} option rows (covering {strike_desc} strikes) "
                 f"older than {max_staleness} days "
@@ -209,7 +219,7 @@ class VolCurve:
         """
         if self._vol_curve is None:
             raise ValueError("Call fit before evaluating the curve")
-        
+
         # Convert inputs to array
         # The underlying vol_curve (pipeline result) is a callable that expects floats/arrays
         return self._vol_curve(np.asarray(strikes, dtype=float))
@@ -218,7 +228,9 @@ class VolCurve:
         """Alias for :meth:`implied_vol`."""
         return self.implied_vol(strikes)
 
-    def total_variance(self, strikes: float | Sequence[float] | np.ndarray) -> np.ndarray:
+    def total_variance(
+        self, strikes: float | Sequence[float] | np.ndarray
+    ) -> np.ndarray:
         """Return total variance (w = sigma^2 * T) for the given strikes.
 
         Args:
@@ -228,19 +240,19 @@ class VolCurve:
             np.ndarray: Array of total variances.
         """
         sigma = self.implied_vol(strikes)
-        
+
         # Calculate T
         if self._resolved_market is None or self._metadata is None:
-             raise ValueError("Model not fitted. Cannot calculate T.")
-        
+            raise ValueError("Model not fitted. Cannot calculate T.")
+
         expiry = self._metadata.get("expiry_date")
         if expiry is None:
-             # Should not happen for standard fitted curves
-             raise ValueError("Expiry date not found in metadata.")
+            # Should not happen for standard fitted curves
+            raise ValueError("Expiry date not found in metadata.")
 
         T = calculate_time_to_expiry(expiry, self._resolved_market.valuation_date)
         # Ensure non-negative T logic is handled in calculate_days_to_expiry (returns 0 if expired)
-        return (sigma ** 2) * T
+        return (sigma**2) * T
 
     @property
     def atm_vol(self) -> float:
@@ -251,7 +263,7 @@ class VolCurve:
             float: Implied volatility at the forward strike (decimal, e.g. 0.20 = 20%).
         """
         if self._vol_curve is None:
-             raise ValueError("Call fit before accessing ATM volatility")
+            raise ValueError("Call fit before accessing ATM volatility")
 
         if self._metadata is None:
             raise ValueError("Call fit before accessing ATM volatility")
@@ -272,7 +284,7 @@ class VolCurve:
              tuple[Any]: A 1-element tuple containing the expiry (Timestamp or Date), or empty if invalid.
         """
         if self._metadata is None:
-             return ()
+            return ()
         return (self._metadata.get("expiry_date"),)
 
     def iv_results(
@@ -353,7 +365,9 @@ class VolCurve:
 
         if x_axis == "log_moneyness":
             if forward_price is None or forward_price <= 0:
-                raise ValueError("Positive forward price required for log-moneyness axis, but not found in fit metadata.")
+                raise ValueError(
+                    "Positive forward price required for log-moneyness axis, but not found in fit metadata."
+                )
 
         # Extract expiry date for default title generation
         # expiry_date is stored in metadata from the vol_curve_pipeline
@@ -362,7 +376,9 @@ class VolCurve:
         # Calculate time to expiry for total variance conversion if needed
         t_to_expiry = None
         if self._resolved_market is not None and expiry_date is not None:
-            t_to_expiry = calculate_time_to_expiry(expiry_date, self._resolved_market.valuation_date)
+            t_to_expiry = calculate_time_to_expiry(
+                expiry_date, self._resolved_market.valuation_date
+            )
 
         return plot_iv_smile(
             plot_df,
@@ -448,15 +464,17 @@ class VolCurve:
         """
 
         # For interpolated slices, _chain is None but _metadata["interpolated"] is True
-        is_interpolated = self._metadata is not None and self._metadata.get("interpolated")
-        
+        is_interpolated = self._metadata is not None and self._metadata.get(
+            "interpolated"
+        )
+
         if not is_interpolated and (
             self._chain is None
             or self._resolved_market is None
             or self._metadata is None
         ):
             raise ValueError("Call fit before deriving the distribution")
-        
+
         if is_interpolated and self._resolved_market is None:
             raise ValueError("Interpolated slice missing resolved market parameters")
 
@@ -470,6 +488,7 @@ class VolCurve:
 
         # Return Result Container
         from oipd.interface.probability import ProbCurve
+
         return ProbCurve(self)
 
     def price(
@@ -508,8 +527,10 @@ class VolCurve:
             expiry_date = self._metadata.get("expiry_date") if self._metadata else None
             if expiry_date is None:
                 raise ValueError("Expiry date not found in metadata")
-            
-            t = calculate_time_to_expiry(expiry_date, self._resolved_market.valuation_date)
+
+            t = calculate_time_to_expiry(
+                expiry_date, self._resolved_market.valuation_date
+            )
 
         # Safety clamp for t
         t = max(t, 1e-6)
@@ -524,10 +545,10 @@ class VolCurve:
             F = self.forward_price
             if F is None:
                 raise ValueError("Forward price not available for Black-76 pricing")
-            
+
             # Helper handles the math: CallPrice = e^{-rT} [F N(d1) - K N(d2)]
-            call_price = pricer(F, K, sigma, t, r) # type: ignore
-            
+            call_price = pricer(F, K, sigma, t, r)  # type: ignore
+
             if call_or_put == "put":
                 # Put-Call Parity (Futures/Forward): P = C - e^{-rT}(F - K)
                 # discount factor D = e^{-rT}
@@ -543,9 +564,11 @@ class VolCurve:
             S = self._resolved_market.underlying_price
             q = self._resolved_market.dividend_yield
             if q is None:
-                raise ValueError("Dividend yield (q) is required for Black-Scholes pricing but was not provided.")
+                raise ValueError(
+                    "Dividend yield (q) is required for Black-Scholes pricing but was not provided."
+                )
 
-            call_price = pricer(S, K, sigma, t, r, q) # type: ignore
+            call_price = pricer(S, K, sigma, t, r, q)  # type: ignore
 
             if call_or_put == "put":
                 # Put-Call Parity (Spot): P = C - S e^{-qT} + K e^{-rT}
@@ -555,7 +578,7 @@ class VolCurve:
                 return call_price
 
         else:
-             raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
+            raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
 
     # -------------------------------------------------------------------------
     # Greeks
@@ -579,7 +602,9 @@ class VolCurve:
             expiry_date = self._metadata.get("expiry_date") if self._metadata else None
             if expiry_date is None:
                 raise ValueError("Expiry date not found in metadata")
-            t = calculate_time_to_expiry(expiry_date, self._resolved_market.valuation_date)
+            t = calculate_time_to_expiry(
+                expiry_date, self._resolved_market.valuation_date
+            )
         t = max(t, 1e-6)
 
         q = self._resolved_market.dividend_yield
@@ -706,14 +731,16 @@ class VolCurve:
             pd.DataFrame: Table with columns [strike, delta, gamma, vega, theta, rho].
         """
         K = np.asarray(strikes, dtype=float)
-        return pd.DataFrame({
-            "strike": K,
-            "delta": self.delta(K, call_or_put),
-            "gamma": self.gamma(K),
-            "vega": self.vega(K),
-            "theta": self.theta(K, call_or_put),
-            "rho": self.rho(K, call_or_put),
-        })
+        return pd.DataFrame(
+            {
+                "strike": K,
+                "delta": self.delta(K, call_or_put),
+                "gamma": self.gamma(K),
+                "vega": self.vega(K),
+                "theta": self.theta(K, call_or_put),
+                "rho": self.rho(K, call_or_put),
+            }
+        )
 
 
 class VolSurface:
@@ -805,7 +832,9 @@ class VolSurface:
             chain_input = chain_input[chain_input["expiry"] <= cutoff]
 
             if chain_input.empty:
-                raise CalculationError(f"No expiries found within horizon {horizon} (cutoff {cutoff})")
+                raise CalculationError(
+                    f"No expiries found within horizon {horizon} (cutoff {cutoff})"
+                )
 
         unique_expiries = chain_input["expiry"].unique()
         if len(unique_expiries) < 2:
@@ -831,7 +860,7 @@ class VolSurface:
         self._interpolator = build_interpolator_from_fitted_surface(
             self._model, check_arbitrage=True
         )
-        
+
         # Store market for interpolated slice creation
         self._market = market
 
@@ -933,11 +962,14 @@ class VolSurface:
         for exp_ts in self.expiries:
             try:
                 slice_data = self._model.get_slice(exp_ts)
-                if slice_data.get("chain") is not None and "strike" in slice_data["chain"].columns:
+                if (
+                    slice_data.get("chain") is not None
+                    and "strike" in slice_data["chain"].columns
+                ):
                     all_strikes.extend(slice_data["chain"]["strike"].tolist())
             except (ValueError, KeyError):
                 pass
-        
+
         if all_strikes:
             default_domain = (min(all_strikes), max(all_strikes))
         else:
@@ -983,10 +1015,9 @@ class VolSurface:
             return ()
         return self._model.expiries
 
-
     def total_variance(self, K: float, t: float) -> float:
         """Return total variance at strike K and time t (years).
-        
+
         Args:
             K: Strike price.
             t: Time to maturity in years.
@@ -1034,7 +1065,7 @@ class VolSurface:
         """
         if self._interpolator is None:
             raise ValueError("Surface not fitted. Call fit() first.")
-        
+
         return self._interpolator._forward_interp(t)
 
     def price(
@@ -1044,7 +1075,7 @@ class VolSurface:
         call_or_put: Literal["call", "put"] = "call",
     ) -> np.ndarray:
         """Calculate theoretical option prices at arbitrary time t.
-        
+
         Args:
             strikes: Strike price(s).
             t: Time to expiry (years as float) or Expiry Date (string/date).
@@ -1065,47 +1096,49 @@ class VolSurface:
             t_years = float(t)
 
         if t_years <= 0:
-             # Expired or invalid
-             return np.zeros_like(np.asarray(strikes), dtype=float)
+            # Expired or invalid
+            return np.zeros_like(np.asarray(strikes), dtype=float)
 
         # 2. Direct Math Kernel Queries
         # Get Forward F and Vol sigma directly from interpolator (fast)
         F = self._interpolator._forward_interp(t_years)
         sigma = self._interpolator.implied_vol(np.asarray(strikes), t_years)
-        
+
         K = np.asarray(strikes, dtype=float)
         r = self._market.risk_free_rate
 
         # 3. Dispatch to internal engine
         # Using self.pricing_engine to stay consistent with fit()
         engine_name = self.pricing_engine
-        
+
         if engine_name == "black76":
             # Direct Black-76 call
             call_price = black76_call_price(F, K, sigma, t_years, r)
-            
+
             if call_or_put == "put":
                 # Parity: P = C - D(F - K)
                 df = np.exp(-r * t_years)
                 return call_price - df * (F - K)
             return call_price
-            
+
         elif engine_name == "bs":
-             # If using BS, we need Spot S and Yield q
-             
-             S = self._market.underlying_price
-             q = self._market.dividend_yield
-             if q is None:
-                 raise ValueError("Dividend yield (q) is required for Black-Scholes pricing but was not provided.")
-             
-             call_price = black_scholes_call_price(S, K, sigma, t_years, r, q)
-             
-             if call_or_put == "put":
-                 return call_price - S * np.exp(-q * t_years) + K * np.exp(-r * t_years)
-             return call_price
-             
+            # If using BS, we need Spot S and Yield q
+
+            S = self._market.underlying_price
+            q = self._market.dividend_yield
+            if q is None:
+                raise ValueError(
+                    "Dividend yield (q) is required for Black-Scholes pricing but was not provided."
+                )
+
+            call_price = black_scholes_call_price(S, K, sigma, t_years, r, q)
+
+            if call_or_put == "put":
+                return call_price - S * np.exp(-q * t_years) + K * np.exp(-r * t_years)
+            return call_price
+
         else:
-             raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
+            raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
 
     def implied_distribution(self) -> ProbSurface:
         """Return the risk-neutral distribution surface for all fitted expiries.
@@ -1134,7 +1167,7 @@ class VolSurface:
 
     def atm_vol(self, t: float | str | date | pd.Timestamp) -> float:
         """Return At-The-Money (ATM) implied volatility at time t.
-        
+
         ATM is defined as Strike = Forward Price at time t.
 
         Args:
@@ -1144,19 +1177,19 @@ class VolSurface:
             float: Interpolated ATM implied volatility.
         """
         if self._interpolator is None:
-             raise ValueError("Surface not fitted.")
+            raise ValueError("Surface not fitted.")
 
         # Resolve t to years
         if isinstance(t, (str, date, pd.Timestamp)):
-             if self._market is None:
-                  raise ValueError("Market data not stored.")
-             expiry_ts = pd.to_datetime(t).tz_localize(None)
-             t_years = calculate_time_to_expiry(expiry_ts, self._market.valuation_date)
+            if self._market is None:
+                raise ValueError("Market data not stored.")
+            expiry_ts = pd.to_datetime(t).tz_localize(None)
+            t_years = calculate_time_to_expiry(expiry_ts, self._market.valuation_date)
         else:
-             t_years = float(t)
-             
+            t_years = float(t)
+
         if t_years <= 0:
-             return 0.0
+            return 0.0
 
         F = self.forward_price(t_years)
         return self.implied_vol(F, t_years)
@@ -1181,10 +1214,10 @@ class VolSurface:
                 dfs.append(df)
             except ValueError:
                 continue
-        
+
         if not dfs:
             return pd.DataFrame()
-            
+
         return pd.concat(dfs, ignore_index=True)
 
     @property
@@ -1196,11 +1229,11 @@ class VolSurface:
         """
         if self._model is None:
             return {}
-            
+
         params_dict = {}
         for expiry in self.expiries:
-             curve = self.slice(expiry)
-             params_dict[expiry] = curve.params
+            curve = self.slice(expiry)
+            params_dict[expiry] = curve.params
         return params_dict
 
     # -------------------------------------------------------------------------
@@ -1224,7 +1257,7 @@ class VolSurface:
             t_years = calculate_time_to_expiry(t, self._market.valuation_date)
         else:
             t_years = float(t)
-        
+
         t_years = max(t_years, 1e-6)
 
         # 2. Resolve Inputs from Interpolator
@@ -1374,135 +1407,138 @@ class VolSurface:
             pd.DataFrame: Table with columns [strike, delta, gamma, vega, theta, rho].
         """
         K = np.asarray(strikes, dtype=float)
-        return pd.DataFrame({
-            "strike": K,
-            "delta": self.delta(K, t, call_or_put),
-            "gamma": self.gamma(K, t),
-            "vega": self.vega(K, t),
-            "theta": self.theta(K, t, call_or_put),
-            "rho": self.rho(K, t, call_or_put),
-        })
+        return pd.DataFrame(
+            {
+                "strike": K,
+                "delta": self.delta(K, t, call_or_put),
+                "gamma": self.gamma(K, t),
+                "vega": self.vega(K, t),
+                "theta": self.theta(K, t, call_or_put),
+                "rho": self.rho(K, t, call_or_put),
+            }
+        )
 
     def plot(
-            self,
-            *,
-            x_axis: Literal["strike", "log_moneyness"] = "log_moneyness",
-            y_axis: Literal["iv", "total_variance"] = "total_variance",
-            include_observed: bool = False,
-            figsize: tuple[float, float] = (10.0, 5.0),
-            title: Optional[str] = None,
-            xlim: Optional[tuple[float, float]] = None,
-            ylim: Optional[tuple[float, float]] = None,
-            label_format: Literal["date", "days"] = "date",
-            **kwargs,
-        ) -> Any:
-            """Plot overlayed IV smiles for all fitted expiries.
+        self,
+        *,
+        x_axis: Literal["strike", "log_moneyness"] = "log_moneyness",
+        y_axis: Literal["iv", "total_variance"] = "total_variance",
+        include_observed: bool = False,
+        figsize: tuple[float, float] = (10.0, 5.0),
+        title: Optional[str] = None,
+        xlim: Optional[tuple[float, float]] = None,
+        ylim: Optional[tuple[float, float]] = None,
+        label_format: Literal["date", "days"] = "date",
+        **kwargs,
+    ) -> Any:
+        """Plot overlayed IV smiles for all fitted expiries.
 
-            Args:
-                x_axis: X-axis mode ("strike", "log_moneyness").
-                y_axis: Metric to plot on y-axis ("iv" or "total_variance"). Defaults to "total_variance".
-                include_observed: Whether to include observed market data points (default False).
-                figsize: Figure size as (width, height) in inches.
-                title: Optional plot title.
-                xlim: Optional x-axis limits as (min, max).
-                ylim: Optional y-axis limits as (min, max).
-                label_format: How to label each curve - ``"date"`` (e.g., "Jan 17, 2025")
-                    or ``"days"`` (e.g., "30d").
-                **kwargs: Additional arguments forwarded to matplotlib plot calls.
+        Args:
+            x_axis: X-axis mode ("strike", "log_moneyness").
+            y_axis: Metric to plot on y-axis ("iv" or "total_variance"). Defaults to "total_variance".
+            include_observed: Whether to include observed market data points (default False).
+            figsize: Figure size as (width, height) in inches.
+            title: Optional plot title.
+            xlim: Optional x-axis limits as (min, max).
+            ylim: Optional y-axis limits as (min, max).
+            label_format: How to label each curve - ``"date"`` (e.g., "Jan 17, 2025")
+                or ``"days"`` (e.g., "30d").
+            **kwargs: Additional arguments forwarded to matplotlib plot calls.
 
-            Returns:
-                matplotlib.figure.Figure: The plot figure.
+        Returns:
+            matplotlib.figure.Figure: The plot figure.
 
-            Raises:
-                ValueError: If ``fit`` has not been called.
-            """
-            if self._model is None:
-                raise ValueError("Call fit before plotting the surface")
+        Raises:
+            ValueError: If ``fit`` has not been called.
+        """
+        if self._model is None:
+            raise ValueError("Call fit before plotting the surface")
 
-            _apply_publication_style(plt)
+        _apply_publication_style(plt)
 
-            fig, ax = plt.subplots(figsize=figsize)
+        fig, ax = plt.subplots(figsize=figsize)
 
-            # Get color cycle
-            prop_cycle = plt.rcParams["axes.prop_cycle"]
-            colors = prop_cycle.by_key()["color"]
+        # Get color cycle
+        prop_cycle = plt.rcParams["axes.prop_cycle"]
+        colors = prop_cycle.by_key()["color"]
 
-            # Plot each expiry's IV smile by delegating to VolCurve.plot
-            for i, expiry_timestamp in enumerate(self.expiries):
-                vol_curve = self.slice(expiry_timestamp)
-                
-                # Generate label
-                if label_format == "days":
-                    resolved_market = vol_curve._resolved_market
-                    if resolved_market is not None:
-                        days = calculate_days_to_expiry(expiry_timestamp, resolved_market.valuation_date)
-                        label = f"{days}d"
-                    else:
-                        label = expiry_timestamp.strftime("%b %d, %Y")
+        # Plot each expiry's IV smile by delegating to VolCurve.plot
+        for i, expiry_timestamp in enumerate(self.expiries):
+            vol_curve = self.slice(expiry_timestamp)
+
+            # Generate label
+            if label_format == "days":
+                resolved_market = vol_curve._resolved_market
+                if resolved_market is not None:
+                    days = calculate_days_to_expiry(
+                        expiry_timestamp, resolved_market.valuation_date
+                    )
+                    label = f"{days}d"
                 else:
                     label = expiry_timestamp.strftime("%b %d, %Y")
-
-                # Determine color: use kwargs if provided, else cycle
-                current_line_kwargs = {"label": label, **kwargs}
-                if "color" not in current_line_kwargs and "c" not in current_line_kwargs:
-                    current_line_kwargs["color"] = colors[i % len(colors)]
-
-                # Delegate to curve plotting
-                # We suppress individual chart decorations (titles, labels, legends)
-                # and handle them globally for the surface.
-                vol_curve.plot(
-                    ax=ax,
-                    x_axis=x_axis,
-                    y_axis=y_axis,
-                    include_observed=include_observed,
-                    title="",  # Suppress per-curve title
-                    show_axis_labels=False,  # Suppress per-curve axis labels
-                    show_legend=False,  # Suppress per-curve legend
-                    line_kwargs=current_line_kwargs,
-                    xlim=xlim,
-                    ylim=ylim,
-                )
-
-            # Global Surface Decorations
-            
-            # Axis labels
-            if x_axis == "log_moneyness":
-                ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
             else:
-                ax.set_xlabel("Strike", fontsize=11)
+                label = expiry_timestamp.strftime("%b %d, %Y")
 
-            if y_axis == "total_variance":
-                ax.set_ylabel("Total Variance", fontsize=11)
-            else:
-                ax.set_ylabel("Implied Volatility", fontsize=11)
-                # Format y-axis as percentage only for IV
-                ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+            # Determine color: use kwargs if provided, else cycle
+            current_line_kwargs = {"label": label, **kwargs}
+            if "color" not in current_line_kwargs and "c" not in current_line_kwargs:
+                current_line_kwargs["color"] = colors[i % len(colors)]
 
-            # Legend
-            legend = ax.legend(loc="best", frameon=False)
-            if legend is not None:
-                for text in legend.get_texts():
-                    text.set_color("#333333")
-
-            # Apply publication styling to axes
-            _style_publication_axes(ax)
-
-            # Title
-            resolved_title = title or "Implied Volatility Surface"
-            if y_axis == "total_variance" and title is None:
-                resolved_title = "Total Variance Surface"
-                
-            plt.subplots_adjust(top=0.88)
-            fig.suptitle(
-                resolved_title,
-                fontsize=16,
-                fontweight="bold",
-                y=0.95,
-                color="#333333",
+            # Delegate to curve plotting
+            # We suppress individual chart decorations (titles, labels, legends)
+            # and handle them globally for the surface.
+            vol_curve.plot(
+                ax=ax,
+                x_axis=x_axis,
+                y_axis=y_axis,
+                include_observed=include_observed,
+                title="",  # Suppress per-curve title
+                show_axis_labels=False,  # Suppress per-curve axis labels
+                show_legend=False,  # Suppress per-curve legend
+                line_kwargs=current_line_kwargs,
+                xlim=xlim,
+                ylim=ylim,
             )
 
-            return fig
+        # Global Surface Decorations
 
+        # Axis labels
+        if x_axis == "log_moneyness":
+            ax.set_xlabel("Log Moneyness (ln(K/F))", fontsize=11)
+        else:
+            ax.set_xlabel("Strike", fontsize=11)
+
+        if y_axis == "total_variance":
+            ax.set_ylabel("Total Variance", fontsize=11)
+        else:
+            ax.set_ylabel("Implied Volatility", fontsize=11)
+            # Format y-axis as percentage only for IV
+            ax.yaxis.set_major_formatter(ticker.PercentFormatter(1.0))
+
+        # Legend
+        legend = ax.legend(loc="best", frameon=False)
+        if legend is not None:
+            for text in legend.get_texts():
+                text.set_color("#333333")
+
+        # Apply publication styling to axes
+        _style_publication_axes(ax)
+
+        # Title
+        resolved_title = title or "Implied Volatility Surface"
+        if y_axis == "total_variance" and title is None:
+            resolved_title = "Total Variance Surface"
+
+        plt.subplots_adjust(top=0.88)
+        fig.suptitle(
+            resolved_title,
+            fontsize=16,
+            fontweight="bold",
+            y=0.95,
+            color="#333333",
+        )
+
+        return fig
 
     def plot_3d(
         self,
@@ -1556,8 +1592,12 @@ class VolSurface:
         valuation_date = self._market.valuation_date
 
         if expiry_range is not None:
-            t_min = calculate_days_to_expiry(pd.to_datetime(expiry_range[0]), valuation_date)
-            t_max = calculate_days_to_expiry(pd.to_datetime(expiry_range[1]), valuation_date)
+            t_min = calculate_days_to_expiry(
+                pd.to_datetime(expiry_range[0]), valuation_date
+            )
+            t_max = calculate_days_to_expiry(
+                pd.to_datetime(expiry_range[1]), valuation_date
+            )
         else:
             t_min = calculate_days_to_expiry(all_expiries[0], valuation_date)
             t_max = calculate_days_to_expiry(all_expiries[-1], valuation_date)
@@ -1581,13 +1621,18 @@ class VolSurface:
                 chain = vc._chain
                 # Parity-implied forward for this slice
                 F = vc.forward_price
-                
-                if chain is not None and "strike" in chain.columns and F is not None and F > 0:
+
+                if (
+                    chain is not None
+                    and "strike" in chain.columns
+                    and F is not None
+                    and F > 0
+                ):
                     strikes = chain["strike"].to_numpy(dtype=float)
                     # Calculate log-moneyness for these observations
                     lm = np.log(strikes / F)
                     all_lm.extend(lm[np.isfinite(lm)])
-            
+
             if not all_lm:
                 # Fallback if no valid observations found
                 lm_min, lm_max = -0.5, 0.5
@@ -1595,7 +1640,7 @@ class VolSurface:
                 k_arr = np.array(all_lm)
                 # Trim extreme outliers (top/bottom 2%) to focus on liquid strikes
                 lm_min, lm_max = np.nanquantile(k_arr, [0.02, 0.98])
-            
+
             # Convert log-moneyness to strikes using median forward
             median_t = np.median(t_grid_years)
             median_forward = self._interpolator._forward_interp(median_t)
@@ -1646,7 +1691,6 @@ class VolSurface:
             colorbar_label="Implied Volatility",
             projection_type=projection_type,
         )
-
 
     def plot_term_structure(
         self,
