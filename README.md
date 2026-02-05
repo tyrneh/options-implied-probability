@@ -17,7 +17,7 @@
   <img src="https://github.com/tyrneh/options-implied-probability/blob/main/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
 </p>
 
-**2. For options traders, it also offers simple-to-use but rigorous pipeline to fit a volatility smile/surface, and use that theoretical fit to price options.**
+**2. For options traders, it also offers a simple-to-use but rigorous pipeline to fit an arbitrage-free volatility smile/surface, which can be used to price options.**
    - Fitting a vol surface well is a complex and expensive process, with the leading software provider costing $50k USD/month/seat. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
 
 <table align="center" cellspacing="12" style="margin-top:120px; width:100%; border-collapse:separate;">
