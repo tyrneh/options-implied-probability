@@ -11,7 +11,7 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout code
@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c constraints.txt
 
       - name: Run formatter
         run: black --check .
@@ -34,7 +34,7 @@ jobs:
       #   run: flake8 .
       
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: lint   # only run tests if lint passes
 
     steps:
@@ -49,7 +49,76 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c constraints.txt
+
+      - name: Report SVI calibration (Linux)
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          import pandas as pd
+          import numpy as np
+          import scipy
+          from oipd import VolCurve, MarketInputs
+
+          print("numpy", np.__version__)
+          print("scipy", scipy.__version__)
+          print("pandas", pd.__version__)
+
+          df = pd.read_csv("tests/data/AAPL_data.csv")
+          df = df[df["expiration"] == "2026-01-16"]
+
+          market = MarketInputs(
+              valuation_date=pd.Timestamp("2025-01-15"),
+              risk_free_rate=0.045,
+              underlying_price=220.0,
+          )
+
+          column_mapping = {
+              "strike": "strike",
+              "last_price": "last_price",
+              "type": "option_type",
+              "bid": "bid",
+              "ask": "ask",
+              "expiration": "expiry",
+          }
+
+          def run_fit():
+              vc = VolCurve(method="svi")
+              vc.method_options = {"random_seed": 42}
+              vc.fit(df, market, column_mapping=column_mapping)
+              params = {k: vc.params.get(k) for k in ("a", "b", "rho", "m", "sigma", "forward", "maturity_years")}
+              diagnostics = getattr(vc, "diagnostics", None)
+              diag = None
+              if diagnostics is not None:
+                  diag = {
+                      "objective": getattr(diagnostics, "objective", None),
+                      "rmse_weighted": getattr(diagnostics, "rmse_weighted", None),
+                      "rmse_unweighted": getattr(diagnostics, "rmse_unweighted", None),
+                      "envelope_violations_pct": getattr(diagnostics, "envelope_violations_pct", None),
+                      "chosen_start_origin": getattr(diagnostics, "chosen_start_origin", None),
+                  }
+              return params, diag
+
+          params_1, diag_1 = run_fit()
+          params_2, diag_2 = run_fit()
+
+          print("SVI params run1", params_1)
+          print("SVI params run2", params_2)
+
+          if diag_1 is not None:
+              print("SVI diagnostics run1", diag_1)
+          if diag_2 is not None:
+              print("SVI diagnostics run2", diag_2)
+
+          diffs = {k: None for k in params_1.keys()}
+          for k in params_1.keys():
+              v1 = params_1.get(k)
+              v2 = params_2.get(k)
+              try:
+                  diffs[k] = float(abs(v1 - v2))
+              except Exception:
+                  diffs[k] = None
+          print("SVI param abs diff", diffs)
+          PY
 
       - name: Run tests
         run: pytest
