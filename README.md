@@ -20,10 +20,16 @@
 **2. For options traders, it also offers simple-to-use but rigorous pipeline to fit a volatility smile/surface, and use that theoretical fit to price options.**
    - Fitting a vol surface well is a complex and expensive process, with the leading software provider costing $50k USD/month/seat. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
 
-<p align="center" style="margin-top: 120px;">
-  <img src=".meta/images/vol_curve.png" alt="vol curve" style="width:49%; height:280px; object-fit: contain; display:inline-block; margin-top:50px; border:5px solid #000;" />
-  <img src=".meta/images/vol_surface.png" alt="vol surface" style="width:49%; height:280px; object-fit: contain; display:inline-block; margin-top:120px; border:5px solid #000;" />
-</p>
+<table align="center" cellspacing="12" style="margin-top:120px; width:100%; border-collapse:separate;">
+  <tr>
+    <td style="width:50%; border:5px solid #000;">
+      <img src=".meta/images/vol_curve.png" alt="vol curve" style="width:100%; height:280px; object-fit:contain; display:block;" />
+    </td>
+    <td style="width:50%; border:5px solid #000;">
+      <img src=".meta/images/vol_surface.png" alt="vol surface" style="width:100%; height:280px; object-fit:contain; display:block;" />
+    </td>
+  </tr>
+</table>
 
 
 
