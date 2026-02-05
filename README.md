@@ -13,14 +13,18 @@
    - While markets don't predict the future with certainty, under the efficient market view, these collective expectations represent the best available estimate of what might happen.
    - Traditionally, extracting these “risk-neutral densities” were limited to quants or academics. OIPD makes this capability accessible to everyone.
 
-**2. For options traders, it also offers simple-to-use but rigorous pipeline to fit a volatility smile/surface, and use that theoretical fit to price options.**
-   - Fitting a vol surface well is a complex and expensive process, with the leading software provider costing $50k USD/month/seat. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
-
-
-
 <p align="center" style="margin-top: 80px;">
   <img src="https://github.com/tyrneh/options-implied-probability/blob/main/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
 </p>
+
+**2. For options traders, it also offers simple-to-use but rigorous pipeline to fit a volatility smile/surface, and use that theoretical fit to price options.**
+   - Fitting a vol surface well is a complex and expensive process, with the leading software provider costing $50k USD/month/seat. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
+
+<p align="center" style="margin-top: 80px;">
+  <img src="https://github.com/tyrneh/options-implied-probability/blob/main/.meta/images/vol_surface.png" alt="example" style="width:40%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
+</p>
+
+
 
 
 
