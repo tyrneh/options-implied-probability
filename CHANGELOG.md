@@ -5,6 +5,13 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2025-02-06
+### Added
+- overhauled user API interface yet again to accomodate full volatility surface fitting pipeline. This new API should be quite thoughtfully designed and futureproof, so I do not expect further breaking changes
+    - seperate classes for fitting a single 'curve' (vol smile or prob distribution on a single future date) vs fitting a 'surface' (vol surface or implied-prob over time)
+- implemented a full volatility fitting pipeline, compatible for fitting a single vol smile or fitting a vol surface over multiple expiries
+    - uses SVI to fit vol smiles, with calendar interpolation in total variance with basic calendar arbitrage guard
+
 ## [1.0.0] - 2025-09-18
 ### Added
 - overhauled user API interface. Now, users interface using the RND() class, and input arguments using MarketInputs and ModelParams
