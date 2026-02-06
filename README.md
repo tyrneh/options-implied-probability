@@ -44,7 +44,9 @@ pip install oipd
 
 ### Quickstart tutorial in computing market-implied probability distributions
 
-This quickstart will cover the functionality in (1) - computing market-implied probabilities. For a more technical tutorial including the functionality of (2) volatility fitting, see the full documentation [still WIP]. 
+This quickstart will cover the functionality in (1) computing market-implied probabilities. See the [included jupyter notebook ](examples/quickstart_yfinance.ipynb) for a full example on using the automated yfinance connection to download options data and compute market-implied probabilities for Palantir. 
+
+For a more technical tutorial including the functionality of (2) volatility fitting, see the additional jupyter notebooks in the [examples](examples/) directory, as well as the full documentation [still WIP]. 
 
 #### A. Usage for computing a probability distribution on a specific future date
 
@@ -79,6 +81,11 @@ prob_above = prob.prob_above(120)   # P(price >= 120)
 q50 = prob.quantile(0.50)           # median implied price
 skew = prob.skew()                  # skew
 ```
+
+<p align="center" style="margin-top: 120px;">
+  <img src=".meta/images/palantir_distribution.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
+</p>
+
 
 
 #### B. Usage for computing probabilities over time
@@ -115,6 +122,12 @@ curve = surface.slice(surface.expiries[0]) # get a slice on the first expiry
 curve.prob_below(100)                      # query probabilities and statistics 
 curve.kurtosis()                           
 ```
+
+<p align="center" style="margin-top: 120px;">
+  <img src=".meta/images/palantir_price_forecast.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
+</p>
+
+
 
 OIPD also **supports manual CSV or DataFrame uploads**. 
 
