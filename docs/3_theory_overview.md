@@ -27,16 +27,15 @@ For a complete reading of the financial theory, see [this paper](https://www.ban
 
 Using the Breeden-Litzenberger method, the risk-neutral probability density is computed from the second derivative of call prices with respect to strike. In practice, we estimate this derivative numerically from market data. Numerical second derivatives are very sensitive to noise, so noise in observed call price quotes can create large distortions in the implied density. 
 
-Seen below: 
-* Directly interpolating observed market prices of call options
-* Numerical 2nd derivative 
-<table align="center" cellspacing="12" style="margin-top:120px; width:100%; border-collapse:separate;">
+<table align="center" cellspacing="12" style="margin-top:10px; width:100%; border-collapse:separate;">
   <tr>
-    <td style="width:50%; border:5px solid #000;">
-      <img src="docs/images/3_observed_market_prices.png" alt="direct market prices" style="width:100%; height:280px; object-fit:contain; display:block;" />
+    <td style="width:50%;">
+      <img src="images/3_observed_market_prices.png" alt="direct market prices" style="width:100%; height:280px; object-fit:contain; display:block;" />
+      <p style="text-align:center; margin:8px 0 0 0;">Image 1: Directly interpolating observed market prices of call options</p>
     </td>
-    <td style="width:50%; border:5px solid #000;">
-      <img src="docs/images/3_numerical_second_derivative.png" alt="numerical second derivative" style="width:100%; height:280px; object-fit:contain; display:block;" />
+    <td style="width:50%;">
+      <img src="images/3_numerical_second_derivative.png" alt="numerical second derivative" style="width:100%; height:280px; object-fit:contain; display:block;" />
+      <p style="text-align:center; margin:8px 0 0 0;">Image 2: Numerical 2nd derivative on noisy market data</p>
     </td>
   </tr>
 </table>
@@ -47,9 +46,15 @@ Market quotes are noisy and come in discrete increments, which make them unsuita
 ### 3.2.1. Implied Volatility (IV)
 Implied volatility is the market's expectation of future price movements of a security. It is the volatility value that, when plugged into an options pricing model (like Black-Scholes), yields the option's current market price. High IV suggests the market expects significant price swings, while low IV implies a period of relative calm.
 
-## 3.2.2. The Volatility Smile & Surface
+### 3.2.2. The Volatility Smile & Surface
 *   **Smile:** IV is lowest for at-the-money (ATM) options and increases for both in-the-money (ITM) and out-of-the-money (OTM) options. By plotting IVs against strikes, a "smile" pattern is often observed. 
+
+<img src="images/vol_curve.png" alt="Volatility smile example" style="display:block; margin:5px auto 20px auto; width:50%;" />
+
+
 *   **Surface:** If you take the smile for one expiry, then repeat for many expiries, you get a implied volatility surface (strike on one axis, time-to-expiry on the other, IV on the vertical axis). Because market quotes are only available at discrete points, we can use this fitted surface to estimate IV between quoted strikes and maturities.
 
-OIPD fits mathematical models to these smiles to create a continuous volatility curve. The most popular academic model is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. 
+<img src="images/vol_surface.png" alt="Volatility surface example" style="display:block; margin:5px auto 20px auto; width:50%;" />
 
+
+OIPD fits mathematical models to these smiles to create a continuous volatility curve. The most popular academic model is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. 
