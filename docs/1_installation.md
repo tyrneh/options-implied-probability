@@ -4,15 +4,15 @@ parent: Introduction
 nav_order: 1
 ---
 
-## 1. Installation
+# Installation
 
-You can install OIPD and its dependencies using `pip`:
+Install OIPD from PyPI:
 
 ```bash
 pip install oipd
 ```
 
-For a minimal installation (no external data-provider/network integrations), use:
+For a minimal install (no vendor/network integrations):
 
 ```bash
 pip install oipd[minimal]

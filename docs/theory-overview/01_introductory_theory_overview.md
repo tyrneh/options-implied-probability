@@ -6,7 +6,7 @@ has_children: true
 
 # 3. Introductory Theory Overview
 
-This section provides a simple crash course on the theory behind market-implied probabilities. Advanced users who are familiar with volatility fitting, or who mainly want to assess whether OIPD’s implementation is rigorous enough for their use case may prefer to skip ahead to the pipeline details in section [X].
+This section provides a simple crash course on the theory behind market-implied probabilities. 
 
 ## 3.1. Options contain information about future prices
 
@@ -41,7 +41,7 @@ Using the Breeden-Litzenberger method, the risk-neutral probability density is c
 </table>
 
 
-Market quotes are noisy and come in discrete increments, which make them unsuitable for numerical differentiation. Instead, we must build a continuous model of theoretical call prices at any strike price, fitted to observed data. Thus, We build a model **implied volatility** instead of option prices directly because IV is the key input to the pricing model, while prices are a noisier output.
+Market quotes are noisy and come in discrete increments, which make them unsuitable for numerical differentiation. Instead, we must build a continuous model of theoretical call prices at any strike price, fitted to observed data. We model **implied volatility** instead of option prices directly because IV is the key input to the pricing model, while prices are a noisier output.
 
 ### 3.2.1. Implied Volatility (IV)
 Implied volatility is the market's expectation of future price movements of a security. It is the volatility value that, when plugged into an options pricing model (like Black-Scholes), yields the option's current market price. High IV suggests the market expects significant price swings, while low IV implies a period of relative calm.
