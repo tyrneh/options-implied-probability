@@ -1,12 +1,12 @@
 ---
-title: Theory Overview
+title: Introductory Theory Overview
 nav_order: 3
 has_children: true
 ---
 
-# 3. Theory Overview
+# 3. Introductory Theory Overview
 
-This section provides a simple crash course on the theory behind market-implied probabilities. Advanced users who mainly want to assess whether OIPD’s implementation is rigorous enough for their use case may prefer to skip ahead to the pipeline details in section [X].
+This section provides a simple crash course on the theory behind market-implied probabilities. Advanced users who are familiar with volatility fitting, or who mainly want to assess whether OIPD’s implementation is rigorous enough for their use case may prefer to skip ahead to the pipeline details in section [X].
 
 ## 3.1. Options contain information about future prices
 
@@ -52,9 +52,9 @@ Implied volatility is the market's expectation of future price movements of a se
 <img src="images/vol_curve.png" alt="Volatility smile example" style="display:block; margin:5px auto 20px auto; width:50%;" />
 
 
-*   **Surface:** If you take the smile for one expiry, then repeat for many expiries, you get a implied volatility surface (strike on one axis, time-to-expiry on the other, IV on the vertical axis). Because market quotes are only available at discrete points, we can use this fitted surface to estimate IV between quoted strikes and maturities.
+*   **Surface:** We can fit the IV smile repeatedly over many expiries, and interpolate between them to get an IV surface (strike on one axis, time-to-expiry on the other, IV on the vertical axis). While market quotes are only available at discrete points, we can use this fitted surface to estimate IV between quoted strikes and maturities.
 
 <img src="images/vol_surface.png" alt="Volatility surface example" style="display:block; margin:5px auto 20px auto; width:50%;" />
 
 
-OIPD fits mathematical models to these smiles to create a continuous volatility curve. The most popular academic model is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. 
+A popular academic model used to fit an IV smile is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. Once we fit the IV surface, we can plug the theoretical IV back into an option pricing model (like Black-Scholes) to determine the price of a call option. Finally, we have a smooth and continuous model of call prices, and this allows us to cleanly take the numerical second derivative. 
