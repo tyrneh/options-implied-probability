@@ -13,7 +13,7 @@ has_children: true
 - The probability distribution is a transformation of the volatility surface. Thus, accurately modelling a volatility surface is crucial to computing the distribution, which leads to OIPD's second feature below.
 
 <p align="center" style="margin-top: 20px;">
-  <img src="https://github.com/tyrneh/options-implied-probability/blob/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:5px;" />
+  <img src="https://raw.githubusercontent.com/tyrneh/options-implied-probability/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:5px;" />
 </p>
 
 **2. Fit arbitrage-free volatility smiles and surfaces for pricing and risk analysis.**
