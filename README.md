@@ -30,9 +30,7 @@
   </tr>
 </table>
 
-
-
-
+See the [full documentation site](https://tyrneh.github.io/options-implied-probability/) for details.
 
 # Quick start
 
@@ -82,7 +80,7 @@ Step 2: Convert fitted volatility to probability
 
 This quickstart will cover the functionality in **(1) computing market-implied probabilities**. See the [included jupyter notebook ](examples/quickstart_yfinance.ipynb) for a full example on using the automated yfinance connection to download options data and compute market-implied probabilities for Palantir. 
 
-For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the full documentation. 
+For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the [full documentation](https://tyrneh.github.io/options-implied-probability/).
 
 ### 3A. Usage for computing a probability distribution on a specific future date
 
