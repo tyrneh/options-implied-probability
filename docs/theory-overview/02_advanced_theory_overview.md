@@ -23,11 +23,8 @@ OIPD is (or at least aims to be) conceptually closer to commercial libraries lik
 ## 3. Validating OIPD's SVI fitter
 
 To benchmark OIPD's SVI fitter, we compare it against a trusted reference: QuantLib's SVI fitter (`SviInterpolatedSmileSection`). We keep OIPD's preprocessing and data-cleaning pipeline fixed, and only swap the SVI calibration step.
-We compare a few metrics:
-- full pipeline run time
-- vega-weighted RMSE
-- butterfly arbitrage checks, using 2 checks to detect arbitrage: (1) min(g(k)) and (2) negative density
-The fitted smiles below are shown side by side using the same AAPL dataset and expiry, with no overlay.
+
+The fitted smiles below are shown side by side using the same AAPL dataset and expiry.
 
 <table align="center" cellspacing="12" style="margin-top:10px; width:100%; border-collapse:separate;">
   <tr>
@@ -41,6 +38,13 @@ The fitted smiles below are shown side by side using the same AAPL dataset and e
     </td>
   </tr>
 </table>
+
+To compare a few metrics:
+- full pipeline run time
+- vega-weighted RMSE
+- butterfly arbitrage checks, using 2 checks to detect arbitrage: (1) min(g(k)) and (2) negative density
+
+We find that QuantLib's SVI fitter is significant faster, while OIPD ensures no-arbitrage. 
 
 
 | Metric | OIPD SVI fitter | QuantLib SVI fitter |
