@@ -12,7 +12,7 @@ This page documents the full pipeline and implementation that OIPD uses.
 
 This represents a non-exhaustive, step-by-step pipeline to fit a volatility surface, and subsequently convert it to probability distribution. We've documentated the major steps below, as well as explaining OIPD's implementation. 
 
-<img src="../images/2_OIPD_pipeline.png" alt="OIPD full pipeline" style="display:block; margin:10px auto 20px auto; width:70%; max-width:900px; height:auto;" />
+<img src="../images/2_OIPD_pipeline.png" alt="OIPD full pipeline" style="display:block; margin:10px auto 20px auto; width:100%; max-width:900px; height:auto;" />
 
 ## 2. OIPD vs open-source and commercial volatility fitting libraries
 
