@@ -1,7 +1,6 @@
-# Development tooling for OIPD
-black>=24.3.0
+# Development dependencies for OIPD.
+# Start from runtime + CI toolchain dependencies, then add dev-only tools.
+-r requirements.txt
 isort>=5.13.0
-pytest>=8.0.0
 mypy>=1.8.0
 build>=1.0.0
-

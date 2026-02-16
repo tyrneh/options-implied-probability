@@ -1,0 +1,16 @@
+# Constraints used to pin transitive dependency versions in CI.
+# These pins are applied via:
+#   pip install -r requirements.txt -c tests/constraints.txt
+# Workflows that consume this file:
+#   - .github/workflows/ci.yml
+#   - .github/workflows/generate-golden-master-linux.yml
+black==25.9.0
+flake8==7.3.0
+numpy==1.26.4
+pandas==2.3.3
+scipy==1.17.0
+matplotlib==3.10.8
+matplotlib-label-lines==0.8.1
+plotly==5.24.1
+pytest==8.4.2
+traitlets==5.14.3

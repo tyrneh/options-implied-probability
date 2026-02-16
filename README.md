@@ -13,7 +13,7 @@
    - While markets don't predict the future with certainty, under the efficient market view, these market expectations represent the best available estimate of what might happen.
 
 <p align="center" style="margin-top: 80px;">
-  <img src="https://github.com/tyrneh/options-implied-probability/blob/main/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
+  <img src="https://github.com/tyrneh/options-implied-probability/blob/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
 </p>
 
 **2. Fit arbitrage-free volatility smiles and surfaces for pricing and risk analysis.**
