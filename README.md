@@ -41,12 +41,14 @@
 pip install oipd
 ```
 
-## 2. Mental Model for using OIPD
+## 2. Mental model for using OIPD
 
 > [!TIP]
 > If you only care about probability and do not want to manage volatility fitting directly, jump to [Section 3: Quickstart tutorial in computing market-implied probability distributions](#3-quickstart-tutorial-in-computing-market-implied-probability-distributions) and use `ProbCurve.from_chain(...)` or `ProbSurface.from_chain(...)`.
 
-OIPD has four core objects. A simple way to remember them is a 2x2 matrix:
+---
+
+OIPD has four core objects. A simple way to remember them is a matrix:
 
 | Scope | Volatility Layer | Probability Layer |
 | --- | --- | --- |
