@@ -802,6 +802,7 @@ class VolSurface:
         *,
         column_mapping: Optional[Mapping[str, str]] = None,
         horizon: Optional[Union[str, date, pd.Timestamp]] = None,
+        failure_policy: Literal["raise", "skip_warn"] = "skip_warn",
     ) -> "VolSurface":
         """Fit all expiries in the chain and store slice curves.
 
@@ -811,14 +812,23 @@ class VolSurface:
             column_mapping: Optional mapping from user column names to OIPD standard names.
             horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date).
                      Expiries after this horizon will be ignored.
+            failure_policy: Slice-level failure handling policy. Use ``"raise"``
+                to fail on the first problematic expiry or ``"skip_warn"`` to
+                skip failures and continue fitting the surface.
 
         Returns:
             VolSurface: The fitted surface instance.
 
         Raises:
+            ValueError: If ``failure_policy`` is not a supported value.
             CalculationError: If calibration fails, expiry column is missing or invalid,
                 or fewer than two expiries are provided.
         """
+        if failure_policy not in {"raise", "skip_warn"}:
+            raise ValueError(
+                "failure_policy must be either 'raise' or 'skip_warn', "
+                f"got {failure_policy!r}."
+            )
 
         chain_input = chain.copy()
         if column_mapping:
@@ -879,6 +889,7 @@ class VolSurface:
             max_staleness_days=self.max_staleness_days,
             solver=self.solver,
             method=self.method,
+            failure_policy=failure_policy,
         )
 
         # Always build linear total variance interpolator

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional
 
 import pandas as pd
 
@@ -22,6 +22,7 @@ def fit_surface(
     max_staleness_days: int = 3,
     solver: str = "brent",
     method: str = "svi",
+    failure_policy: Literal["raise", "skip_warn"] = "skip_warn",
 ) -> FittedSurface:
     """Fit a volatility surface using the specified method.
 
@@ -35,6 +36,8 @@ def fit_surface(
         max_staleness_days: Max staleness days.
         solver: Solver.
         method: Fitting method (e.g., "svi").
+        failure_policy: Handling policy when an expiry slice fails. Use ``"raise"``
+            for strict mode or ``"skip_warn"`` for best-effort mode.
 
     Returns:
         FittedSurface: Fitted surface model.
@@ -54,6 +57,7 @@ def fit_surface(
             max_staleness_days=max_staleness_days,
             solver=solver,
             method=method,
+            failure_policy=failure_policy,
         )
 
     # If the user passes something else, we should strictly raise.
