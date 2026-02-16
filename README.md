@@ -11,8 +11,6 @@
 
 **1. It computes the market's expectations about the probable future prices of an asset, based on information contained in options data.**
    - While markets don't predict the future with certainty, under the efficient market view, these market expectations represent the best available estimate of what might happen.
-   - Traditionally, extracting these market-implied distributions were limited to quants or academics. OIPD makes this capability accessible to everyone.
-    - The probability distribution is a transformation of the volatility surface. Thus, accurately modelling a volatility surface is crucial to computing the distribution, which leads to OIPD's second feature below.
 
 <p align="center" style="margin-top: 80px;">
   <img src="https://github.com/tyrneh/options-implied-probability/blob/main/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
