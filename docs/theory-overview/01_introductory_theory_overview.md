@@ -30,11 +30,11 @@ Using the Breeden-Litzenberger method, the risk-neutral probability density is c
 <table align="center" cellspacing="12" style="margin-top:10px; width:100%; border-collapse:separate;">
   <tr>
     <td style="width:50%;">
-      <img src="images/3_observed_market_prices.png" alt="direct market prices" style="width:100%; height:auto; display:block;" />
+      <img src="images/2_observed_market_prices.png" alt="direct market prices" style="width:100%; height:auto; display:block;" />
       <p style="text-align:center; margin:8px 0 0 0;">Image 1: Directly interpolating observed market prices of call options</p>
     </td>
     <td style="width:50%;">
-      <img src="images/3_numerical_second_derivative.png" alt="numerical second derivative" style="width:100%; height:auto; display:block;" />
+      <img src="images/2_numerical_second_derivative.png" alt="numerical second derivative" style="width:100%; height:auto; display:block;" />
       <p style="text-align:center; margin:8px 0 0 0;">Image 2: Numerical 2nd derivative on noisy market data</p>
     </td>
   </tr>
