@@ -42,7 +42,7 @@ pip install oipd
 ## 2. Mental model for using OIPD
 
 > [!TIP]
-> If you only care about probability and do not want to manage volatility fitting directly, jump to [Section 3: Quickstart tutorial in computing market-implied probability distributions](#3-quickstart-tutorial-in-computing-market-implied-probability-distributions) and use `ProbCurve.from_chain(...)` or `ProbSurface.from_chain(...)`.
+> For non-technical users, you can safely skip this section and jump to [Section 3](#3-quickstart-tutorial-in-computing-market-implied-probability-distributions) to compute future market-implied probabilities. 
 
 <br>
 
@@ -55,7 +55,7 @@ OIPD has four core objects. A simple way to remember them is a matrix:
 
 You can think about the lifecycle in three steps:
 
-1. Initialize the estimator object with configuration.
+1. Initialize the estimator object, with configurable params.
 2. Call `.fit(chain, market)` to calibrate.
 3. Query/plot the fitted object, or convert from vol to probability via `.implied_distribution()`.
 
@@ -65,15 +65,15 @@ Conceptual flow:
 
 ```text
 Step 1: Fit volatility
-  VolCurve / VolSurface object
+  Initialize VolCurve / VolSurface object
       + options chain + market inputs
       -> .fit(...)
-      -> fitted VolCurve / VolSurface object (IV, prices, greeks, diagnostics)
+      -> fitted VolCurve / VolSurface object (IV, prices, greeks, plots...)
 
 Step 2: Convert fitted volatility to probability
-  fitted VolCurve / VolSurface
+  Use the fitted VolCurve / VolSurface
       -> .implied_distribution()
-      -> ProbCurve / ProbSurface object (PDF, CDF, quantiles, moments)
+      -> fitted ProbCurve / ProbSurface object (PDF, CDF, quantiles, moments...)
 ```
 
 ## 3. Quickstart tutorial in computing market-implied probability distributions
