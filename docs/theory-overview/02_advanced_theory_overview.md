@@ -12,11 +12,13 @@ This page documents the full pipeline and implementation that OIPD uses.
 
 This represents a non-exhaustive, step-by-step pipeline to fit a volatility surface, and subsequently convert it to probability distribution. We've documentated the major steps below, as well as explaining OIPD's implementation. 
 
-<img src="images/2_numerical_second_derivative.png" alt="Numerical second derivative" style="display:block; margin:10px auto 20px auto; width:70%; max-width:900px; height:auto;" />
+<img src="../images/2_numerical_second_derivative.png" alt="Numerical second derivative" style="display:block; margin:10px auto 20px auto; width:70%; max-width:900px; height:auto;" />
 
 ## 2. OIPD vs open-source and commercial volatility fitting libraries
 
-OIPD is an end-to-end opinionated volatility surface fitting pipeline, which handles the data plumbing and cleaning, smile/surface fitting, and probability conversion all in one interface. Other open-source packages, such as Quantlib, are very strong building-block libraries which provide certain components of the pipeline, but requires a sophisticated user to understand the complete end-to-end wiring. Comparing the SVI fitter specifically, Quantlib has a much faster algorithm as it is written in C++, but its fitter is not constrained to be arbitrage-free. This is why we decided to implement our own SVI fitter. 
+OIPD is an end-to-end opinionated volatility surface fitting pipeline, which handles the data plumbing and cleaning, smile/surface fitting, and probability conversion all in one interface. 
+
+Other open-source packages, such as Quantlib, are very strong building-block libraries which provide certain components of the pipeline, but requires a sophisticated user to understand the complete end-to-end wiring. Comparing the SVI fitter specifically, Quantlib has a much faster algorithm as it is written in C++, but its fitter is not constrained to be arbitrage-free. This is why we decided to implement our own SVI fitter. 
 
 OIPD is (or at least aims to be) conceptually closer to commercial libraries like Vola Dynamics than to low-level libraries like QuantLib: it offers an integrated, configurable pipeline for fitting and probability extraction.
 
