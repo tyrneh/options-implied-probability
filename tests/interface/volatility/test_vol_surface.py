@@ -74,6 +74,53 @@ def market_inputs():
     )
 
 
+@pytest.fixture
+def mixed_quality_multi_expiry_chain(multi_expiry_chain):
+    """Option chain with one intentionally under-specified expiry slice."""
+    bad_expiry = pd.Timestamp("2025-07-21")
+    bad_strikes = [92.0, 97.0, 102.0, 107.0]
+
+    bad_calls = pd.DataFrame(
+        {
+            "strike": bad_strikes,
+            "last_price": [10.5, 7.1, 4.2, 2.3],
+            "bid": [10.1, 6.8, 3.9, 2.0],
+            "ask": [10.9, 7.4, 4.5, 2.6],
+            "option_type": ["C", "C", "C", "C"],
+            "expiry": [bad_expiry] * len(bad_strikes),
+        }
+    )
+
+    t_years = (bad_expiry - pd.Timestamp("2025-01-01")).days / 365.0
+    discount_factor = np.exp(-0.05 * t_years)
+
+    bad_puts = bad_calls.copy()
+    bad_puts["option_type"] = "P"
+    bad_puts["last_price"] = (
+        bad_calls["last_price"] - 100.0 + bad_calls["strike"] * discount_factor
+    ).abs()
+    bad_puts["bid"] = (
+        bad_calls["bid"] - 100.0 + bad_calls["strike"] * discount_factor
+    ).abs()
+    bad_puts["ask"] = (
+        bad_calls["ask"] - 100.0 + bad_calls["strike"] * discount_factor
+    ).abs()
+
+    return pd.concat([multi_expiry_chain, bad_calls, bad_puts], ignore_index=True)
+
+
+@pytest.fixture
+def mostly_bad_multi_expiry_chain(mixed_quality_multi_expiry_chain):
+    """Option chain with one good expiry and one under-specified expiry."""
+    selected_expiries = [
+        pd.Timestamp("2025-02-21"),
+        pd.Timestamp("2025-07-21"),
+    ]
+    return mixed_quality_multi_expiry_chain[
+        mixed_quality_multi_expiry_chain["expiry"].isin(selected_expiries)
+    ].copy()
+
+
 # =============================================================================
 # VolSurface.__init__() Tests
 # =============================================================================
@@ -136,6 +183,65 @@ class TestVolSurfaceFit:
         ]
         with pytest.raises(CalculationError, match="at least two"):
             vs.fit(single_expiry_chain, market_inputs)
+
+    def test_fit_default_skip_warn_skips_failed_expiries(
+        self, mixed_quality_multi_expiry_chain, market_inputs
+    ):
+        """Default policy skips failed slices and emits aggregate warning."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        with pytest.warns(
+            UserWarning, match="Skipped .* expiries during surface fit"
+        ):
+            vs.fit(mixed_quality_multi_expiry_chain, market_inputs)
+        assert len(vs.expiries) == 2
+        assert pd.Timestamp("2025-07-21") not in vs.expiries
+
+    def test_fit_raise_policy_suggests_skip_warn(
+        self, mixed_quality_multi_expiry_chain, market_inputs
+    ):
+        """Strict mode includes actionable guidance for partial calibration."""
+        from oipd import VolSurface
+        from oipd.core.errors import CalculationError
+
+        vs = VolSurface()
+        with pytest.raises(CalculationError, match="failure_policy='skip_warn'"):
+            vs.fit(
+                mixed_quality_multi_expiry_chain,
+                market_inputs,
+                failure_policy="raise",
+            )
+
+    def test_fit_skip_warn_requires_two_successful_expiries(
+        self, mostly_bad_multi_expiry_chain, market_inputs
+    ):
+        """Skip mode still raises when fewer than two slices calibrate."""
+        from oipd import VolSurface
+        from oipd.core.errors import CalculationError
+
+        vs = VolSurface()
+        with pytest.raises(
+            CalculationError,
+            match="at least two successfully calibrated expiries",
+        ):
+            vs.fit(
+                mostly_bad_multi_expiry_chain,
+                market_inputs,
+                failure_policy="skip_warn",
+            )
+
+    def test_fit_invalid_failure_policy_raises(self, multi_expiry_chain, market_inputs):
+        """Invalid failure policy is rejected at interface boundary."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        with pytest.raises(ValueError, match="failure_policy must be either"):
+            vs.fit(
+                multi_expiry_chain,
+                market_inputs,
+                failure_policy="bad",  # type: ignore[arg-type]
+            )
 
 
 # =============================================================================

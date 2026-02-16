@@ -482,6 +482,7 @@ class ProbSurface:
         *,
         column_mapping: Optional[Mapping[str, str]] = None,
         max_staleness_days: int = 3,
+        failure_policy: Literal["raise", "skip_warn"] = "skip_warn",
     ) -> "ProbSurface":
         """Build a ProbSurface directly from a multi-expiry option chain.
 
@@ -494,18 +495,33 @@ class ProbSurface:
             column_mapping: Optional mapping from input columns to OIPD
                 standard names.
             max_staleness_days: Maximum age of quotes in days to include.
+            failure_policy: Slice-level failure handling policy. Use ``"raise"``
+                for strict mode or ``"skip_warn"`` for best-effort surface
+                calibration.
 
         Returns:
             ProbSurface: The fitted risk-neutral probability surface.
 
         Raises:
+            ValueError: If ``failure_policy`` is not a supported value.
             CalculationError: If the chain has fewer than two expiries or the
                 underlying volatility calibration fails.
         """
+        if failure_policy not in {"raise", "skip_warn"}:
+            raise ValueError(
+                "failure_policy must be either 'raise' or 'skip_warn', "
+                f"got {failure_policy!r}."
+            )
+
         from oipd import VolSurface
 
         vol_surface = VolSurface(method="svi", max_staleness_days=max_staleness_days)
-        vol_surface.fit(chain, market, column_mapping=column_mapping)
+        vol_surface.fit(
+            chain,
+            market,
+            column_mapping=column_mapping,
+            failure_policy=failure_policy,
+        )
         return vol_surface.implied_distribution()
 
     def slice(self, expiry: Any) -> ProbCurve:

@@ -74,6 +74,41 @@ def market_inputs():
 
 
 @pytest.fixture
+def mixed_quality_multi_expiry_chain(multi_expiry_chain):
+    """Option chain with one intentionally under-specified expiry slice."""
+    bad_expiry = pd.Timestamp("2025-07-21")
+    bad_strikes = [92.0, 97.0, 102.0, 107.0]
+
+    bad_calls = pd.DataFrame(
+        {
+            "strike": bad_strikes,
+            "last_price": [10.5, 7.1, 4.2, 2.3],
+            "bid": [10.1, 6.8, 3.9, 2.0],
+            "ask": [10.9, 7.4, 4.5, 2.6],
+            "option_type": ["C", "C", "C", "C"],
+            "expiry": [bad_expiry] * len(bad_strikes),
+        }
+    )
+
+    t_years = (bad_expiry - pd.Timestamp("2025-01-01")).days / 365.0
+    discount_factor = np.exp(-0.05 * t_years)
+
+    bad_puts = bad_calls.copy()
+    bad_puts["option_type"] = "P"
+    bad_puts["last_price"] = (
+        bad_calls["last_price"] - 100.0 + bad_calls["strike"] * discount_factor
+    ).abs()
+    bad_puts["bid"] = (
+        bad_calls["bid"] - 100.0 + bad_calls["strike"] * discount_factor
+    ).abs()
+    bad_puts["ask"] = (
+        bad_calls["ask"] - 100.0 + bad_calls["strike"] * discount_factor
+    ).abs()
+
+    return pd.concat([multi_expiry_chain, bad_calls, bad_puts], ignore_index=True)
+
+
+@pytest.fixture
 def fitted_vol_surface(multi_expiry_chain, market_inputs):
     """A pre-fitted VolSurface for deriving probability surface."""
     from oipd import VolSurface
@@ -125,6 +160,47 @@ class TestProbSurfaceFromChain:
         ]
         with pytest.raises(CalculationError, match="at least two"):
             ProbSurface.from_chain(single_expiry_chain, market_inputs)
+
+    def test_from_chain_default_skip_warn_succeeds(
+        self, mixed_quality_multi_expiry_chain, market_inputs
+    ):
+        """Default policy skips failed slices and still returns ProbSurface."""
+        from oipd import ProbSurface
+
+        with pytest.warns(
+            UserWarning, match="Skipped .* expiries during surface fit"
+        ):
+            prob = ProbSurface.from_chain(mixed_quality_multi_expiry_chain, market_inputs)
+        assert isinstance(prob, ProbSurface)
+        assert len(prob.expiries) == 2
+        assert pd.Timestamp("2025-07-21") not in prob.expiries
+
+    def test_from_chain_raise_policy_suggests_skip_warn(
+        self, mixed_quality_multi_expiry_chain, market_inputs
+    ):
+        """Strict mode passes through actionable guidance."""
+        from oipd import ProbSurface
+        from oipd.core.errors import CalculationError
+
+        with pytest.raises(CalculationError, match="failure_policy='skip_warn'"):
+            ProbSurface.from_chain(
+                mixed_quality_multi_expiry_chain,
+                market_inputs,
+                failure_policy="raise",
+            )
+
+    def test_from_chain_invalid_failure_policy_raises(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Invalid failure policy is rejected at the interface boundary."""
+        from oipd import ProbSurface
+
+        with pytest.raises(ValueError, match="failure_policy must be either"):
+            ProbSurface.from_chain(
+                multi_expiry_chain,
+                market_inputs,
+                failure_policy="bad",  # type: ignore[arg-type]
+            )
 
 
 # =============================================================================
