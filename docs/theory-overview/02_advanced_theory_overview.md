@@ -18,7 +18,7 @@ This represents a non-exhaustive, step-by-step pipeline to fit a volatility surf
 
 OIPD is an end-to-end opinionated volatility surface fitting pipeline, which handles the data plumbing and cleaning, smile/surface fitting, and probability conversion all in one interface. 
 
-Other open-source packages, such as Quantlib, are very strong building-block libraries which provide certain components of the pipeline, but requires a sophisticated user to understand the complete end-to-end wiring. Comparing the SVI fitter specifically, Quantlib has a much faster algorithm as it is written in C++, but its fitter is not constrained to be arbitrage-free. This is why we decided to implement our own SVI fitter. 
+Other open-source packages, such as QuantLib, provides very strong components for individual stages of the workflow (for example, IV solvers in step 5 and smile/surface fitters in step 6), but it does not natively wire those stages into a single end-to-end pipeline.
 
 OIPD is (or at least aims to be) conceptually closer to commercial libraries like Vola Dynamics than to low-level libraries like QuantLib: it offers an integrated, configurable pipeline for fitting and probability extraction.
 
@@ -46,8 +46,7 @@ To compare a few metrics:
 - vega-weighted RMSE
 - butterfly arbitrage checks, using 2 checks to detect arbitrage: (1) min(g(k)) and (2) negative density
 
-We find that QuantLib's SVI fitter is significant faster, while OIPD ensures no-arbitrage. 
-
+We find that QuantLib's SVI fitter is significant faster as it is written in C++, while OIPD ensures no-arbitrage. 
 
 | Metric | OIPD SVI fitter | QuantLib SVI fitter |
 | --- | --- | --- |
