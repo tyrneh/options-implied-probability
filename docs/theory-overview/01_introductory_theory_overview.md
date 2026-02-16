@@ -49,12 +49,12 @@ Implied volatility is the market's expectation of future price movements of a se
 ### 3.2.2. The Volatility Smile & Surface
 *   **Smile:** IV is lowest for at-the-money (ATM) options and increases for both in-the-money (ITM) and out-of-the-money (OTM) options. By plotting IVs against strikes, a "smile" pattern is often observed. 
 
-<img src="images/vol_curve.png" alt="Volatility smile example" style="display:block; margin:5px auto 20px auto; width:50%;" />
+<img src="../images/vol_curve.png" alt="Volatility smile example" style="display:block; margin:5px auto 20px auto; width:50%;" />
 
 
 *   **Surface:** We can fit the IV smile repeatedly over many expiries, and interpolate between them to get an IV surface (strike on one axis, time-to-expiry on the other, IV on the vertical axis). While market quotes are only available at discrete points, we can use this fitted surface to estimate IV between quoted strikes and maturities.
 
-<img src="images/vol_surface.png" alt="Volatility surface example" style="display:block; margin:5px auto 20px auto; width:50%;" />
+<img src="../images/vol_surface.png" alt="Volatility surface example" style="display:block; margin:5px auto 20px auto; width:50%;" />
 
 
 A popular academic model used to fit an IV smile is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. Once we fit the IV surface, we can plug the theoretical IV back into an option pricing model (like Black-Scholes) to determine the price of a call option. Finally, we have a smooth and continuous model of call prices, and this allows us to cleanly take the numerical second derivative. 
