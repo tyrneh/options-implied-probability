@@ -38,18 +38,55 @@
 
 # Quick start
 
-#### Installation
+## 1. Installation
 ```bash
 pip install oipd
 ```
 
-### Quickstart tutorial in computing market-implied probability distributions
+## 2. Mental Model for using OIPD
+
+OIPD has four core objects. A simple way to remember them is a 2x2 matrix:
+
+| Scope | Volatility Layer | Probability Layer |
+| --- | --- | --- |
+| Single expiry | `VolCurve` | `ProbCurve` |
+| Multiple expiries | `VolSurface` | `ProbSurface` |
+
+You can think about the lifecycle in three steps:
+
+1. Initialize the estimator object with configuration.
+2. Call `.fit(chain, market)` to calibrate.
+3. Query/plot the fitted object, or convert from vol to probability via `.implied_distribution()`.
+
+If you're familiar with scikit-learn, this is the same mental model: configure an estimator, call `fit`, then inspect outputs.
+
+Conceptual flow:
+
+```text
+Step 1: Fit volatility
+  VolCurve / VolSurface object
+      + options chain + market inputs
+      -> .fit(...)
+      -> fitted VolCurve / VolSurface object (IV, prices, greeks, diagnostics)
+
+Step 2: Convert fitted volatility to probability
+  fitted VolCurve / VolSurface
+      -> .implied_distribution()
+      -> ProbCurve / ProbSurface object (PDF, CDF, quantiles, moments)
+```
+
+**Shortcut for computing probabilities:**
+
+If you only care about probability and do not want to manually manage the volatility step, use the convenient `ProbCurve.from_chain(...)` and `ProbSurface.from_chain(...)` constructors below.
+
+
+## 3. Quickstart tutorial in computing market-implied probability distributions
 
 This quickstart will cover the functionality in **(1) computing market-implied probabilities**. See the [included jupyter notebook ](examples/quickstart_yfinance.ipynb) for a full example on using the automated yfinance connection to download options data and compute market-implied probabilities for Palantir. 
 
-For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the full documentation [still WIP]. 
+For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the full documentation. 
 
-#### A. Usage for computing a probability distribution on a specific future date
+### 3A. Usage for computing a probability distribution on a specific future date
 
 ```python
 import matplotlib.pyplot as plt
@@ -89,7 +126,7 @@ skew = prob.skew()                  # skew
 
 
 
-#### B. Usage for computing probabilities over time
+### 3B. Usage for computing probabilities over time
 
 ```python
 import matplotlib.pyplot as plt
