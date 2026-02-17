@@ -1,7 +1,7 @@
 ---
 title: Introductory Theory Overview
-nav_order: 3
-has_children: true
+parent: Theory Overview
+nav_order: 1
 ---
 
 # 3. Introductory Theory Overview
