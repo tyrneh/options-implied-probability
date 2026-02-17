@@ -90,7 +90,9 @@ def resolve_surface_query_time(
             calculate_time_to_expiry(expiry_timestamp, market.valuation_date)
         )
         if t_years <= 0:
-            raise ValueError("Requested maturity must be strictly after valuation date.")
+            raise ValueError(
+                "Requested maturity must be strictly after valuation date."
+            )
         if expiry_timestamp > max_expiry:
             raise ValueError(
                 f"Expiry {expiry_timestamp.date()} is beyond the last fitted pillar "
@@ -136,7 +138,9 @@ def derive_surface_distribution_at_t(
         market.risk_free_rate, market.risk_free_rate_mode, t_years
     )
     interpolator = vol_surface._interpolator
-    implied_vols = np.asarray(interpolator.implied_vol(strike_grid, t_years), dtype=float)
+    implied_vols = np.asarray(
+        interpolator.implied_vol(strike_grid, t_years), dtype=float
+    )
     call_prices = np.asarray(
         black76_call_price(
             forward_price,
@@ -178,7 +182,9 @@ def build_interpolated_resolved_market(
     """
     market = vol_surface._market
     valuation_timestamp = pd.to_datetime(market.valuation_date)
-    expiry_timestamp = valuation_timestamp + pd.Timedelta(days=int(round(t_years * 365.0)))
+    expiry_timestamp = valuation_timestamp + pd.Timedelta(
+        days=int(round(t_years * 365.0))
+    )
 
     return ResolvedMarket(
         risk_free_rate=market.risk_free_rate,

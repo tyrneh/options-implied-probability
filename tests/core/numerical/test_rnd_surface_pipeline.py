@@ -61,7 +61,9 @@ def _build_multi_expiry_chain() -> pd.DataFrame:
 
     puts = calls.copy()
     puts["option_type"] = "P"
-    puts["last_price"] = (calls["last_price"] - 100.0 + calls["strike"] * discount_factor).abs()
+    puts["last_price"] = (
+        calls["last_price"] - 100.0 + calls["strike"] * discount_factor
+    ).abs()
     puts["bid"] = (calls["bid"] - 100.0 + calls["strike"] * discount_factor).abs()
     puts["ask"] = (calls["ask"] - 100.0 + calls["strike"] * discount_factor).abs()
 
@@ -120,7 +122,9 @@ def test_build_global_log_moneyness_grid_matches_legacy_logic(
     elif np.isclose(k_min, k_max):
         k_min -= 0.25
         k_max += 0.25
-    expected = np.linspace(k_min - 0.05 * (k_max - k_min), k_max + 0.05 * (k_max - k_min), 241)
+    expected = np.linspace(
+        k_min - 0.05 * (k_max - k_min), k_max + 0.05 * (k_max - k_min), 241
+    )
 
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=0.0)
 
@@ -180,7 +184,9 @@ def test_derive_surface_distribution_at_t_matches_legacy_block(
         dtype=float,
     )
 
-    dcall_dk = np.asarray(finite_diff_first_derivative(call_prices, k_grid), dtype=float)
+    dcall_dk = np.asarray(
+        finite_diff_first_derivative(call_prices, k_grid), dtype=float
+    )
     dcall_dstrike = dcall_dk / expected_strikes
     expected_cdf = 1.0 + np.exp(effective_rate * t_years) * dcall_dstrike
     expected_cdf = np.clip(expected_cdf, 0.0, 1.0)
@@ -196,8 +202,10 @@ def test_derive_surface_distribution_at_t_matches_legacy_block(
     expected_pdf = np.maximum(np.asarray(dcdf_dk, dtype=float) / expected_strikes, 0.0)
     expected_pdf = expected_pdf / float(np.trapz(expected_pdf, expected_strikes))
 
-    increments = 0.5 * (expected_pdf[1:] + expected_pdf[:-1]) * (
-        expected_strikes[1:] - expected_strikes[:-1]
+    increments = (
+        0.5
+        * (expected_pdf[1:] + expected_pdf[:-1])
+        * (expected_strikes[1:] - expected_strikes[:-1])
     )
     expected_cdf = np.concatenate(([0.0], np.cumsum(increments)))
     expected_cdf = expected_cdf / float(expected_cdf[-1])

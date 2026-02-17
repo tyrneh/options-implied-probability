@@ -12,14 +12,7 @@ from oipd.market_inputs import ResolvedMarket
 from oipd.presentation.plot_rnd import plot_rnd
 from oipd.presentation.probability_surface_plot import plot_probability_summary
 
-from oipd.core.probability_density_conversion import (
-    cdf_from_local_call_first_derivative,
-    pdf_from_local_call_second_derivative,
-)
-from oipd.core.utils import (
-    calculate_time_to_expiry,
-    resolve_risk_free_rate,
-)
+from oipd.core.utils import calculate_time_to_expiry
 from oipd.pipelines.probability import (
     build_daily_fan_density_frame,
     build_global_log_moneyness_grid,
@@ -45,7 +38,9 @@ class ProbCurve:
 
     def __init__(
         self,
-        vol_curve: Any | None = None,  # Type hint as Any to avoid circular import with VolCurve
+        vol_curve: (
+            Any | None
+        ) = None,  # Type hint as Any to avoid circular import with VolCurve
         *,
         resolved_market: Optional[ResolvedMarket] = None,
         metadata: Optional[dict[str, Any]] = None,
@@ -180,80 +175,29 @@ class ProbCurve:
         self._cached_pdf = pdf
         self._cached_cdf = cdf
 
-    def pdf(self, price: float | np.ndarray) -> np.ndarray:
+    def pdf(self, price: float | np.ndarray) -> float | np.ndarray:
         """Evaluate the Probability Density Function (PDF) at the given price level(s).
 
         Args:
             price: Price level(s) to evaluate.
 
         Returns:
-            np.ndarray: PDF values.
+            float | np.ndarray: PDF values.
         """
-
-        if self._vol_curve is None:
-            self._ensure_grid_generated()
-            query_prices = np.asarray(price, dtype=float)
-            interpolated = np.interp(
-                query_prices,
-                self._cached_prices,
-                self._cached_pdf,
-                left=0.0,
-                right=0.0,
-            )
-            return np.asarray(interpolated, dtype=float)
-
-        prices = np.asarray(price, dtype=float)
-
-        # Breeden-Litzenberger: PDF = e^{rT} * d^2C / dK^2
-        # We approximate d^2C/dK^2 using finite differences on the VolCurve.price()
-        # centered around the requested prices.
-
-        # Use a small epsilon for finite difference
-        # Ideally relative to strike, but absolute is safer for 0 strike edge cases
-        h = 1e-4 * prices
-        h = np.maximum(h, 1e-4)  # Floor epsilon
-
-        # Vectorized 2nd derivative calculation
-        # price(K+h) - 2*price(K) + price(K-h) / h^2
-
-        # We need T and r for the discount factor
-        rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
-
-        # Get T from metadata (standardized in VolCurve)
-        if "time_to_expiry_years" in self._metadata:
-            T = float(self._metadata["time_to_expiry_years"])
-        elif "expiry_date" in self._metadata:
-            # Recalculate if not cached
-            T = calculate_time_to_expiry(
-                self._metadata["expiry_date"], self._resolved_market.valuation_date
-            )
-        else:
-            raise ValueError("Expiry date not found in metadata. Cannot calculate T.")
-
-        # Clip T to avoid division by zero or extreme scaling
-        T = max(T, 1e-5)
-
-        r = resolve_risk_free_rate(self._resolved_market.risk_free_rate, rate_mode, T)
-        factor = np.exp(r * T)
-
-        # Calculate C(K+h), C(K), C(K-h)
-        # Note: VolCurve.price() is vectorized
-        c_up = self._vol_curve.price(prices + h, call_or_put="call")
-        c_mid = self._vol_curve.price(prices, call_or_put="call")
-        c_dn = self._vol_curve.price(prices - h, call_or_put="call")
-
-        pdf_values = pdf_from_local_call_second_derivative(
-            c_up,
-            c_mid,
-            c_dn,
-            h,
-            factor,
+        self._ensure_grid_generated()
+        query_prices = np.asarray(price, dtype=float)
+        interpolated = np.interp(
+            query_prices,
+            self._cached_prices,
+            self._cached_pdf,
+            left=0.0,
+            right=0.0,
         )
         if np.isscalar(price):
-            return np.asarray(pdf_values, dtype=float).reshape(-1)[0]
-        return np.asarray(pdf_values, dtype=float)
+            return float(interpolated)
+        return np.asarray(interpolated, dtype=float)
 
-    def __call__(self, price: float | np.ndarray) -> np.ndarray:
+    def __call__(self, price: float | np.ndarray) -> float | np.ndarray:
         """Alias for :meth:`pdf`."""
         return self.pdf(price)
 
@@ -267,43 +211,17 @@ class ProbCurve:
            float: Probability P(S < price).
         """
 
-        # CDF = 1 + e^{rT} * dC/dK (for Calls)
-        # dC/dK = (C(K+h) - C(K-h)) / 2h
-
-        if self._vol_curve is None:
-            self._ensure_grid_generated()
-            cdf_monotone = np.maximum.accumulate(np.asarray(self._cached_cdf, dtype=float))
-            return float(
-                np.interp(
-                    price,
-                    np.asarray(self._cached_prices, dtype=float),
-                    cdf_monotone,
-                    left=0.0,
-                    right=1.0,
-                )
+        self._ensure_grid_generated()
+        cdf_monotone = np.maximum.accumulate(np.asarray(self._cached_cdf, dtype=float))
+        return float(
+            np.interp(
+                price,
+                np.asarray(self._cached_prices, dtype=float),
+                cdf_monotone,
+                left=0.0,
+                right=1.0,
             )
-
-        # Get T and r
-        rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
-        if "time_to_expiry_years" in self._metadata:
-            T = float(self._metadata["time_to_expiry_years"])
-        else:
-            T = calculate_time_to_expiry(
-                self._metadata.get("expiry_date"), self._resolved_market.valuation_date
-            )
-
-        T = max(T, 1e-5)
-        r = resolve_risk_free_rate(self._resolved_market.risk_free_rate, rate_mode, T)
-        factor = np.exp(r * T)
-
-        h = 1e-4 * price
-        h = max(h, 1e-4)
-
-        c_up = self._vol_curve.price(price + h, call_or_put="call")
-        c_dn = self._vol_curve.price(price - h, call_or_put="call")
-
-        cdf_val = cdf_from_local_call_first_derivative(c_up, c_dn, h, factor)
-        return float(np.asarray(cdf_val, dtype=float))
+        )
 
     def prob_above(self, price: float) -> float:
         """Probability that the asset price is at or above ``price``.
@@ -339,9 +257,6 @@ class ProbCurve:
             float: Expected price E[S].
         """
 
-        if self._vol_curve is None:
-            raise ValueError("Call fit before accessing moments")
-
         # Moments require integration over a grid
         self._ensure_grid_generated()
         return float(
@@ -354,9 +269,6 @@ class ProbCurve:
         Returns:
             float: Variance Var[S].
         """
-
-        if self._vol_curve is None:
-            raise ValueError("Call fit before accessing moments")
 
         self._ensure_grid_generated()
         mean = self.mean()
@@ -375,9 +287,6 @@ class ProbCurve:
         Returns:
             float: Skewness. (Positive = lean to right/fat right tail, but for prices usually negative/fat left tail).
         """
-        if self._vol_curve is None:
-            raise ValueError("Call fit before accessing moments")
-
         self._ensure_grid_generated()
         mean = self.mean()
         var = self.variance()
@@ -397,9 +306,6 @@ class ProbCurve:
         Returns:
             float: Excess Kurtosis (0 = Normal). Positive = Fat Tails.
         """
-        if self._vol_curve is None:
-            raise ValueError("Call fit before accessing moments")
-
         self._ensure_grid_generated()
         mean = self.mean()
         var = self.variance()
@@ -657,7 +563,9 @@ class ProbSurface:
         self._resolved_market_cache[cache_key] = resolved_market
         return resolved_market
 
-    def _curve_for_time(self, expiry_timestamp: pd.Timestamp, t_years: float) -> ProbCurve:
+    def _curve_for_time(
+        self, expiry_timestamp: pd.Timestamp, t_years: float
+    ) -> ProbCurve:
         """Return a cached ProbCurve slice for the requested maturity.
 
         Args:

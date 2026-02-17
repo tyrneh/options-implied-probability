@@ -126,8 +126,8 @@ def pdf_and_cdf_from_normalized_cdf(
         raise CalculationError("Failed to derive a positive probability density.")
     pdf_values = pdf_values / area
 
-    increments = 0.5 * (pdf_values[1:] + pdf_values[:-1]) * (
-        strike_grid[1:] - strike_grid[:-1]
+    increments = (
+        0.5 * (pdf_values[1:] + pdf_values[:-1]) * (strike_grid[1:] - strike_grid[:-1])
     )
     rebuilt_cdf = np.concatenate(([0.0], np.cumsum(increments)))
     cdf_total = float(rebuilt_cdf[-1])

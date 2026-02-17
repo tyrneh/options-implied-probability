@@ -151,7 +151,7 @@ prob_curve_slice = prob_surface.slice("2026-01-16")
 p_below_240 = prob_curve_slice.prob_below(240)
 ```
 
-## 4. Complete API Methods Comparison
+## 4. Overview of all API methods
 
 ### Volatility API Methods Comparison
 
@@ -179,11 +179,12 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | Feature / Action | `ProbCurve` (Single Expiry) | Description (Curve) | `ProbSurface` (Multi Expiry) | Description (Surface) |
 | :--- | :--- | :--- | :--- | :--- |
 | **Construction (Convenience)** | `from_chain(chain, market, ...)` | One-line constructor: fits SVI on a single-expiry chain, then builds `ProbCurve`. | `from_chain(chain, market, ...)` | One-line constructor: fits SVI across expiries, then builds `ProbSurface`. |
-| **Construction (From Vol)** | `implied_distribution()` | Build risk-neutral distribution from a fitted `VolCurve`. | `implied_distribution()` | Build a distribution surface from a fitted `VolSurface`. |
-| **Density (PDF)** | `pdf(S)` | Probability density at price $S$. | `slice(expiry).pdf(S)` | Density for a selected expiry. |
-| **CDF / Tail** | `prob_below(S)` | CDF at price $S$. | `slice(expiry).prob_below(S)` | CDF for a selected expiry. |
-| **Tail Probabilities** | `prob_above(S)`, `prob_between(L, H)` | Upper tail and interval probabilities. | `slice(expiry).prob_above(S)`, `prob_between(L, H)` | Same after slicing. |
-| **Quantile** | `quantile(q)` | Inverse CDF (price at probability $q$). | `slice(expiry).quantile(q)` | Quantile for a selected expiry. |
+| **Construction (From Vol)** | via `VolCurve.implied_distribution()` | Build a `ProbCurve` from a fitted `VolCurve`. | via `VolSurface.implied_distribution()` | Build a `ProbSurface` from a fitted `VolSurface`. |
+| **Density (PDF)** | `pdf(S)` | Probability density at price $S$. | `pdf(S, t)` | Direct surface density query at price $S$ and maturity `t`. |
+| **Callable Alias** | `__call__(S)` | Alias for `pdf(S)`. | `__call__(S, t)` | Alias for `pdf(S, t)`. |
+| **CDF** | `prob_below(S)` | CDF at price $S$. | `cdf(S, t)` | Direct surface CDF query at price $S$ and maturity `t`. |
+| **Tail Probabilities** | `prob_above(S)`, `prob_between(L, H)` | Upper tail and interval probabilities. | `slice(expiry).prob_above(S)`, `slice(expiry).prob_between(L, H)` | Tail methods are exposed on the sliced `ProbCurve`. |
+| **Quantile** | `quantile(q)` | Inverse CDF (price at probability $q$). | `quantile(q, t)` | Direct surface quantile query at maturity `t` (also available via `slice(expiry).quantile(q)`). |
 | **Moments** | `mean()`, `variance()`, `skew()`, `kurtosis()` | Distribution moments. | `slice(expiry).mean()` etc. | Moments for a selected expiry. |
 | **Grid Access** | `prices`, `pdf_values`, `cdf_values` | Cached evaluation grid for plots and queries. | `slice(expiry).prices` etc. | Grid for a selected expiry. |
 | **Visualization (2D)** | `plot(kind=...)` | PDF/CDF plot for one expiry. | `plot_fan()` | Fan chart of quantile bands over expiries. |
