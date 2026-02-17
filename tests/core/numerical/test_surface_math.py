@@ -36,7 +36,13 @@ def _sample_surface_arrays() -> tuple[np.ndarray, np.ndarray, np.ndarray, float,
         t_years,
         effective_rate,
     )
-    return k_grid, strike_grid, np.asarray(call_prices, dtype=float), effective_rate, t_years
+    return (
+        k_grid,
+        strike_grid,
+        np.asarray(call_prices, dtype=float),
+        effective_rate,
+        t_years,
+    )
 
 
 def test_pdf_from_local_call_second_derivative_matches_legacy_formula() -> None:
@@ -118,8 +124,10 @@ def test_pdf_and_cdf_from_normalized_cdf_matches_legacy_block() -> None:
     dcdf_dk = finite_diff_first_derivative(cdf_values, k_grid)
     expected_pdf = np.maximum(np.asarray(dcdf_dk, dtype=float) / strike_grid, 0.0)
     expected_pdf = expected_pdf / float(np.trapz(expected_pdf, strike_grid))
-    increments = 0.5 * (expected_pdf[1:] + expected_pdf[:-1]) * (
-        strike_grid[1:] - strike_grid[:-1]
+    increments = (
+        0.5
+        * (expected_pdf[1:] + expected_pdf[:-1])
+        * (strike_grid[1:] - strike_grid[:-1])
     )
     expected_cdf = np.concatenate(([0.0], np.cumsum(increments)))
     expected_cdf = expected_cdf / float(expected_cdf[-1])

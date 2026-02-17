@@ -191,9 +191,7 @@ class TestVolSurfaceFit:
         from oipd import VolSurface
 
         vs = VolSurface()
-        with pytest.warns(
-            UserWarning, match="Skipped .* expiries during surface fit"
-        ):
+        with pytest.warns(UserWarning, match="Skipped .* expiries during surface fit"):
             vs.fit(mixed_quality_multi_expiry_chain, market_inputs)
         assert len(vs.expiries) == 2
         assert pd.Timestamp("2025-07-21") not in vs.expiries

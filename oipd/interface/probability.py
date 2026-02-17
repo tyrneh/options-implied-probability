@@ -38,7 +38,9 @@ class ProbCurve:
 
     def __init__(
         self,
-        vol_curve: Any | None = None,  # Type hint as Any to avoid circular import with VolCurve
+        vol_curve: (
+            Any | None
+        ) = None,  # Type hint as Any to avoid circular import with VolCurve
         *,
         resolved_market: Optional[ResolvedMarket] = None,
         metadata: Optional[dict[str, Any]] = None,
@@ -561,7 +563,9 @@ class ProbSurface:
         self._resolved_market_cache[cache_key] = resolved_market
         return resolved_market
 
-    def _curve_for_time(self, expiry_timestamp: pd.Timestamp, t_years: float) -> ProbCurve:
+    def _curve_for_time(
+        self, expiry_timestamp: pd.Timestamp, t_years: float
+    ) -> ProbCurve:
         """Return a cached ProbCurve slice for the requested maturity.
 
         Args:

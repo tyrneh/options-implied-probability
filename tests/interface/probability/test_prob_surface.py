@@ -167,10 +167,10 @@ class TestProbSurfaceFromChain:
         """Default policy skips failed slices and still returns ProbSurface."""
         from oipd import ProbSurface
 
-        with pytest.warns(
-            UserWarning, match="Skipped .* expiries during surface fit"
-        ):
-            prob = ProbSurface.from_chain(mixed_quality_multi_expiry_chain, market_inputs)
+        with pytest.warns(UserWarning, match="Skipped .* expiries during surface fit"):
+            prob = ProbSurface.from_chain(
+                mixed_quality_multi_expiry_chain, market_inputs
+            )
         assert isinstance(prob, ProbSurface)
         assert len(prob.expiries) == 2
         assert pd.Timestamp("2025-07-21") not in prob.expiries
