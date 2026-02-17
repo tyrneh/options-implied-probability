@@ -150,7 +150,12 @@ surface = ProbSurface.from_chain(chain_surface, surface_market)
 surface.plot_fan() # Plot a fan chart of price probability over time
 plt.show()
 
-# 5. "slice" the surface to get a ProbCurve, and query its statistical properties in the same manner as in example A 
+# 5. query at arbitrary maturities directly from ProbSurface
+pdf_45d = surface.pdf(100, t=45/365)       # density at K=100, 45 days
+cdf_45d = surface.cdf(100, t="2025-02-15") # equivalent date-style maturity input
+q50_45d = surface.quantile(0.50, t=45/365) # median at 45 days
+
+# 6. "slice" the surface to get a ProbCurve, and query its statistical properties in the same manner as in example A 
 surface.expiries                                  # list all the expiry dates that were captured
 curve = surface.slice(surface.expiries[0]) # get a slice on the first expiry
 curve.prob_below(100)                      # query probabilities and statistics 

@@ -48,13 +48,20 @@ print("Interpolated IV at K=100, t=0.2:", vol_surface.implied_vol(100.0, 0.2))
 
 prob_surface = vol_surface.implied_distribution()
 print("Distribution expiries:", prob_surface.expiries)
+
+# Unified maturity queries (same t input pattern as VolSurface price/atm_vol)
+print("PDF at K=100, t=45/365:", prob_surface.pdf(100.0, t=45 / 365.0))
+print("CDF at K=100, date='2025-02-15':", prob_surface.cdf(100.0, t="2025-02-15"))
+print("Median at t=45/365:", prob_surface.quantile(0.5, t=45 / 365.0))
 ```
 
 ## Why choose this path
 
 - You can inspect calibration quality (`iv_results`, `diagnostics`).
 - You can use pricing and Greeks before distribution conversion.
-- You can slice surfaces and compare exact-vs-interpolated behavior.
+- You get one consistent probability engine across pillar and interior maturities.
+- You keep a clean architecture split: stateful interface objects on top of
+  stateless probability pipelines/core numerics.
 
 ## Validated Commands (Offline)
 

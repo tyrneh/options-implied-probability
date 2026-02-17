@@ -44,6 +44,8 @@ Step 2: Convert fitted volatility to probability
 
 If you only care about probability and do not want to manually manage the volatility step, use the convenience constructors shown in `README.md` (`ProbCurve.from_chain(...)` and `ProbSurface.from_chain(...)`): OIPD will run the volatility fitting and probability distribution conversion in the background.
 
+<br>
+
 ## 2. How To Call `fit` In Practice
 
 ### 2.1 Load option data

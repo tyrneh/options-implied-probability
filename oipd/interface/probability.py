@@ -2,31 +2,38 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal, Mapping, Optional, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
-from oipd.core.errors import CalculationError
-
-
-from oipd.market_inputs import (
-    ResolvedMarket,
-)
+from oipd.market_inputs import ResolvedMarket
 from oipd.presentation.plot_rnd import plot_rnd
 from oipd.presentation.probability_surface_plot import plot_probability_summary
 
-
+from oipd.core.probability_density_conversion import (
+    cdf_from_local_call_first_derivative,
+    pdf_from_local_call_second_derivative,
+)
 from oipd.core.utils import (
-    calculate_days_to_expiry,
     calculate_time_to_expiry,
     resolve_risk_free_rate,
 )
-from oipd.pipelines.probability import derive_distribution_from_curve
+from oipd.pipelines.probability import (
+    build_daily_fan_density_frame,
+    build_global_log_moneyness_grid,
+    build_interpolated_resolved_market,
+    build_probcurve_metadata,
+    derive_distribution_from_curve,
+    derive_surface_distribution_at_t,
+    resolve_surface_query_time,
+)
 
 
 if TYPE_CHECKING:
     from oipd.market_inputs import MarketInputs
+    from oipd.interface.volatility import VolSurface
 
 
 class ProbCurve:
@@ -38,21 +45,78 @@ class ProbCurve:
 
     def __init__(
         self,
-        vol_curve: Any,  # Type hint as Any to avoid circular import with VolCurve
+        vol_curve: Any | None = None,  # Type hint as Any to avoid circular import with VolCurve
+        *,
+        resolved_market: Optional[ResolvedMarket] = None,
+        metadata: Optional[dict[str, Any]] = None,
+        prices: Optional[np.ndarray] = None,
+        pdf_values: Optional[np.ndarray] = None,
+        cdf_values: Optional[np.ndarray] = None,
     ) -> None:
         """Initialize a ProbCurve result container.
 
         Args:
             vol_curve: The fitted VolCurve instance.
+            resolved_market: Optional resolved market for array-backed construction.
+            metadata: Optional metadata for array-backed construction.
+            prices: Optional precomputed price grid.
+            pdf_values: Optional precomputed PDF values.
+            cdf_values: Optional precomputed CDF values.
         """
+        if vol_curve is None and resolved_market is None:
+            raise ValueError(
+                "ProbCurve requires either a fitted vol_curve or resolved_market."
+            )
+
         self._vol_curve = vol_curve
-        self._resolved_market = vol_curve.resolved_market
-        self._metadata = vol_curve._metadata or {}
+        if vol_curve is not None:
+            self._resolved_market = vol_curve.resolved_market
+            self._metadata = vol_curve._metadata or {}
+        else:
+            self._resolved_market = resolved_market
+            self._metadata = metadata or {}
 
         # Cached grid values (lazy-loaded on property access)
-        self._cached_prices: Optional[np.ndarray] = None
-        self._cached_pdf: Optional[np.ndarray] = None
-        self._cached_cdf: Optional[np.ndarray] = None
+        self._cached_prices: Optional[np.ndarray] = (
+            np.asarray(prices, dtype=float) if prices is not None else None
+        )
+        self._cached_pdf: Optional[np.ndarray] = (
+            np.asarray(pdf_values, dtype=float) if pdf_values is not None else None
+        )
+        self._cached_cdf: Optional[np.ndarray] = (
+            np.asarray(cdf_values, dtype=float) if cdf_values is not None else None
+        )
+
+    @classmethod
+    def from_arrays(
+        cls,
+        *,
+        resolved_market: ResolvedMarket,
+        metadata: dict[str, Any],
+        prices: np.ndarray,
+        pdf_values: np.ndarray,
+        cdf_values: np.ndarray,
+    ) -> "ProbCurve":
+        """Build a ProbCurve from precomputed arrays.
+
+        Args:
+            resolved_market: Resolved market snapshot for the slice.
+            metadata: Slice metadata dictionary.
+            prices: Strike grid.
+            pdf_values: PDF values aligned with ``prices``.
+            cdf_values: CDF values aligned with ``prices``.
+
+        Returns:
+            ProbCurve: Array-backed probability curve.
+        """
+        return cls(
+            None,
+            resolved_market=resolved_market,
+            metadata=metadata,
+            prices=prices,
+            pdf_values=pdf_values,
+            cdf_values=cdf_values,
+        )
 
     @classmethod
     def from_chain(
@@ -95,8 +159,15 @@ class ProbCurve:
         (based on ATM forward and time to expiry) if one hasn't been cached yet.
         This allows ``.pdf_values`` and ``.plot()`` to be used without providing explicit ranges.
         """
-        if self._cached_prices is not None:
+        if (
+            self._cached_prices is not None
+            and self._cached_pdf is not None
+            and self._cached_cdf is not None
+        ):
             return
+
+        if self._vol_curve is None:
+            raise ValueError("Probability arrays are unavailable for this curve.")
 
         prices, pdf, cdf, _ = derive_distribution_from_curve(
             self._vol_curve,
@@ -120,7 +191,16 @@ class ProbCurve:
         """
 
         if self._vol_curve is None:
-            raise ValueError("ProbCurve must be initialized with a fitted VolCurve")
+            self._ensure_grid_generated()
+            query_prices = np.asarray(price, dtype=float)
+            interpolated = np.interp(
+                query_prices,
+                self._cached_prices,
+                self._cached_pdf,
+                left=0.0,
+                right=0.0,
+            )
+            return np.asarray(interpolated, dtype=float)
 
         prices = np.asarray(price, dtype=float)
 
@@ -162,11 +242,16 @@ class ProbCurve:
         c_mid = self._vol_curve.price(prices, call_or_put="call")
         c_dn = self._vol_curve.price(prices - h, call_or_put="call")
 
-        d2c_dk2 = (c_up - 2 * c_mid + c_dn) / (h**2)
-
-        pdf_vals = factor * d2c_dk2
-
-        return pdf_vals
+        pdf_values = pdf_from_local_call_second_derivative(
+            c_up,
+            c_mid,
+            c_dn,
+            h,
+            factor,
+        )
+        if np.isscalar(price):
+            return np.asarray(pdf_values, dtype=float).reshape(-1)[0]
+        return np.asarray(pdf_values, dtype=float)
 
     def __call__(self, price: float | np.ndarray) -> np.ndarray:
         """Alias for :meth:`pdf`."""
@@ -186,7 +271,17 @@ class ProbCurve:
         # dC/dK = (C(K+h) - C(K-h)) / 2h
 
         if self._vol_curve is None:
-            raise ValueError("ProbCurve must be initialized with a fitted VolCurve")
+            self._ensure_grid_generated()
+            cdf_monotone = np.maximum.accumulate(np.asarray(self._cached_cdf, dtype=float))
+            return float(
+                np.interp(
+                    price,
+                    np.asarray(self._cached_prices, dtype=float),
+                    cdf_monotone,
+                    left=0.0,
+                    right=1.0,
+                )
+            )
 
         # Get T and r
         rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
@@ -207,12 +302,8 @@ class ProbCurve:
         c_up = self._vol_curve.price(price + h, call_or_put="call")
         c_dn = self._vol_curve.price(price - h, call_or_put="call")
 
-        dc_dk = (c_up - c_dn) / (2 * h)
-
-        # CDF = 1 + e^{rT} * dC/dK
-        cdf_val = 1.0 + factor * dc_dk
-
-        return float(cdf_val)
+        cdf_val = cdf_from_local_call_first_derivative(c_up, c_dn, h, factor)
+        return float(np.asarray(cdf_val, dtype=float))
 
     def prob_above(self, price: float) -> float:
         """Probability that the asset price is at or above ``price``.
@@ -461,18 +552,140 @@ class ProbSurface:
 
     def __init__(
         self,
-        distributions: Mapping[pd.Timestamp, ProbCurve],
+        *,
+        vol_surface: "VolSurface",
+        grid_points: int = 241,
     ) -> None:
-        """Initialize a ProbSurface result container.
+        """Initialize a ProbSurface directly from a fitted VolSurface.
 
         Args:
-            distributions: Dictionary mapping expiry timestamps to ProbCurve objects.
+            vol_surface: Fitted volatility surface used as the canonical source.
+            grid_points: Number of log-moneyness points in the unified strike grid.
+
+        Raises:
+            ValueError: If ``vol_surface`` has not been fitted.
         """
-        self._distributions = dict(distributions)
-        # We can infer resolved markets from the distributions themselves
-        self._resolved_markets = {
-            ts: dist.resolved_market for ts, dist in self._distributions.items()
-        }
+        if (
+            vol_surface._model is None
+            or vol_surface._interpolator is None
+            or vol_surface._market is None
+            or len(vol_surface.expiries) == 0
+        ):
+            raise ValueError(
+                "ProbSurface requires a fitted VolSurface with interpolator and market."
+            )
+        if grid_points < 5:
+            raise ValueError("grid_points must be at least 5 for finite differences.")
+
+        self._vol_surface = vol_surface
+        self._market = vol_surface._market
+        self._valuation_timestamp = pd.to_datetime(self._market.valuation_date)
+        self._max_supported_t = calculate_time_to_expiry(
+            max(vol_surface.expiries), self._market.valuation_date
+        )
+        self._k_grid = self._build_k_grid(points=grid_points)
+
+        self._distribution_cache: dict[
+            float, tuple[np.ndarray, np.ndarray, np.ndarray]
+        ] = {}
+        self._curve_cache: dict[float, ProbCurve] = {}
+        self._resolved_market_cache: dict[float, ResolvedMarket] = {}
+
+    def _build_k_grid(self, *, points: int) -> np.ndarray:
+        """Build a unified log-moneyness grid shared across all maturities.
+
+        Args:
+            points: Number of points in the grid.
+
+        Returns:
+            np.ndarray: Uniform log-moneyness grid.
+        """
+        return build_global_log_moneyness_grid(self._vol_surface, points=points)
+
+    def _resolve_query_time(
+        self, t: float | str | date | pd.Timestamp
+    ) -> tuple[pd.Timestamp, float]:
+        """Normalize maturity input and enforce strict domain constraints.
+
+        Args:
+            t: Maturity input as year-fraction float or date-like object.
+
+        Returns:
+            tuple[pd.Timestamp, float]: Expiry timestamp and year fraction.
+
+        Raises:
+            ValueError: If maturity is invalid or unsupported.
+        """
+        return resolve_surface_query_time(self._vol_surface, t)
+
+    def _distribution_arrays_for_t_years(
+        self, t_years: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute and cache a distribution slice for maturity ``t_years``.
+
+        Args:
+            t_years: Time to maturity in years.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, np.ndarray]: Price grid, PDF, CDF.
+        """
+        cache_key = round(float(t_years), 12)
+        if cache_key in self._distribution_cache:
+            return self._distribution_cache[cache_key]
+
+        result = derive_surface_distribution_at_t(
+            self._vol_surface,
+            t_years,
+            log_moneyness_grid=self._k_grid,
+        )
+        self._distribution_cache[cache_key] = result
+        return result
+
+    def _resolved_market_for_t_years(self, t_years: float) -> ResolvedMarket:
+        """Build and cache a synthetic resolved market snapshot for maturity ``t``.
+
+        Args:
+            t_years: Time to maturity in years.
+
+        Returns:
+            ResolvedMarket: Synthetic market snapshot aligned with maturity ``t``.
+        """
+        cache_key = round(float(t_years), 12)
+        if cache_key in self._resolved_market_cache:
+            return self._resolved_market_cache[cache_key]
+        resolved_market = build_interpolated_resolved_market(self._vol_surface, t_years)
+        self._resolved_market_cache[cache_key] = resolved_market
+        return resolved_market
+
+    def _curve_for_time(self, expiry_timestamp: pd.Timestamp, t_years: float) -> ProbCurve:
+        """Return a cached ProbCurve slice for the requested maturity.
+
+        Args:
+            expiry_timestamp: Maturity timestamp.
+            t_years: Time to maturity in years.
+
+        Returns:
+            ProbCurve: Probability curve built from unified surface engine.
+        """
+        cache_key = round(float(t_years), 12)
+        if cache_key in self._curve_cache:
+            return self._curve_cache[cache_key]
+
+        prices, pdf_values, cdf_values = self._distribution_arrays_for_t_years(t_years)
+        metadata = build_probcurve_metadata(
+            self._vol_surface,
+            expiry_timestamp,
+            t_years,
+        )
+        curve = ProbCurve.from_arrays(
+            resolved_market=self._resolved_market_for_t_years(t_years),
+            metadata=metadata,
+            prices=prices,
+            pdf_values=pdf_values,
+            cdf_values=cdf_values,
+        )
+        self._curve_cache[cache_key] = curve
+        return curve
 
     @classmethod
     def from_chain(
@@ -525,21 +738,107 @@ class ProbSurface:
         return vol_surface.implied_distribution()
 
     def slice(self, expiry: Any) -> ProbCurve:
-        """Return a ProbCurve (probability distribution function) for a specific expiry."""
+        """Return a ProbCurve for the requested expiry.
 
-        if not self._distributions:
-            raise ValueError("Call fit before slicing the distribution surface")
+        Args:
+            expiry: Expiry identifier (string, date, or pandas-compatible timestamp).
+
+        Returns:
+            ProbCurve: Probability slice at the requested expiry.
+
+        Raises:
+            ValueError: If the surface is empty or interpolation context is unavailable.
+        """
 
         expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
-        if expiry_timestamp not in self._distributions:
-            raise ValueError(f"Expiry {expiry} not found in fitted probability surface")
-        return self._distributions[expiry_timestamp]
+        resolved_expiry, t_years = self._resolve_query_time(expiry_timestamp)
+        return self._curve_for_time(resolved_expiry, t_years)
 
     @property
     def expiries(self) -> tuple[pd.Timestamp, ...]:
         """Return fitted expiries available on the probability surface."""
+        return self._vol_surface.expiries
 
-        return tuple(self._distributions.keys())
+    def pdf(
+        self,
+        price: float | np.ndarray,
+        t: float | str | date | pd.Timestamp,
+    ) -> np.ndarray:
+        """Evaluate PDF at requested price level(s) and maturity.
+
+        Args:
+            price: Price level(s) where the density is evaluated.
+            t: Maturity input as year-fraction float or date-like object.
+
+        Returns:
+            np.ndarray: Interpolated PDF values at ``price``.
+        """
+        _, t_years = self._resolve_query_time(t)
+        prices_grid, pdf_values, _ = self._distribution_arrays_for_t_years(t_years)
+        query_prices = np.asarray(price, dtype=float)
+        interpolated = np.interp(
+            query_prices, prices_grid, pdf_values, left=0.0, right=0.0
+        )
+        return np.asarray(interpolated, dtype=float)
+
+    def __call__(
+        self,
+        price: float | np.ndarray,
+        t: float | str | date | pd.Timestamp,
+    ) -> np.ndarray:
+        """Alias for :meth:`pdf`."""
+        return self.pdf(price, t)
+
+    def cdf(
+        self,
+        price: float | np.ndarray,
+        t: float | str | date | pd.Timestamp,
+    ) -> np.ndarray:
+        """Evaluate CDF at requested price level(s) and maturity.
+
+        Args:
+            price: Price level(s) where the cumulative probability is evaluated.
+            t: Maturity input as year-fraction float or date-like object.
+
+        Returns:
+            np.ndarray: Interpolated CDF values at ``price``.
+        """
+        _, t_years = self._resolve_query_time(t)
+        prices_grid, _, cdf_values = self._distribution_arrays_for_t_years(t_years)
+        cdf_monotone = np.maximum.accumulate(np.asarray(cdf_values, dtype=float))
+        query_prices = np.asarray(price, dtype=float)
+        interpolated = np.interp(
+            query_prices, prices_grid, cdf_monotone, left=0.0, right=1.0
+        )
+        return np.asarray(interpolated, dtype=float)
+
+    def quantile(
+        self,
+        q: float,
+        t: float | str | date | pd.Timestamp,
+    ) -> float:
+        """Return the inverse-CDF price level at quantile ``q`` for maturity ``t``.
+
+        Args:
+            q: Target quantile in the open interval ``(0, 1)``.
+            t: Maturity input as year-fraction float or date-like object.
+
+        Returns:
+            float: Price level corresponding to quantile ``q``.
+
+        Raises:
+            ValueError: If ``q`` is outside the open interval ``(0, 1)``.
+        """
+        if not (0 < q < 1):
+            raise ValueError("Quantile q must be between 0 and 1.")
+
+        _, t_years = self._resolve_query_time(t)
+        prices_grid, _, cdf_values = self._distribution_arrays_for_t_years(t_years)
+        cdf_monotone = np.maximum.accumulate(np.asarray(cdf_values, dtype=float))
+        cdf_min = float(np.nanmin(cdf_monotone))
+        cdf_max = float(np.nanmax(cdf_monotone))
+        q_clamped = float(np.clip(q, cdf_min, cdf_max))
+        return float(np.interp(q_clamped, cdf_monotone, prices_grid))
 
     def plot_fan(
         self,
@@ -563,28 +862,12 @@ class ProbSurface:
         Raises:
             ValueError: If the surface is empty or unavailable.
         """
-        if not self._distributions:
+        if len(self.expiries) == 0:
             raise ValueError("Call fit before plotting the probability surface")
-
-        frames: list[pd.DataFrame] = []
-        for expiry, curve in self._distributions.items():
-            strikes = np.asarray(curve.prices, dtype=float)
-            cdf_values = np.asarray(curve.cdf_values, dtype=float)
-            expiry_ts = pd.to_datetime(expiry)
-
-            frame = pd.DataFrame(
-                {
-                    "expiry_date": np.full(strikes.shape, expiry_ts),
-                    "strike": strikes,
-                    "cdf": cdf_values,
-                }
-            )
-            frames.append(frame)
-
-        if not frames:
-            raise ValueError("No probability slices available for plotting")
-
-        density_data = pd.concat(frames, ignore_index=True)
+        density_data = build_daily_fan_density_frame(
+            self._vol_surface,
+            log_moneyness_grid=self._k_grid,
+        )
 
         return plot_probability_summary(
             density_data,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from scipy.integrate import simpson
@@ -19,11 +19,31 @@ def pdf_from_price_curve(
     call_prices: np.ndarray,
     *,
     risk_free_rate: float,
-    days_to_expiry: int,
+    days_to_expiry: Optional[int] = None,
+    time_to_expiry_years: Optional[float] = None,
     min_strike: float | None = None,
     max_strike: float | None = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Apply Breeden-Litzenberger to obtain a PDF from call prices."""
+    """Apply Breeden-Litzenberger to obtain a PDF from call prices.
+
+    Args:
+        strikes: Strike grid for option prices.
+        call_prices: Call prices aligned with ``strikes``.
+        risk_free_rate: Continuously compounded risk-free rate.
+        days_to_expiry: Optional days-to-expiry input. Used when
+            ``time_to_expiry_years`` is not provided.
+        time_to_expiry_years: Optional explicit maturity in year fractions.
+            Takes precedence over ``days_to_expiry`` when provided.
+        min_strike: Optional left strike cutoff.
+        max_strike: Optional right strike cutoff.
+
+    Returns:
+        Tuple containing filtered strikes and non-negative PDF values.
+
+    Raises:
+        InvalidInputError: If array shapes are invalid or no maturity input
+            is provided.
+    """
 
     strikes_arr = np.asarray(strikes, dtype=float)
     prices_arr = np.asarray(call_prices, dtype=float)
@@ -31,7 +51,14 @@ def pdf_from_price_curve(
         raise InvalidInputError("Strikes and prices must have the same shape")
 
     second_derivative = finite_diff_second_derivative(prices_arr, strikes_arr)
-    years = convert_days_to_years(days_to_expiry)
+    if time_to_expiry_years is not None:
+        years = float(time_to_expiry_years)
+    elif days_to_expiry is not None:
+        years = float(convert_days_to_years(days_to_expiry))
+    else:
+        raise InvalidInputError(
+            "Either days_to_expiry or time_to_expiry_years must be provided."
+        )
     pdf = np.exp(risk_free_rate * years) * second_derivative
     pdf = np.maximum(pdf, 0.0)
 
