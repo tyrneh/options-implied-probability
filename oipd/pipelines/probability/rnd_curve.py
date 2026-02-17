@@ -28,7 +28,8 @@ def _build_strike_grid(
     vol_meta: Mapping[str, Any],
     *,
     pricing_underlying: float,
-    days_to_expiry: int,
+    days_to_expiry: Optional[int] = None,
+    time_to_expiry_years: Optional[float] = None,
     domain: Optional[Tuple[float, float]] = None,
     points: int = 200,
 ) -> np.ndarray:
@@ -38,7 +39,8 @@ def _build_strike_grid(
         resolved_market: Fully resolved market inputs.
         vol_meta: Metadata from the volatility calibration.
         pricing_underlying: Forward/spot used for pricing calls.
-        days_to_expiry: Days to expiry for the slice.
+        days_to_expiry: Optional days-to-expiry input for backwards compatibility.
+        time_to_expiry_years: Optional explicit time to expiry in years.
         domain: Optional strike domain as (min, max).
         points: Number of grid points to generate.
 
@@ -85,9 +87,18 @@ def _build_strike_grid(
         except Exception:
             pass
 
-    if days_to_expiry <= 0:
+    if time_to_expiry_years is not None:
+        T = float(time_to_expiry_years)
+    elif days_to_expiry is not None:
+        T = float(convert_days_to_years(days_to_expiry))
+    else:
         raise CalculationError(
-            "Days to expiry must be positive to build a strike grid."
+            "Either days_to_expiry or time_to_expiry_years must be provided."
+        )
+
+    if T <= 0:
+        raise CalculationError(
+            "Time to expiry must be positive to build a strike grid."
         )
 
     atm_vol = vol_meta.get("at_money_vol")
@@ -96,7 +107,6 @@ def _build_strike_grid(
             "Cannot determine default grid: 'at_money_vol' missing in metadata."
         )
 
-    T = convert_days_to_years(days_to_expiry)
     sigma_root_t = float(atm_vol) * np.sqrt(T)
     width = 5.0 * sigma_root_t
     forward = float(pricing_underlying)
@@ -172,6 +182,7 @@ def derive_distribution_from_curve(
     vol_metadata: Optional[Dict[str, Any]] = None,
     domain: Optional[Tuple[float, float]] = None,
     points: int = 200,
+    time_to_expiry_years: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Derive PDF/CDF from a pre-fitted volatility curve.
 
@@ -180,6 +191,10 @@ def derive_distribution_from_curve(
         resolved_market: Fully resolved market inputs.
         pricing_engine: Pricing engine (``"black76"`` or ``"bs"``).
         vol_metadata: Optional metadata from the vol fit (for diagnostics).
+        domain: Optional strike domain as ``(min_strike, max_strike)``.
+        points: Number of strike grid points.
+        time_to_expiry_years: Optional explicit maturity in years. When
+            provided, this takes precedence over metadata-derived expiry.
 
     Returns:
         Tuple of ``(prices, pdf, cdf, metadata)``. When ``domain`` is not
@@ -189,15 +204,22 @@ def derive_distribution_from_curve(
     vol_meta = vol_metadata or {}
     valuation_date = resolved_market.valuation_date
 
-    # 1. Determine Days to Expiry and resolve rate convention
-    expiry_date = vol_meta.get("expiry_date")
-    if expiry_date is None:
-        raise CalculationError(
-            "Volatility metadata missing 'expiry_date'. Cannot derive distribution."
-        )
+    # 1. Determine maturity and resolve rate convention
+    if time_to_expiry_years is not None:
+        years_to_expiry = float(time_to_expiry_years)
+        if years_to_expiry <= 0:
+            raise CalculationError(
+                "time_to_expiry_years must be positive to derive distribution."
+            )
+    else:
+        expiry_date = vol_meta.get("expiry_date")
+        if expiry_date is None:
+            raise CalculationError(
+                "Volatility metadata missing 'expiry_date'. Cannot derive distribution."
+            )
+        days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
+        years_to_expiry = convert_days_to_years(days_to_expiry)
 
-    days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
-    years_to_expiry = convert_days_to_years(days_to_expiry)
     rate_mode = resolved_market.source_meta["risk_free_rate_mode"]
     effective_r = resolve_risk_free_rate(
         resolved_market.risk_free_rate, rate_mode, years_to_expiry
@@ -224,7 +246,7 @@ def derive_distribution_from_curve(
         resolved_market,
         vol_meta,
         pricing_underlying=pricing_underlying,
-        days_to_expiry=days_to_expiry,
+        time_to_expiry_years=years_to_expiry,
         domain=domain,
         points=points,
     )
@@ -234,7 +256,7 @@ def derive_distribution_from_curve(
         vol_curve,
         pricing_underlying,
         strike_grid=strike_grid,
-        days_to_expiry=days_to_expiry,
+        time_to_expiry_years=years_to_expiry,
         risk_free_rate=effective_r,
         pricing_engine=pricing_engine,
         dividend_yield=effective_dividend,
@@ -250,7 +272,7 @@ def derive_distribution_from_curve(
         pricing_strike_grid,
         pricing_call_prices,
         risk_free_rate=effective_r,
-        days_to_expiry=days_to_expiry,
+        time_to_expiry_years=years_to_expiry,
         min_strike=observed_min_strike,
         max_strike=observed_max_strike,
     )
@@ -263,5 +285,6 @@ def derive_distribution_from_curve(
 
     # 6. Assemble Metadata
     metadata = vol_meta.copy()
+    metadata["time_to_expiry_years"] = years_to_expiry
 
     return pdf_prices, pdf_values, cdf_values, metadata

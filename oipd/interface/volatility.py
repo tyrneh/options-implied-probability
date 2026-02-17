@@ -1018,7 +1018,9 @@ class VolSurface:
         # Create a callable that wraps the interpolator
         def interpolated_vol_curve(strikes: np.ndarray) -> np.ndarray:
             """Synthetic vol curve that evaluates IV via surface interpolation."""
-            return np.array([interpolator.implied_vol(K, t) for K in strikes])
+            strike_array = np.asarray(strikes, dtype=float)
+            interpolated_ivs = interpolator.implied_vol(strike_array, t)
+            return np.asarray(interpolated_ivs, dtype=float)
 
         # Build a shell VolCurve
         vol_curve = VolCurve(
@@ -1197,15 +1199,7 @@ class VolSurface:
 
         from oipd.interface.probability import ProbSurface
 
-        distributions = {}
-
-        # Iterate over fitted slices and derive distribution for each
-        for expiry_timestamp in self.expiries:
-            # We can use the slice() method to get a VolCurve, then ask it for distribution
-            vol_curve = self.slice(expiry_timestamp)
-            distributions[expiry_timestamp] = vol_curve.implied_distribution()
-
-        return ProbSurface(distributions)
+        return ProbSurface(vol_surface=self)
 
     def atm_vol(self, t: float | str | date | pd.Timestamp) -> float:
         """Return At-The-Money (ATM) implied volatility at time t.

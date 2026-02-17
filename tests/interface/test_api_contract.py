@@ -433,3 +433,20 @@ class TestProbSurfaceContract:
         result = prob_surface.expiries
         assert isinstance(result, tuple)
         assert len(result) >= 1
+
+    def test_pdf_exists(self, prob_surface):
+        result = prob_surface.pdf(100.0, t=45 / 365.0)
+        assert isinstance(result, np.ndarray)
+
+    def test_cdf_exists(self, prob_surface):
+        result = prob_surface.cdf(100.0, t=45 / 365.0)
+        assert isinstance(result, np.ndarray)
+
+    def test_quantile_exists(self, prob_surface):
+        result = prob_surface.quantile(0.5, t=45 / 365.0)
+        assert isinstance(result, (float, np.floating))
+        assert result > 0
+
+    def test_call_alias_exists(self, prob_surface):
+        result = prob_surface(100.0, t=45 / 365.0)
+        assert isinstance(result, np.ndarray)
