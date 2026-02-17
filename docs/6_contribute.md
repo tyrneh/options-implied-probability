@@ -15,6 +15,17 @@ cd options-implied-probability
 pip install -e '.[dev]'
 ```
 
+## Interface vs pipeline architecture
+
+OIPD uses a strict split:
+
+- **Stateful interface objects** (`oipd/interface`): user-facing classes with fitted state, properties, and plotting methods.
+- **Stateless pipelines** (`oipd/pipelines`): pure computational logic used by interfaces.
+- **Core numerical modules** (`oipd/core`): fitting algorithms, interpolation methods, and finite-difference routines.
+
+This design improves testability and keeps numerical logic independent from API ergonomics.
+
+
 ## Testing Hierarchy (Project Policy)
 
 1. `tests/interface/` (public contract): user-facing API behavior.
@@ -23,18 +34,6 @@ pip install -e '.[dev]'
 
 When changing math behavior, add targeted `tests/core/` coverage and then evaluate regression impact.
 
-## Golden Master Workflow
-
-Do **not** edit `tests/data/golden_master.json` manually.
-
-If a mathematically justified change updates expected outputs:
-
-```bash
-export PYTHONPATH=$PYTHONPATH:.
-python tests/data/generate_golden_master.py
-```
-
-Then run regression tests and review the new values critically.
 
 ## Code Quality Checklist
 
@@ -47,12 +46,3 @@ pytest -q
 
 
 
-## 2. Interface vs pipeline architecture
-
-OIPD uses a strict split:
-
-- **Stateful interface objects** (`oipd/interface`): user-facing classes with fitted state, properties, and plotting methods.
-- **Stateless pipelines** (`oipd/pipelines`): pure computational logic used by interfaces.
-- **Core numerical modules** (`oipd/core`): fitting algorithms, interpolation methods, and finite-difference routines.
-
-This design improves testability and keeps numerical logic independent from API ergonomics.
