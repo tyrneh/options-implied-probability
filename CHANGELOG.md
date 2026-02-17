@@ -5,6 +5,14 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2025-02-17
+### Added
+- Reworked `ProbSurface` to use fitted `VolSurface` as the canonical source of truth. Probability is now derived from interpolated volatility and option prices at query time, rather than interpolating probabilities directly. This is important because only the fitted vol smiles can be linearly interpolated in total-variance space; probabilities can't be interpolated directly. 
+- Added direct surface query methods for arbitrary maturities: `pdf(price, t)`, `cdf(price, t)`, `quantile(q, t)`, and callable alias `__call__(price, t)`.
+- Extended `ProbSurface.slice(expiry)` to support interior (non-pillar) expiries and return consistent `ProbCurve` slices with interpolated metadata.
+- Added a dedicated surface probability pipeline (`oipd/pipelines/probability/rnd_surface.py`) and surface math kernels (`oipd/core/probability_density_conversion/surface_math.py`) with expanded interface/core tests.
+
+
 ## [2.0.0] - 2025-02-06
 ### Added
 - overhauled user API interface yet again to accomodate full volatility surface fitting pipeline. This new API should be quite thoughtfully designed and futureproof, so I do not expect further breaking changes
