@@ -22,10 +22,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install dependencies
+      - name: Install dependencies (pinned by tests/constraints.txt)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -c constraints.txt
+          pip install -r requirements.txt -c tests/constraints.txt
 
       - name: Generate Linux golden master
         run: |

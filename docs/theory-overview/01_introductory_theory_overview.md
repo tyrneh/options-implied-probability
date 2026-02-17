@@ -1,12 +1,12 @@
 ---
-title: Theory Overview
+title: Introductory Theory Overview
 nav_order: 3
 has_children: true
 ---
 
-# 3. Theory Overview
+# 3. Introductory Theory Overview
 
-This section provides a simple crash course on the theory behind market-implied probabilities. Advanced users who mainly want to assess whether OIPD’s implementation is rigorous enough for their use case may prefer to skip ahead to the pipeline details in section [X].
+This section provides a simple crash course on the theory behind market-implied probabilities. 
 
 ## 3.1. Options contain information about future prices
 
@@ -30,18 +30,18 @@ Using the Breeden-Litzenberger method, the risk-neutral probability density is c
 <table align="center" cellspacing="12" style="margin-top:10px; width:100%; border-collapse:separate;">
   <tr>
     <td style="width:50%;">
-      <img src="images/3_observed_market_prices.png" alt="direct market prices" style="width:100%; height:auto; display:block;" />
+      <img src="../images/2_observed_market_prices.png" alt="direct market prices" style="width:100%; height:auto; display:block;" />
       <p style="text-align:center; margin:8px 0 0 0;">Image 1: Directly interpolating observed market prices of call options</p>
     </td>
     <td style="width:50%;">
-      <img src="images/3_numerical_second_derivative.png" alt="numerical second derivative" style="width:100%; height:auto; display:block;" />
+      <img src="../images/2_numerical_second_derivative.png" alt="numerical second derivative" style="width:100%; height:auto; display:block;" />
       <p style="text-align:center; margin:8px 0 0 0;">Image 2: Numerical 2nd derivative on noisy market data</p>
     </td>
   </tr>
 </table>
 
 
-Market quotes are noisy and come in discrete increments, which make them unsuitable for numerical differentiation. Instead, we must build a continuous model of theoretical call prices at any strike price, fitted to observed data. Thus, We build a model **implied volatility** instead of option prices directly because IV is the key input to the pricing model, while prices are a noisier output.
+Market quotes are noisy and come in discrete increments, which make them unsuitable for numerical differentiation. Instead, we must build a continuous model of theoretical call prices at any strike price, fitted to observed data. We model **implied volatility** instead of option prices directly because IV is the key input to the pricing model, while prices are a noisier output.
 
 ### 3.2.1. Implied Volatility (IV)
 Implied volatility is the market's expectation of future price movements of a security. It is the volatility value that, when plugged into an options pricing model (like Black-Scholes), yields the option's current market price. High IV suggests the market expects significant price swings, while low IV implies a period of relative calm.
@@ -49,12 +49,16 @@ Implied volatility is the market's expectation of future price movements of a se
 ### 3.2.2. The Volatility Smile & Surface
 *   **Smile:** IV is lowest for at-the-money (ATM) options and increases for both in-the-money (ITM) and out-of-the-money (OTM) options. By plotting IVs against strikes, a "smile" pattern is often observed. 
 
-<img src="images/vol_curve.png" alt="Volatility smile example" style="display:block; margin:5px auto 20px auto; width:50%;" />
+<p style="text-align:center; margin:5px 0 20px 0;">
+  <img src="../images/vol_curve.png" alt="Volatility smile example" style="width:50%; height:auto;" />
+</p>
 
 
-*   **Surface:** If you take the smile for one expiry, then repeat for many expiries, you get a implied volatility surface (strike on one axis, time-to-expiry on the other, IV on the vertical axis). Because market quotes are only available at discrete points, we can use this fitted surface to estimate IV between quoted strikes and maturities.
+*   **Surface:** We can fit the IV smile repeatedly over many expiries, and interpolate between them to get an IV surface (strike on one axis, time-to-expiry on the other, IV on the vertical axis). While market quotes are only available at discrete points, we can use this fitted surface to estimate IV between quoted strikes and maturities.
 
-<img src="images/vol_surface.png" alt="Volatility surface example" style="display:block; margin:5px auto 20px auto; width:50%;" />
+<p style="text-align:center; margin:5px 0 20px 0;">
+  <img src="../images/vol_surface.png" alt="Volatility surface example" style="width:50%; height:auto;" />
+</p>
 
 
-OIPD fits mathematical models to these smiles to create a continuous volatility curve. The most popular academic model is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. 
+A popular academic model used to fit an IV smile is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. Once we fit the IV surface, we can plug the theoretical IV back into an option pricing model (like Black-Scholes) to determine the price of a call option. Finally, we have a smooth and continuous model of call prices, and this allows us to cleanly take the numerical second derivative. 

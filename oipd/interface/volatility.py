@@ -802,6 +802,7 @@ class VolSurface:
         *,
         column_mapping: Optional[Mapping[str, str]] = None,
         horizon: Optional[Union[str, date, pd.Timestamp]] = None,
+        failure_policy: Literal["raise", "skip_warn"] = "skip_warn",
     ) -> "VolSurface":
         """Fit all expiries in the chain and store slice curves.
 
@@ -811,14 +812,23 @@ class VolSurface:
             column_mapping: Optional mapping from user column names to OIPD standard names.
             horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date).
                      Expiries after this horizon will be ignored.
+            failure_policy: Slice-level failure handling policy. Use ``"raise"``
+                to fail on the first problematic expiry or ``"skip_warn"`` to
+                skip failures and continue fitting the surface.
 
         Returns:
             VolSurface: The fitted surface instance.
 
         Raises:
+            ValueError: If ``failure_policy`` is not a supported value.
             CalculationError: If calibration fails, expiry column is missing or invalid,
                 or fewer than two expiries are provided.
         """
+        if failure_policy not in {"raise", "skip_warn"}:
+            raise ValueError(
+                "failure_policy must be either 'raise' or 'skip_warn', "
+                f"got {failure_policy!r}."
+            )
 
         chain_input = chain.copy()
         if column_mapping:
@@ -879,6 +889,7 @@ class VolSurface:
             max_staleness_days=self.max_staleness_days,
             solver=self.solver,
             method=self.method,
+            failure_policy=failure_policy,
         )
 
         # Always build linear total variance interpolator
@@ -1007,7 +1018,9 @@ class VolSurface:
         # Create a callable that wraps the interpolator
         def interpolated_vol_curve(strikes: np.ndarray) -> np.ndarray:
             """Synthetic vol curve that evaluates IV via surface interpolation."""
-            return np.array([interpolator.implied_vol(K, t) for K in strikes])
+            strike_array = np.asarray(strikes, dtype=float)
+            interpolated_ivs = interpolator.implied_vol(strike_array, t)
+            return np.asarray(interpolated_ivs, dtype=float)
 
         # Build a shell VolCurve
         vol_curve = VolCurve(
@@ -1186,15 +1199,7 @@ class VolSurface:
 
         from oipd.interface.probability import ProbSurface
 
-        distributions = {}
-
-        # Iterate over fitted slices and derive distribution for each
-        for expiry_timestamp in self.expiries:
-            # We can use the slice() method to get a VolCurve, then ask it for distribution
-            vol_curve = self.slice(expiry_timestamp)
-            distributions[expiry_timestamp] = vol_curve.implied_distribution()
-
-        return ProbSurface(distributions)
+        return ProbSurface(vol_surface=self)
 
     def atm_vol(self, t: float | str | date | pd.Timestamp) -> float:
         """Return At-The-Money (ATM) implied volatility at time t.

@@ -9,16 +9,14 @@
 
 ### OIPD (Options-implied Probability Distribution) provides 2 capabilities:
 
-**1. It computes the market's expectations about the probable future prices of an asset, based on information contained in options data.**
+**1. Compute market-implied probability distributions of future asset prices.**
    - While markets don't predict the future with certainty, under the efficient market view, these market expectations represent the best available estimate of what might happen.
-   - Traditionally, extracting these market-implied distributions were limited to quants or academics. OIPD makes this capability accessible to everyone.
-    - The probability distribution is a transformation of the volatility surface. Thus, accurately modelling a volatility surface is crucial to computing the distribution, which leads to OIPD's second feature below.
 
 <p align="center" style="margin-top: 80px;">
-  <img src="https://github.com/tyrneh/options-implied-probability/blob/main/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
+  <img src="https://github.com/tyrneh/options-implied-probability/blob/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
 </p>
 
-**2. For options traders, it also offers a simple-to-use but rigorous pipeline to fit an arbitrage-free volatility smile/surface, which can be used to price options.**
+**2. Fit arbitrage-free volatility smiles and surfaces for pricing and risk analysis.**
    - Fitting a vol surface well is a complex and expensive process, with the leading software provider costing $50k USD/month/seat. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
 
 <table align="center" cellspacing="12" style="margin-top:120px; width:100%; border-collapse:separate;">
@@ -32,24 +30,59 @@
   </tr>
 </table>
 
-
-
-
+See the [full documentation site](https://tyrneh.github.io/options-implied-probability/) for details.
 
 # Quick start
 
-#### Installation
+## 1. Installation
 ```bash
 pip install oipd
 ```
 
-### Quickstart tutorial in computing market-implied probability distributions
+## 2. Mental model for using OIPD
+
+> [!TIP]
+> For non-technical users, you can safely skip this section and jump to [Section 3](#3-quickstart-tutorial-in-computing-market-implied-probability-distributions) to compute future market-implied probabilities. 
+
+<br>
+
+OIPD has four core objects. A simple way to remember them is a matrix:
+
+| Scope | Volatility Layer | Probability Layer |
+| --- | --- | --- |
+| Single expiry | `VolCurve` | `ProbCurve` |
+| Multiple expiries | `VolSurface` | `ProbSurface` |
+
+You can think about the lifecycle in three steps:
+
+1. Initialize the estimator object, with configurable params.
+2. Call `.fit(chain, market)` to calibrate.
+3. Query/plot the fitted object, or convert from vol to probability via `.implied_distribution()`.
+
+If you're familiar with scikit-learn, this is the same mental model: configure an estimator, call `fit`, then inspect outputs.
+
+Conceptual flow:
+
+```text
+Step 1: Fit volatility
+  Initialize VolCurve / VolSurface object
+      + options chain + market inputs
+      -> .fit(...)
+      -> fitted VolCurve / VolSurface object (IV, prices, greeks, plots...)
+
+Step 2: Convert fitted volatility to probability
+  Use the fitted VolCurve / VolSurface
+      -> .implied_distribution()
+      -> fitted ProbCurve / ProbSurface object (PDF, CDF, quantiles, moments...)
+```
+
+## 3. Quickstart tutorial in computing market-implied probability distributions
 
 This quickstart will cover the functionality in **(1) computing market-implied probabilities**. See the [included jupyter notebook ](examples/quickstart_yfinance.ipynb) for a full example on using the automated yfinance connection to download options data and compute market-implied probabilities for Palantir. 
 
-For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the full documentation [still WIP]. 
+For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the [full documentation](https://tyrneh.github.io/options-implied-probability/).
 
-#### A. Usage for computing a probability distribution on a specific future date
+### 3A. Usage for computing a probability distribution on a specific future date
 
 ```python
 import matplotlib.pyplot as plt
@@ -89,7 +122,7 @@ skew = prob.skew()                  # skew
 
 
 
-#### B. Usage for computing probabilities over time
+### 3B. Usage for computing probabilities over time
 
 ```python
 import matplotlib.pyplot as plt
@@ -117,7 +150,12 @@ surface = ProbSurface.from_chain(chain_surface, surface_market)
 surface.plot_fan() # Plot a fan chart of price probability over time
 plt.show()
 
-# 5. "slice" the surface to get a ProbCurve, and query its statistical properties in the same manner as in example A 
+# 5. query at arbitrary maturities directly from ProbSurface
+pdf_45d = surface.pdf(100, t=45/365)       # density at K=100, 45 days
+cdf_45d = surface.cdf(100, t="2025-02-15") # equivalent date-style maturity input
+q50_45d = surface.quantile(0.50, t=45/365) # median at 45 days
+
+# 6. "slice" the surface to get a ProbCurve, and query its statistical properties in the same manner as in example A 
 surface.expiries                                  # list all the expiry dates that were captured
 curve = surface.slice(surface.expiries[0]) # get a slice on the first expiry
 curve.prob_below(100)                      # query probabilities and statistics 

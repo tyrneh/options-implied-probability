@@ -1,4 +1,8 @@
 remote_theme: just-the-docs/just-the-docs
 title: OIPD Docs
-github_username: jaewon0225
+url: https://tyrneh.github.io
+baseurl: /options-implied-probability
+github_username: tyrneh
 repository: tyrneh/options-implied-probability
+plugins:
+  - jekyll-remote-theme

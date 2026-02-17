@@ -1,33 +1,48 @@
 ---
 title: Contributing
-nav_order: 7
+nav_order: 6
 ---
 
-# 6. Contributing
+# Contributing
 
-## 6.1. How to Contribute
+Contributions are welcome. Please open an issue first for non-trivial changes so design decisions are visible before implementation.
 
-Contributions are welcome! If you have a bug fix, feature proposal, or improvement, please open an issue on GitHub to discuss it first. Then, you can submit a pull request.
+## Development Setup
 
-## 6.2. Development Setup
+```bash
+git clone https://github.com/tyrneh/options-implied-probability.git
+cd options-implied-probability
+pip install -e '.[dev]'
+```
 
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/tyrneh/options-implied-probability.git
-    cd options-implied-probability
-    ```
-2.  Install the library in editable mode with development dependencies:
-    ```bash
-    pip install -e .[dev]
-    ```
+## Interface vs pipeline architecture
 
-## 6.3. Code Style and Conventions
+OIPD uses a strict split:
 
-We use `black` for code formatting and `isort` for organising imports. Before submitting a pull request, please run these tools:
+- **Stateful interface objects** (`oipd/interface`): user-facing classes with fitted state, properties, and plotting methods.
+- **Stateless pipelines** (`oipd/pipelines`): pure computational logic used by interfaces.
+- **Core numerical modules** (`oipd/core`): fitting algorithms, interpolation methods, and finite-difference routines.
+
+This design improves testability and keeps numerical logic independent from API ergonomics.
+
+
+## Testing Hierarchy (Project Policy)
+
+1. `tests/interface/` (public contract): user-facing API behavior.
+2. `tests/core/` (math units): numerical correctness and edge cases.
+3. `tests/regression/` (golden master): numerical drift guard.
+
+When changing math behavior, add targeted `tests/core/` coverage and then evaluate regression impact.
+
+
+## Code Quality Checklist
 
 ```bash
 black .
 isort .
+mypy oipd
+pytest -q
 ```
 
-We also use `mypy` for static type checking. Please ensure your code passes the type checks.
+
+

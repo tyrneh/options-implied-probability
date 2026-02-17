@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from oipd.core.probability_density_conversion import (
+    finite_diff_first_derivative,
     finite_diff_second_derivative,
     pdf_from_price_curve,
     price_curve_from_iv,
@@ -61,6 +62,26 @@ def _compute_pdf_pipeline(
 
 class TestFiniteDifferenceStability:
     """Test suite for finite difference numerical stability improvements."""
+
+    def test_finite_diff_first_derivative_quadratic_function(self):
+        """First derivative should match analytical gradient for y=x^2."""
+        x = np.linspace(0, 10, 21)
+        y = x**2
+
+        dydx = finite_diff_first_derivative(y, x)
+        expected = 2.0 * x
+        np.testing.assert_allclose(dydx, expected, atol=1e-10)
+
+    def test_finite_diff_first_derivative_non_uniform_grid_fallback(self):
+        """First derivative helper should warn and fallback on non-uniform grids."""
+        x = np.array([1, 2, 4, 7, 11, 16, 22, 29, 37, 46, 56], dtype=float)
+        y = x**2
+
+        with pytest.warns(UserWarning, match="Non-uniform grid detected"):
+            dydx = finite_diff_first_derivative(y, x)
+
+        assert len(dydx) == len(x)
+        assert np.all(np.isfinite(dydx))
 
     def test_finite_diff_quadratic_function(self):
         """Test finite difference with known analytical solution."""
