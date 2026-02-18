@@ -90,7 +90,7 @@ import matplotlib.pyplot as plt
 from oipd import MarketInputs, ProbCurve, sources
 
 # 1. we download data using the built-in yfinance connection
-ticker = "AAPL"                               # specify the stock ticker
+ticker = "PLTR"                               # specify the stock ticker
 expiries = sources.list_expiry_dates(ticker)  # see all expiry dates
 single_expiry = expiries[1]                   # select one of the expiry dates you're interested in 
 
@@ -130,10 +130,10 @@ import matplotlib.pyplot as plt
 from oipd import MarketInputs, ProbSurface, sources
 
 # 1. download multi-expiry data using the built-in yfinance connection
-ticker = "AAPL"
+ticker = "PLTR"
 chain_surface, snapshot_surface = sources.fetch_chain(
     ticker,
-    horizon="3m",  # auto-fetch all listed expiries inside the horizon
+    horizon="12m",  # auto-fetch all listed expiries inside the horizon
 )
 
 # 2. fill in the parameters
@@ -162,8 +162,8 @@ curve.prob_below(100)                      # query probabilities and statistics
 curve.kurtosis()                           
 ```
 
-<p align="center" style="margin-top: 120px;">
-  <img src=".meta/images/palantir_price_forecast.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
+<p align="center" style="margin-top: 20px;">
+  <img src=".meta/images/palantir_price_forecast.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:10px;" />
 </p>
 
 
