@@ -1,7 +1,7 @@
 ![OIPD logo](https://github.com/tyrneh/options-implied-probability/blob/main/.meta/images/OIPD%20Logo.png)
 
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/oipd?logo=python&logoColor=white)](https://pypi.org/project/oipd/)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tyrneh/options-implied-probability/blob/main/examples/OIPD_colab_demo.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tyrneh/options-implied-probability/blob/main/OIPD_Demo.ipynb)
 [![Chat on Discord](https://img.shields.io/badge/chat-on%20Discord-brightgreen?logo=discord&logoColor=white)](https://discord.gg/NHxWPGhhSQ)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/oipd?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/oipd)
 
