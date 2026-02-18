@@ -53,7 +53,10 @@ from oipd.market_inputs import (
     resolve_market,
 )
 from oipd.pipelines.vol_curve import fit_vol_curve_internal, compute_fitted_smile
-from oipd.pipelines.probability import derive_distribution_from_curve
+from oipd.pipelines.probability import (
+    derive_distribution_from_curve,
+    resolve_surface_query_time,
+)
 from oipd.pipelines.vol_surface import fit_surface
 from oipd.pipelines.vol_surface.models import FittedSurface
 from oipd.pipelines.vol_surface.interpolator import (
@@ -902,27 +905,33 @@ class VolSurface:
 
         return self
 
-    def slice(self, expiry: Any) -> VolCurve:
-        """Return a VolCurve snapshot for the requested expiry.
+    def slice(self, expiry: str | date | pd.Timestamp) -> VolCurve:
+        """Return a VolCurve snapshot for the requested maturity.
 
-        If the expiry matches a fitted pillar, returns the original parametric
+        If the maturity maps to a fitted pillar, returns the original parametric
         curve. Otherwise, returns a synthetic curve derived from the Total
         Variance interpolator.
 
         Args:
-            expiry: Expiry identifier (string, date, or pandas-compatible timestamp).
+            expiry: Expiry identifier as a date-like object.
 
         Returns:
             VolCurve: A VolCurve object representing the smile at that expiry.
 
         Raises:
-            ValueError: If fit has not been called.
+            ValueError: If fit has not been called or maturity is unsupported.
         """
 
         if self._model is None:
             raise ValueError("Call fit before slicing the surface")
 
-        expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
+        if not isinstance(expiry, (str, date, pd.Timestamp)):
+            raise ValueError(
+                "slice(expiry) requires a date-like expiry "
+                "(str, datetime.date, or pandas.Timestamp)."
+            )
+
+        expiry_timestamp, _ = self._resolve_query_time(expiry)
 
         # Check if this is an exact match to a fitted expiry
         if expiry_timestamp in self.expiries:
@@ -960,22 +969,11 @@ class VolSurface:
         if self._market is None:
             raise ValueError("Market data not stored")
 
-        # Calculate time to expiry in years
-        t = calculate_time_to_expiry(expiry_timestamp, self._market.valuation_date)
-        days = calculate_days_to_expiry(expiry_timestamp, self._market.valuation_date)
-
-        if t <= 0:
-            raise ValueError(
-                f"Expiry {expiry_timestamp} is not after valuation date {self._market.valuation_date}"
-            )
-
-        # Reject long-end extrapolation: only allow interpolation up to last fitted expiry
-        last_pillar = max(self.expiries)
-        if expiry_timestamp > last_pillar:
-            raise ValueError(
-                f"Expiry {expiry_timestamp.date()} is beyond the last fitted pillar "
-                f"({last_pillar.date()}). Long-end extrapolation is not supported."
-            )
+        # Enforce strict maturity domain shared across all surface methods.
+        resolved_expiry_timestamp, t = self._resolve_query_time(expiry_timestamp)
+        days = calculate_days_to_expiry(
+            resolved_expiry_timestamp, self._market.valuation_date
+        )
 
         # Get interpolated forward price
         interpolator = self._interpolator
@@ -991,7 +989,7 @@ class VolSurface:
             provenance=Provenance(price="user", dividends="none"),
             source_meta={
                 "interpolated": True,
-                "expiry": expiry_timestamp,
+                "expiry": resolved_expiry_timestamp,
                 "risk_free_rate_mode": self._market.risk_free_rate_mode,
             },
         )
@@ -1034,8 +1032,8 @@ class VolSurface:
         vol_curve._vol_curve = interpolated_vol_curve  # type: ignore[attr-defined]
         vol_curve._metadata = {  # type: ignore[attr-defined]
             "interpolated": True,
-            "expiry": expiry_timestamp,
-            "expiry_date": expiry_timestamp.date(),  # Required for probability derivation
+            "expiry": resolved_expiry_timestamp,
+            "expiry_date": resolved_expiry_timestamp.date(),  # Required for probability derivation
             "time_to_expiry_years": t,
             "days_to_expiry": days,
             "method": "total_variance_interpolation",
@@ -1057,27 +1055,45 @@ class VolSurface:
             return ()
         return self._model.expiries
 
-    def total_variance(self, K: float, t: float) -> float:
+    def _resolve_query_time(
+        self,
+        t: float | str | date | pd.Timestamp,
+    ) -> tuple[pd.Timestamp, float]:
+        """Normalize maturity input and enforce strict domain constraints.
+
+        Args:
+            t: Maturity input as year-fraction float or date-like object.
+
+        Returns:
+            tuple[pd.Timestamp, float]: Expiry timestamp and year fraction.
+
+        Raises:
+            ValueError: If the surface has not been fitted or maturity is invalid.
+        """
+        if self._interpolator is None or self._market is None or self._model is None:
+            raise ValueError("Surface not fitted. Call fit() first.")
+        return resolve_surface_query_time(self, t)
+
+    def total_variance(self, K: float, t: float | str | date | pd.Timestamp) -> float:
         """Return total variance at strike K and time t (years).
 
         Args:
             K: Strike price.
-            t: Time to maturity in years.
+            t: Time to maturity in years (float) or Expiry Date.
 
         Returns:
             float: Total variance, defined as w(K, t) = sigma(K, t)^2 * t.
 
         """
-        if self._interpolator is None:
-            raise ValueError("Surface not fitted. Call fit() first.")
-        return self._interpolator(K, t)
+        _, t_years = self._resolve_query_time(t)
+        return self._interpolator(K, t_years)
 
-    def implied_vol(self, K: float, t: float) -> float:
+    def implied_vol(self, K: float, t: float | str | date | pd.Timestamp) -> float:
         """Return implied volatility at strike K and time t (years).
 
         Args:
             K: Strike price.
-            t: Time to maturity in years (e.g., 0.5 for 6 months).
+            t: Time to maturity in years (float) or Expiry Date.
 
         Returns:
             float: Implied volatility in decimal form (e.g., 0.20 for 20%).
@@ -1085,30 +1101,27 @@ class VolSurface:
         Raises:
             ValueError: If the surface has not been fitted.
         """
-        if self._interpolator is None:
-            raise ValueError("Surface not fitted. Call fit() first.")
-        return self._interpolator.implied_vol(K, t)
+        _, t_years = self._resolve_query_time(t)
+        return self._interpolator.implied_vol(K, t_years)
 
-    def __call__(self, K: float, t: float) -> float:
+    def __call__(self, K: float, t: float | str | date | pd.Timestamp) -> float:
         """Return implied volatility at strike K and time t (years).
 
         Alias for :meth:`implied_vol`.
         """
         return self.implied_vol(K, t)
 
-    def forward_price(self, t: float) -> float:
+    def forward_price(self, t: float | str | date | pd.Timestamp) -> float:
         """Return the interpolated forward price at time t.
 
         Args:
-            t: Time to maturity in years.
+            t: Time to maturity in years (float) or Expiry Date.
 
         Returns:
             float: Forward price F(t).
         """
-        if self._interpolator is None:
-            raise ValueError("Surface not fitted. Call fit() first.")
-
-        return self._interpolator._forward_interp(t)
+        _, t_years = self._resolve_query_time(t)
+        return self._interpolator._forward_interp(t_years)
 
     def price(
         self,
@@ -1126,20 +1139,7 @@ class VolSurface:
         Returns:
             np.ndarray: Option prices.
         """
-        if self._interpolator is None or self._market is None:
-            raise ValueError("Surface not fitted. Call fit() first.")
-
-        # 1. Resolve Time t
-        if isinstance(t, (str, date, pd.Timestamp)):
-            # Convert date to t
-            expiry_ts = pd.to_datetime(t).tz_localize(None)
-            t_years = calculate_time_to_expiry(expiry_ts, self._market.valuation_date)
-        else:
-            t_years = float(t)
-
-        if t_years <= 0:
-            # Expired or invalid
-            return np.zeros_like(np.asarray(strikes), dtype=float)
+        _, t_years = self._resolve_query_time(t)
 
         # 2. Direct Math Kernel Queries
         # Get Forward F and Vol sigma directly from interpolator (fast)
@@ -1212,20 +1212,7 @@ class VolSurface:
         Returns:
             float: Interpolated ATM implied volatility.
         """
-        if self._interpolator is None:
-            raise ValueError("Surface not fitted.")
-
-        # Resolve t to years
-        if isinstance(t, (str, date, pd.Timestamp)):
-            if self._market is None:
-                raise ValueError("Market data not stored.")
-            expiry_ts = pd.to_datetime(t).tz_localize(None)
-            t_years = calculate_time_to_expiry(expiry_ts, self._market.valuation_date)
-        else:
-            t_years = float(t)
-
-        if t_years <= 0:
-            return 0.0
+        _, t_years = self._resolve_query_time(t)
 
         F = self.forward_price(t_years)
         return self.implied_vol(F, t_years)
@@ -1288,13 +1275,8 @@ class VolSurface:
         if self._interpolator is None or self._market is None:
             raise ValueError("Call fit before computing Greeks")
 
-        # 1. Resolve Time t
-        if isinstance(t, (str, date, pd.Timestamp)):
-            t_years = calculate_time_to_expiry(t, self._market.valuation_date)
-        else:
-            t_years = float(t)
-
-        t_years = max(t_years, 1e-6)
+        # 1. Resolve Time t with strict domain checks
+        _, t_years = self._resolve_query_time(t)
 
         # 2. Resolve Inputs from Interpolator
         K = np.asarray(strikes, dtype=float)

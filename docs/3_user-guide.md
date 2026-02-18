@@ -167,12 +167,12 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Individual Greeks** | `delta`, `gamma`, `vega`... | Partials w.r.t $S, \sigma, t, r$. | `delta`, `gamma`, `vega`... | Interpolated Greeks at $(K, t)$. |
 | **Calibration Data** | `iv_results()` | DataFrame of fitted vs market. | `iv_results()` | Long-format DataFrame of all fits. |
 | **Parameters** | `params` | Fitted coeffs (SVI `a, b...`). | `params` (dict) | Dict of `{expiry: params}`. |
-| **Slicing** | N/A | N/A | `slice(expiry)` | Extract a `VolCurve` snapshot. |
+| **Slicing** | | | `slice(expiry)` | Extract a `VolCurve` snapshot. |
 | **Expiries** | `expiries` (1-tuple) | Single expiry date. | `expiries` (list) | List of fitted expiry dates. |
 | **Distributions** | `implied_distribution()` | Get `ProbCurve` (RND). | `implied_distribution()` | Get `ProbSurface` (RND Surface). |
-| **Visualization (2D)** | `plot()` | Plot fitted smile vs market. | `plot()` | Overlayed IV smiles. |
-| **Visualization (3D)** | N/A | N/A | `plot_3d()` | Isometric 3D volatility surface. |
-| **Term Structure** | N/A | N/A | `plot_term_structure()` | Interpolated ATM-forward IV term structure vs days to expiry. |
+| **Visualization (2D curve)** | `plot()` | Plot fitted smile vs market. | `plot()` | Overlayed IV smiles. |
+| **Visualization (3D surface)** | | | `plot_3d()` | Isometric 3D volatility surface. |
+| **Term Structure** | | | `plot_term_structure()` | Interpolated ATM-forward IV term structure vs days to expiry. |
 
 ### Probability API Methods Comparison
 
@@ -180,13 +180,13 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | :--- | :--- | :--- | :--- | :--- |
 | **Construction (Convenience)** | `from_chain(chain, market, ...)` | One-line constructor: fits SVI on a single-expiry chain, then builds `ProbCurve`. | `from_chain(chain, market, ...)` | One-line constructor: fits SVI across expiries, then builds `ProbSurface`. |
 | **Construction (From Vol)** | via `VolCurve.implied_distribution()` | Build a `ProbCurve` from a fitted `VolCurve`. | via `VolSurface.implied_distribution()` | Build a `ProbSurface` from a fitted `VolSurface`. |
-| **Density (PDF)** | `pdf(S)` | Probability density at price $S$. | `pdf(S, t)` | Direct surface density query at price $S$ and maturity `t`. |
+| **Density (PDF)** | `pdf(S)` | Probability density at price $S$. | `pdf(S, t)` | Probability density at price $S$ for a given maturity `t`. |
 | **Callable Alias** | `__call__(S)` | Alias for `pdf(S)`. | `__call__(S, t)` | Alias for `pdf(S, t)`. |
-| **CDF** | `prob_below(S)` | CDF at price $S$. | `cdf(S, t)` | Direct surface CDF query at price $S$ and maturity `t`. |
+| **CDF** | `prob_below(S)` | Cumulative distribution function at price $S$. | `cdf(S, t)` | CDF at price $S$ for maturity `t`. |
 | **Tail Probabilities** | `prob_above(S)`, `prob_between(L, H)` | Upper tail and interval probabilities. | `slice(expiry).prob_above(S)`, `slice(expiry).prob_between(L, H)` | Tail methods are exposed on the sliced `ProbCurve`. |
 | **Quantile** | `quantile(q)` | Inverse CDF (price at probability $q$). | `quantile(q, t)` | Direct surface quantile query at maturity `t` (also available via `slice(expiry).quantile(q)`). |
 | **Moments** | `mean()`, `variance()`, `skew()`, `kurtosis()` | Distribution moments. | `slice(expiry).mean()` etc. | Moments for a selected expiry. |
 | **Grid Access** | `prices`, `pdf_values`, `cdf_values` | Cached evaluation grid for plots and queries. | `slice(expiry).prices` etc. | Grid for a selected expiry. |
 | **Visualization (2D)** | `plot(kind=...)` | PDF/CDF plot for one expiry. | `plot_fan()` | Fan chart of quantile bands over expiries. |
 | **Metadata / Expiries** | `resolved_market`, `metadata` | Market snapshot + fit metadata. | `expiries` | Available expiry dates. |
-| **Slicing** | N/A | N/A | `slice(expiry)` | Extract a `ProbCurve` snapshot. |
+| **Slicing** | | | `slice(expiry)` | Extract a `ProbCurve` snapshot. |

@@ -6,3 +6,4 @@ github_username: tyrneh
 repository: tyrneh/options-implied-probability
 plugins:
   - jekyll-remote-theme
+math: katex

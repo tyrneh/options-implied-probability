@@ -328,6 +328,11 @@ class TestProbSurfaceSlice:
         curve = prob_surface.slice(exp_str)
         assert curve is not None
 
+    def test_slice_rejects_float_t(self, prob_surface):
+        """slice() requires date-like expiry and rejects float t input."""
+        with pytest.raises(ValueError, match="date-like expiry"):
+            prob_surface.slice(45 / 365.0)  # type: ignore[arg-type]
+
 
 # =============================================================================
 # ProbSurface Query API Tests
