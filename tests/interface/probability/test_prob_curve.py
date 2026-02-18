@@ -286,48 +286,6 @@ class TestProbCurveVariance:
 
 
 # =============================================================================
-# ProbCurve.plot() Tests
-# =============================================================================
-
-
-class TestProbCurvePlot:
-    """Tests for ProbCurve.plot() visualization."""
-
-    def test_plot_pdf_does_not_crash(self, prob_curve):
-        """plot(kind='pdf') executes without raising."""
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        fig = prob_curve.plot(kind="pdf")
-        assert fig is not None
-        plt.close(fig)
-
-    def test_plot_cdf_does_not_crash(self, prob_curve):
-        """plot(kind='cdf') executes without raising."""
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        fig = prob_curve.plot(kind="cdf")
-        assert fig is not None
-        plt.close(fig)
-
-    def test_plot_both_does_not_crash(self, prob_curve):
-        """plot(kind='both') executes without raising."""
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        fig = prob_curve.plot(kind="both")
-        assert fig is not None
-        plt.close(fig)
-
-
-# =============================================================================
 # ProbCurve Callable Interface Tests
 # =============================================================================
 

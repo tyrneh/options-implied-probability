@@ -3,13 +3,56 @@
 
 This directory contains the comprehensive test suite for the `oipd` library.
 
+## CI Determinism Gate (SVI, Linux)
+
+- The CI workflow includes a **hard determinism gate** for SVI calibration on Linux.
+- This gate runs two seeded calibrations with identical inputs and compares all tracked fields using exact equality.
+- If any field differs, CI fails.
+- The tracked payload includes SVI params and key diagnostics:
+  - Params: `a`, `b`, `rho`, `m`, `sigma`, `forward`, `maturity_years`
+  - Diagnostics: `objective`, `rmse_weighted`, `rmse_unweighted`, `envelope_violations_pct`, `chosen_start_origin`, `chosen_start_index`
+
+### Required Policy
+
+- You **MUST** keep the seeded SVI determinism gate passing on Linux CI.
+- You **MUST NOT** weaken this check by loosening tolerance without explicit, documented justification.
+- Exact-equality policy applies to the deterministic payload, with paired `NaN` treated as equal.
+
+### Troubleshooting Determinism Failures
+
+If the determinism gate fails, check these in order before touching tolerances:
+1. Confirm `random_seed` is explicitly set and actually propagated to SVI calibration.
+2. Confirm dependency/version drift (`numpy`, `scipy`, `pandas`) from CI logs.
+3. Confirm threaded numeric libraries are pinned for deterministic execution (`OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS` set to `1`).
+4. Investigate objective/diagnostic field diffs printed by CI to isolate the first diverging component.
+
+## Interface Test Policy (Performance + Coverage)
+
+### Fixture Scope Rules
+
+- Expensive calibration setup (`VolCurve.fit`, `VolSurface.fit`, implied distribution build) **MUST** use module-scoped fixtures for smoke and contract checks.
+- Function-scoped expensive fixtures are allowed only when a test intentionally mutates state and needs isolation.
+- Shared canonical interface fixtures are defined in `tests/interface/conftest.py` and **SHOULD** be reused instead of duplicated per test module.
+
+### Duplicate Test Rules
+
+- Plotting smoke tests **MUST** live only in `tests/interface/test_visualization.py`.
+- Class-specific interface files **MUST NOT** duplicate plotting smoke checks that are already covered there.
+- Keep behavioral plotting assertions (for example interpolation-grid or fan-chart continuity behavior) in class-specific files when they test unique logic.
+
+### Coverage Rules
+
+- Public interface contract coverage remains one-test-per-method in `tests/interface/test_api_contract.py`.
+- Refactors **MUST NOT** remove method-level contract coverage for `VolCurve`, `VolSurface`, `ProbCurve`, or `ProbSurface`.
+- Interface tests **SHOULD** assert user-facing behavior; avoid private-attribute assertions unless no public signal exists.
+
 ## Directory Structure
 
 - **`interface/`**: **Start here.** Tests the public API (`VolCurve`, `ProbCurve`, `VolSurface`, `ProbSurface`). These tests define the "contract" with the user. If you change the API, you must update these tests.
 - **`core/`**: Unit tests for internal mathematical components (`svi`, `interpolation`, `numerical`). These verify that individual building blocks work correctly.
 - **`regression/`**: Contains the **Golden Master** tests. These ensure that complex pipelines produce consistent numerical outputs over time.
 - **`data_access/`**: Tests for data loading (CSV, DataFrame) and normalization.
-- **`pipelines/`**: Integration tests for the underlying calculation pipelines.
+- **`pipelines/`**: No dedicated suite currently; add explicit tests here when pipeline integration coverage is introduced.
 
 ## Running Tests
 

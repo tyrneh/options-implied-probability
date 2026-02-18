@@ -292,6 +292,15 @@ class TestVolSurfaceSlice:
         with pytest.raises(ValueError):
             vs.slice("2030-12-31")
 
+    def test_slice_rejects_float_t(self, multi_expiry_chain, market_inputs):
+        """slice() requires date-like expiry and rejects float t input."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        with pytest.raises(ValueError, match="date-like expiry"):
+            vs.slice(45 / 365.0)  # type: ignore[arg-type]
+
 
 # =============================================================================
 # VolSurface with Interpolation Tests
@@ -327,6 +336,74 @@ class TestVolSurfaceInterpolation:
         vs.fit(multi_expiry_chain, market_inputs)
         w = vs.total_variance(100.0, 60 / 365.0)
         assert w > 0
+
+
+# =============================================================================
+# VolSurface Maturity Domain Tests
+# =============================================================================
+
+
+class TestVolSurfaceMaturityDomain:
+    """Strict maturity-domain behavior across VolSurface query methods."""
+
+    def test_implied_vol_date_and_float_are_consistent(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """implied_vol accepts date-like t and matches equivalent float t."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+
+        iv_date = vs.implied_vol(100.0, "2025-02-15")
+        iv_float = vs.implied_vol(100.0, 45 / 365.0)
+        np.testing.assert_allclose(iv_date, iv_float, rtol=1e-8)
+
+    def test_non_positive_t_raises_across_surface_queries(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Methods with maturity input reject non-positive t uniformly."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+
+        with pytest.raises(ValueError, match="strictly positive"):
+            vs.implied_vol(100.0, 0.0)
+        with pytest.raises(ValueError, match="strictly positive"):
+            vs.total_variance(100.0, 0.0)
+        with pytest.raises(ValueError, match="strictly positive"):
+            vs.forward_price(0.0)
+        with pytest.raises(ValueError, match="strictly positive"):
+            vs.price([100.0], t=0.0)
+        with pytest.raises(ValueError, match="strictly positive"):
+            vs.atm_vol(0.0)
+        with pytest.raises(ValueError, match="strictly positive"):
+            vs.greeks([100.0], t=0.0)
+
+    def test_t_beyond_last_pillar_raises_across_surface_queries(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Methods with maturity input reject long-end extrapolation uniformly."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+
+        beyond_last_expiry = "2030-12-31"
+
+        with pytest.raises(ValueError, match="last fitted pillar"):
+            vs.implied_vol(100.0, beyond_last_expiry)
+        with pytest.raises(ValueError, match="last fitted pillar"):
+            vs.total_variance(100.0, beyond_last_expiry)
+        with pytest.raises(ValueError, match="last fitted pillar"):
+            vs.forward_price(beyond_last_expiry)
+        with pytest.raises(ValueError, match="last fitted pillar"):
+            vs.price([100.0], t=beyond_last_expiry)
+        with pytest.raises(ValueError, match="last fitted pillar"):
+            vs.atm_vol(beyond_last_expiry)
+        with pytest.raises(ValueError, match="last fitted pillar"):
+            vs.greeks([100.0], t=beyond_last_expiry)
 
 
 # =============================================================================
@@ -366,20 +443,6 @@ class TestVolSurfaceImpliedDistribution:
 
 class TestVolSurfacePlot:
     """Tests for VolSurface plotting methods."""
-
-    def test_plot_does_not_crash(self, multi_expiry_chain, market_inputs):
-        """plot() executes without raising."""
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        from oipd import VolSurface
-
-        vs = VolSurface()
-        vs.fit(multi_expiry_chain, market_inputs)
-        fig = vs.plot()
-        assert fig is not None
-        plt.close(fig)
 
     def test_plot_term_structure_uses_interpolated_grid(
         self, multi_expiry_chain, market_inputs

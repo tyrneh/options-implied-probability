@@ -645,21 +645,26 @@ class ProbSurface:
         )
         return vol_surface.implied_distribution()
 
-    def slice(self, expiry: Any) -> ProbCurve:
-        """Return a ProbCurve for the requested expiry.
+    def slice(self, expiry: str | date | pd.Timestamp) -> ProbCurve:
+        """Return a ProbCurve for the requested maturity.
 
         Args:
-            expiry: Expiry identifier (string, date, or pandas-compatible timestamp).
+            expiry: Expiry identifier as a date-like object.
 
         Returns:
-            ProbCurve: Probability slice at the requested expiry.
+            ProbCurve: Probability slice at the requested maturity.
 
         Raises:
             ValueError: If the surface is empty or interpolation context is unavailable.
         """
 
-        expiry_timestamp = pd.to_datetime(expiry).tz_localize(None)
-        resolved_expiry, t_years = self._resolve_query_time(expiry_timestamp)
+        if not isinstance(expiry, (str, date, pd.Timestamp)):
+            raise ValueError(
+                "slice(expiry) requires a date-like expiry "
+                "(str, datetime.date, or pandas.Timestamp)."
+            )
+
+        resolved_expiry, t_years = self._resolve_query_time(expiry)
         return self._curve_for_time(resolved_expiry, t_years)
 
     @property
