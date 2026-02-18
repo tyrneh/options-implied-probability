@@ -4,11 +4,11 @@ parent: Theory Overview
 nav_order: 1
 ---
 
-# 3. Introductory Theory Overview
+# Introductory Theory Overview
 
 This section provides a simple crash course on the theory behind market-implied probabilities. 
 
-## 3.1. Options contain information about future prices
+## 1. Options contain information about future prices
 
 An option is a financial derivative that gives the holder the right, but not the obligation, to buy or sell an asset at a specified price (strike price) on a certain date in the future. Intuitively, the value of an option depends on the probability that it will be profitable or "in-the-money" at expiration. If the probability of ending "in-the-money" (ITM) is high, the option is more valuable. If the probability is low, the option is worth less.
 
@@ -23,7 +23,7 @@ For a simplified worked example, see this [excellent blog post](https://reasonab
 For a complete reading of the financial theory, see [this paper](https://www.bankofengland.co.uk/-/media/boe/files/quarterly-bulletin/2000/recent-developments-in-extracting-information-from-options-markets.pdf?la=en&hash=8D29F2572E08B9F2B541C04102DE181C791DB870).
 
 
-## 3.2. Modelling the volatility surface is crucial to determining probabilities
+## 2. Modelling the volatility surface is crucial to determining probabilities
 
 Using the Breeden-Litzenberger method, the risk-neutral probability density is computed from the second derivative of call prices with respect to strike. In practice, we estimate this derivative numerically from market data. Numerical second derivatives are very sensitive to noise, so noise in observed call price quotes can create large distortions in the implied density. 
 
@@ -43,10 +43,10 @@ Using the Breeden-Litzenberger method, the risk-neutral probability density is c
 
 Market quotes are noisy and come in discrete increments, which make them unsuitable for numerical differentiation. Instead, we must build a continuous model of theoretical call prices at any strike price, fitted to observed data. We model **implied volatility** instead of option prices directly because IV is the key input to the pricing model, while prices are a noisier output.
 
-### 3.2.1. Implied Volatility (IV)
+### 2.1. Implied Volatility (IV)
 Implied volatility is the market's expectation of future price movements of a security. It is the volatility value that, when plugged into an options pricing model (like Black-Scholes), yields the option's current market price. High IV suggests the market expects significant price swings, while low IV implies a period of relative calm.
 
-### 3.2.2. The Volatility Smile & Surface
+### 2.2. The Volatility Smile & Surface
 *   **Smile:** IV is lowest for at-the-money (ATM) options and increases for both in-the-money (ITM) and out-of-the-money (OTM) options. By plotting IVs against strikes, a "smile" pattern is often observed. 
 
 <p style="text-align:center; margin:5px 0 20px 0;">
