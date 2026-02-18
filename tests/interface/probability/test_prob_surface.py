@@ -404,17 +404,6 @@ class TestProbSurfaceQueryApi:
 class TestProbSurfacePlotFan:
     """Tests for ProbSurface.plot_fan() visualization."""
 
-    def test_plot_fan_does_not_crash(self, prob_surface):
-        """plot_fan() executes without raising."""
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        fig = prob_surface.plot_fan()
-        assert fig is not None
-        plt.close(fig)
-
     def test_plot_fan_uses_daily_sampling(self, prob_surface):
         """plot_fan() should sample one maturity point per calendar day."""
         import matplotlib

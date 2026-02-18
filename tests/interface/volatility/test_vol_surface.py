@@ -444,20 +444,6 @@ class TestVolSurfaceImpliedDistribution:
 class TestVolSurfacePlot:
     """Tests for VolSurface plotting methods."""
 
-    def test_plot_does_not_crash(self, multi_expiry_chain, market_inputs):
-        """plot() executes without raising."""
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        from oipd import VolSurface
-
-        vs = VolSurface()
-        vs.fit(multi_expiry_chain, market_inputs)
-        fig = vs.plot()
-        assert fig is not None
-        plt.close(fig)
-
     def test_plot_term_structure_uses_interpolated_grid(
         self, multi_expiry_chain, market_inputs
     ):

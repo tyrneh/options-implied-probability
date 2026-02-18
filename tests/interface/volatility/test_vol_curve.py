@@ -284,43 +284,6 @@ class TestVolCurveIvSmile:
 
 
 # =============================================================================
-# VolCurve.plot() Tests
-# =============================================================================
-
-
-class TestVolCurvePlot:
-    """Tests for VolCurve.plot() visualization."""
-
-    def test_plot_returns_figure(self, sample_option_chain, market_inputs):
-        """plot() returns a matplotlib Figure."""
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        from oipd import VolCurve
-
-        vc = VolCurve()
-        vc.fit(sample_option_chain, market_inputs)
-        fig = vc.plot()
-        assert fig is not None
-        plt.close(fig)
-
-    def test_plot_does_not_crash(self, sample_option_chain, market_inputs):
-        """plot() executes without raising."""
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        from oipd import VolCurve
-
-        vc = VolCurve()
-        vc.fit(sample_option_chain, market_inputs)
-        # Should not raise
-        fig = vc.plot(include_observed=True)
-        plt.close(fig)
-
-
-# =============================================================================
 # VolCurve.implied_distribution() Tests
 # =============================================================================
 

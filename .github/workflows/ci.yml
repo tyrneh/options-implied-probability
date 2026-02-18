@@ -51,13 +51,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -c tests/constraints.txt
 
-      - name: Report SVI calibration (Linux)
+      - name: Check SVI determinism (hard gate)
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
         run: |
           PYTHONPATH=. python - <<'PY'
-          import pandas as pd
           import numpy as np
+          import pandas as pd
           import scipy
-          from oipd import VolCurve, MarketInputs
+          from oipd import MarketInputs, VolCurve
 
           print("numpy", np.__version__)
           print("scipy", scipy.__version__)
@@ -81,44 +86,104 @@ jobs:
               "expiration": "expiry",
           }
 
+          param_fields = (
+              "a",
+              "b",
+              "rho",
+              "m",
+              "sigma",
+              "forward",
+              "maturity_years",
+          )
+          diagnostic_fields = (
+              "objective",
+              "rmse_weighted",
+              "rmse_unweighted",
+              "envelope_violations_pct",
+              "chosen_start_origin",
+              "chosen_start_index",
+          )
+
+          def is_nan(value):
+              try:
+                  return bool(np.isnan(value))
+              except TypeError:
+                  return False
+
+          def values_equal(left, right):
+              if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+                  left_array = np.asarray(left, dtype=object)
+                  right_array = np.asarray(right, dtype=object)
+                  if left_array.shape != right_array.shape:
+                      return False
+                  return all(
+                      values_equal(left_item, right_item)
+                      for left_item, right_item in zip(
+                          left_array.flat, right_array.flat
+                      )
+                  )
+              if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+                  if len(left) != len(right):
+                      return False
+                  return all(
+                      values_equal(left_item, right_item)
+                      for left_item, right_item in zip(left, right)
+                  )
+              if isinstance(left, dict) and isinstance(right, dict):
+                  if left.keys() != right.keys():
+                      return False
+                  return all(
+                      values_equal(left[key], right[key]) for key in left.keys()
+                  )
+              if is_nan(left) and is_nan(right):
+                  return True
+              return left == right
+
           def run_fit():
               vc = VolCurve(method="svi")
               vc.method_options = {"random_seed": 42}
               vc.fit(df, market, column_mapping=column_mapping)
-              params = {k: vc.params.get(k) for k in ("a", "b", "rho", "m", "sigma", "forward", "maturity_years")}
+
+              payload = {field: vc.params.get(field) for field in param_fields}
               diagnostics = getattr(vc, "diagnostics", None)
-              diag = None
-              if diagnostics is not None:
-                  diag = {
-                      "objective": getattr(diagnostics, "objective", None),
-                      "rmse_weighted": getattr(diagnostics, "rmse_weighted", None),
-                      "rmse_unweighted": getattr(diagnostics, "rmse_unweighted", None),
-                      "envelope_violations_pct": getattr(diagnostics, "envelope_violations_pct", None),
-                      "chosen_start_origin": getattr(diagnostics, "chosen_start_origin", None),
-                  }
-              return params, diag
+              for field in diagnostic_fields:
+                  payload[field] = getattr(diagnostics, field, None)
+              return payload
 
-          params_1, diag_1 = run_fit()
-          params_2, diag_2 = run_fit()
+          payload_1 = run_fit()
+          payload_2 = run_fit()
 
-          print("SVI params run1", params_1)
-          print("SVI params run2", params_2)
+          print("SVI payload run1", payload_1)
+          print("SVI payload run2", payload_2)
 
-          if diag_1 is not None:
-              print("SVI diagnostics run1", diag_1)
-          if diag_2 is not None:
-              print("SVI diagnostics run2", diag_2)
+          mismatches = []
+          for field in payload_1.keys():
+              run1_value = payload_1[field]
+              run2_value = payload_2[field]
+              if not values_equal(run1_value, run2_value):
+                  mismatches.append(
+                      {
+                          "field": field,
+                          "run1": repr(run1_value),
+                          "run2": repr(run2_value),
+                      }
+                  )
 
-          diffs = {k: None for k in params_1.keys()}
-          for k in params_1.keys():
-              v1 = params_1.get(k)
-              v2 = params_2.get(k)
-              try:
-                  diffs[k] = float(abs(v1 - v2))
-              except Exception:
-                  diffs[k] = None
-          print("SVI param abs diff", diffs)
+          if mismatches:
+              print("SVI determinism check FAILED")
+              for mismatch in mismatches:
+                  print(
+                      "field={field} run1={run1} run2={run2}".format(**mismatch)
+                  )
+              raise SystemExit(1)
+
+          print("SVI determinism check passed: exact match across 2 seeded runs")
           PY
 
       - name: Run tests
-        run: pytest
+        env:
+          OMP_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          NUMEXPR_NUM_THREADS: "1"
+        run: pytest -q -n auto --dist=loadscope
