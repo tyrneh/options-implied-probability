@@ -180,10 +180,13 @@ jobs:
           print("SVI determinism check passed: exact match across 2 seeded runs")
           PY
 
-      - name: Run tests
+      - name: Run tests (parallel, excluding regression)
         env:
           OMP_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
           NUMEXPR_NUM_THREADS: "1"
-        run: pytest -q -n auto --dist=loadscope
+        run: pytest -q -n auto --dist=loadscope tests --ignore=tests/regression
+
+      - name: Run regression golden master (serial)
+        run: pytest -q tests/regression/test_golden_master.py
