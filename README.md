@@ -189,4 +189,5 @@ Thanks to everyone who has contributed code:
 
 And special thanks for advisory support on theory and implementation:
 - [integral-alpha.com](https://integral-alpha.com)
+- Jannic H. and Chun H. H. 
 - and others who prefer to go unnamed 
