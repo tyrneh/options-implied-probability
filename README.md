@@ -183,10 +183,10 @@ Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, disc
 
 # Contributors
 
-Special thanks to everyone who has contributed code:
+Thanks to everyone who has contributed code:
 
 [![Contributors](https://contrib.rocks/image?repo=tyrneh/options-implied-probability)](https://github.com/tyrneh/options-implied-probability/graphs/contributors)
 
-For advisory support on theory and implementation:
+And special thanks for advisory support on theory and implementation:
 - [integral-alpha.com](https://integral-alpha.com)
 - and others who prefer to go unnamed 
