@@ -179,3 +179,12 @@ See [more examples](examples/) for demos.
 Pull requests welcome! Reach out on GitHub issues to discuss design choices.
 
 Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, discuss strategies, and get support. Message me with your feature requests, and let me know how you use this. 
+
+
+# Contributors
+
+Special thanks to everyone who has contributed code:
+https://github.com/tyrneh/options-implied-probability/graphs/contributors
+
+And for advisory support on theory and implementation:
+- [integral-alpha.com](https://integral-alpha.com)
