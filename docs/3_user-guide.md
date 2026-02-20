@@ -10,7 +10,9 @@ This page gives a practical map of how to use OIPD.
 
 ## 1. High-Level Mental Model
 
-OIPD has four core objects. A simple way to remember them is a 2x2 matrix:
+OIPD has four core objects. 
+
+A simple way to understand the package is by use case: fitting at a single future date vs over time, and working in implied volatility vs probabilities.
 
 | Scope | Volatility Layer | Probability Layer |
 | --- | --- | --- |

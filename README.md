@@ -47,7 +47,9 @@ pip install oipd
 <br>
 
 
-OIPD has four core objects. A simple way to remember them is a 2x2 matrix:
+OIPD has four core objects. 
+
+A simple way to understand the package is by use case: fitting at a single future date vs over time, and working in implied volatility vs probabilities.
 
 | Scope | Volatility Layer | Probability Layer |
 | --- | --- | --- |
@@ -187,7 +189,7 @@ Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, disc
 
 [![Contributors](https://contrib.rocks/image?repo=tyrneh/options-implied-probability)](https://github.com/tyrneh/options-implied-probability/graphs/contributors)
 
-**And special thanks for support on theory, implementation, or advice:**
+**And special thanks for support on theory, implementation, or advisory:**
 - [integral-alpha.com](https://integral-alpha.com)
 - Jannic H., Chun H. H., and Melanie C. 
 - and others who prefer to go unnamed 
