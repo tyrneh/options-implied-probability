@@ -14,8 +14,8 @@ OIPD has four core objects. A simple way to remember them is a 2x2 matrix:
 
 | Scope | Volatility Layer | Probability Layer |
 | --- | --- | --- |
-| Single expiry | `VolCurve` | `ProbCurve` |
-| Multiple expiries | `VolSurface` | `ProbSurface` |
+| Single future date | `VolCurve` | `ProbCurve` |
+| Future time horizon | `VolSurface` | `ProbSurface` |
 
 You can think about the lifecycle in three steps:
 
@@ -29,15 +29,15 @@ Conceptual flow:
 
 ```text
 Step 1: Fit volatility
-  VolCurve / VolSurface object
+  Initialize VolCurve / VolSurface object
       + options chain + market inputs
       -> .fit(...)
-      -> fitted VolCurve / VolSurface object (IV, prices, greeks, diagnostics)
+      -> fitted VolCurve / VolSurface object (inspect IV, prices, greeks, etc.)
 
 Step 2: Convert fitted volatility to probability
-  fitted VolCurve / VolSurface
+  Use fitted VolCurve / VolSurface
       -> .implied_distribution()
-      -> ProbCurve / ProbSurface object (PDF, CDF, quantiles, moments)
+      -> ProbCurve / ProbSurface object (inspect PDF, CDF, quantiles, moments, etc.)
 ```
 
 **Shortcut for computing probabilities:**

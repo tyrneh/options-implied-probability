@@ -46,16 +46,17 @@ pip install oipd
 
 <br>
 
-OIPD has four core objects. A simple way to remember them is a matrix:
+
+OIPD has four core objects. A simple way to remember them is a 2x2 matrix:
 
 | Scope | Volatility Layer | Probability Layer |
 | --- | --- | --- |
-| Single expiry | `VolCurve` | `ProbCurve` |
-| Multiple expiries | `VolSurface` | `ProbSurface` |
+| Single future date | `VolCurve` | `ProbCurve` |
+| Future time horizon | `VolSurface` | `ProbSurface` |
 
 You can think about the lifecycle in three steps:
 
-1. Initialize the estimator object, with configurable params.
+1. Initialize the estimator object with configuration.
 2. Call `.fit(chain, market)` to calibrate.
 3. Query/plot the fitted object, or convert from vol to probability via `.implied_distribution()`.
 
@@ -68,12 +69,12 @@ Step 1: Fit volatility
   Initialize VolCurve / VolSurface object
       + options chain + market inputs
       -> .fit(...)
-      -> fitted VolCurve / VolSurface object (IV, prices, greeks, plots...)
+      -> fitted VolCurve / VolSurface object (inspect IV, prices, greeks, etc.)
 
 Step 2: Convert fitted volatility to probability
-  Use the fitted VolCurve / VolSurface
+  Use fitted VolCurve / VolSurface
       -> .implied_distribution()
-      -> fitted ProbCurve / ProbSurface object (PDF, CDF, quantiles, moments...)
+      -> ProbCurve / ProbSurface object (inspect PDF, CDF, quantiles, moments, etc.)
 ```
 
 ## 3. Quickstart tutorial in computing market-implied probability distributions
