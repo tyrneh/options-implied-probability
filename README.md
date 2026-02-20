@@ -187,7 +187,7 @@ Thanks to everyone who has contributed code:
 
 [![Contributors](https://contrib.rocks/image?repo=tyrneh/options-implied-probability)](https://github.com/tyrneh/options-implied-probability/graphs/contributors)
 
-And special thanks for advisory support on theory and implementation:
+And special thanks for support on theory, implementation, or advice:
 - [integral-alpha.com](https://integral-alpha.com)
-- Jannic H. and Chun H. H. 
+- Jannic H., Chun H. H., and Melanie C. 
 - and others who prefer to go unnamed 
