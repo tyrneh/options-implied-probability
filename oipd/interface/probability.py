@@ -30,57 +30,89 @@ if TYPE_CHECKING:
 
 
 class ProbCurve:
-    """Single-expiry risk-neutral probability curve wrapper.
+    """Single-date probability curve with selectable measure (physical or risk-neutral probabilities).
 
-    Computes PDF/CDF from an option chain using the stateless probability pipeline
-    (golden-master aligned) and exposes convenience probability queries.
+    By default, this class returns physical probabilities (real-world view).
     """
 
     def __init__(
         self,
-        vol_curve: (
-            Any | None
-        ) = None,  # Type hint as Any to avoid circular import with VolCurve
+        vol_curve: Any | None = None,
         *,
         resolved_market: Optional[ResolvedMarket] = None,
         metadata: Optional[dict[str, Any]] = None,
         prices: Optional[np.ndarray] = None,
         pdf_values: Optional[np.ndarray] = None,
         cdf_values: Optional[np.ndarray] = None,
+        measure: Literal["physical", "risk_neutral"] = "physical",
+        erp: Optional[float] = None,
+        default_erp: float = 0.0423,
+        physical_cache: Optional[
+            dict[float, tuple[np.ndarray, np.ndarray, dict[str, Any]]]
+        ] = None,
     ) -> None:
         """Initialize a ProbCurve result container.
 
         Args:
-            vol_curve: The fitted VolCurve instance.
+            vol_curve: Optional fitted VolCurve instance for lazy RN generation.
             resolved_market: Optional resolved market for array-backed construction.
-            metadata: Optional metadata for array-backed construction.
-            prices: Optional precomputed price grid.
-            pdf_values: Optional precomputed PDF values.
-            cdf_values: Optional precomputed CDF values.
+            metadata: Optional metadata dictionary.
+            prices: Optional precomputed RN price grid.
+            pdf_values: Optional precomputed RN PDF values.
+            cdf_values: Optional precomputed RN CDF values.
+            measure: Active measure for probability queries.
+            erp: Annualized equity risk premium for physical conversion.
+            default_erp: Internal fallback ERP used when switching to physical
+                without an explicit value. Public APIs pass their ``erp``
+                argument through this field.
+            physical_cache: Optional cache of precomputed physical distributions by ERP key.
+
+        Raises:
+            ValueError: If neither a fitted curve nor resolved market is supplied.
         """
         if vol_curve is None and resolved_market is None:
             raise ValueError(
                 "ProbCurve requires either a fitted vol_curve or resolved_market."
             )
+        if measure not in {"physical", "risk_neutral"}:
+            raise ValueError(
+                "measure must be either 'physical' or 'risk_neutral', "
+                f"got {measure!r}."
+            )
 
         self._vol_curve = vol_curve
         if vol_curve is not None:
             self._resolved_market = vol_curve.resolved_market
-            self._metadata = vol_curve._metadata or {}
+            self._metadata: dict[str, Any] = dict(vol_curve._metadata or {})
         else:
             self._resolved_market = resolved_market
-            self._metadata = metadata or {}
+            self._metadata = dict(metadata or {})
 
-        # Cached grid values (lazy-loaded on property access)
-        self._cached_prices: Optional[np.ndarray] = (
+        self._default_erp = float(default_erp)
+        self._measure: Literal["physical", "risk_neutral"] = measure
+        self._erp: Optional[float] = (
+            float(erp)
+            if erp is not None
+            else (self._default_erp if measure == "physical" else None)
+        )
+
+        self._rn_prices: Optional[np.ndarray] = (
             np.asarray(prices, dtype=float) if prices is not None else None
         )
-        self._cached_pdf: Optional[np.ndarray] = (
+        self._rn_pdf: Optional[np.ndarray] = (
             np.asarray(pdf_values, dtype=float) if pdf_values is not None else None
         )
-        self._cached_cdf: Optional[np.ndarray] = (
+        self._rn_cdf: Optional[np.ndarray] = (
             np.asarray(cdf_values, dtype=float) if cdf_values is not None else None
         )
+
+        self._physical_cache: dict[
+            float, tuple[np.ndarray, np.ndarray, dict[str, Any]]
+        ] = dict(physical_cache or {})
+
+        self._cached_prices: Optional[np.ndarray] = None
+        self._cached_pdf: Optional[np.ndarray] = None
+        self._cached_cdf: Optional[np.ndarray] = None
 
     @classmethod
     def from_arrays(
@@ -91,15 +123,26 @@ class ProbCurve:
         prices: np.ndarray,
         pdf_values: np.ndarray,
         cdf_values: np.ndarray,
+        measure: Literal["physical", "risk_neutral"] = "physical",
+        erp: Optional[float] = None,
+        default_erp: float = 0.0423,
+        physical_cache: Optional[
+            dict[float, tuple[np.ndarray, np.ndarray, dict[str, Any]]]
+        ] = None,
     ) -> "ProbCurve":
-        """Build a ProbCurve from precomputed arrays.
+        """Build a ProbCurve from precomputed risk-neutral arrays.
 
         Args:
             resolved_market: Resolved market snapshot for the slice.
             metadata: Slice metadata dictionary.
-            prices: Strike grid.
-            pdf_values: PDF values aligned with ``prices``.
-            cdf_values: CDF values aligned with ``prices``.
+            prices: RN strike grid.
+            pdf_values: RN PDF values aligned with ``prices``.
+            cdf_values: RN CDF values aligned with ``prices``.
+            measure: Active measure for probability queries.
+            erp: Annualized ERP used when ``measure="physical"``.
+            default_erp: Internal fallback ERP for later ``to_physical`` calls
+                when no explicit ERP override is provided.
+            physical_cache: Optional cache of physical densities by ERP.
 
         Returns:
             ProbCurve: Array-backed probability curve.
@@ -111,6 +154,10 @@ class ProbCurve:
             prices=prices,
             pdf_values=pdf_values,
             cdf_values=cdf_values,
+            measure=measure,
+            erp=erp,
+            default_erp=default_erp,
+            physical_cache=physical_cache,
         )
 
     @classmethod
@@ -121,11 +168,13 @@ class ProbCurve:
         *,
         column_mapping: Optional[Mapping[str, str]] = None,
         max_staleness_days: int = 3,
+        measure: Literal["physical", "risk_neutral"] = "physical",
+        erp: float = 0.0423,
     ) -> "ProbCurve":
         """Build a ProbCurve directly from a single-expiry option chain.
 
-        This convenience constructor fits an SVI volatility curve under the hood
-        and then derives the risk-neutral distribution.
+        This constructor fits an SVI volatility curve under the hood and then
+        derives either physical or risk-neutral probabilities.
 
         Args:
             chain: Option chain DataFrame containing a single expiry.
@@ -133,26 +182,137 @@ class ProbCurve:
             column_mapping: Optional mapping from input columns to OIPD
                 standard names.
             max_staleness_days: Maximum age of quotes in days to include.
+            measure: Output measure, either physical or risk-neutral.
+            erp: Annualized ERP used when ``measure="physical"``.
 
         Returns:
-            ProbCurve: The fitted risk-neutral probability curve.
+            ProbCurve: The fitted probability curve in the requested measure.
 
         Raises:
             ValueError: If the chain contains multiple expiries or invalid expiry values.
-            CalculationError: If the underlying volatility calibration fails.
+            CalculationError: If underlying volatility calibration fails.
         """
         from oipd import VolCurve
 
         vol_curve = VolCurve(method="svi", max_staleness_days=max_staleness_days)
         vol_curve.fit(chain, market, column_mapping=column_mapping)
-        return vol_curve.implied_distribution()
+        return vol_curve.implied_distribution(measure=measure, erp=erp)
 
-    def _ensure_grid_generated(self) -> None:
-        """Lazily generate a default evaluation grid for array properties and plotting.
+    @staticmethod
+    def _erp_cache_key(erp: float) -> float:
+        """Return a stable numeric key for ERP-based caches.
 
-        Delegates to the stateless pipeline to generate a standard grid
-        (based on ATM forward and time to expiry) if one hasn't been cached yet.
-        This allows ``.pdf_values`` and ``.plot()`` to be used without providing explicit ranges.
+        Args:
+            erp: Annualized ERP in decimal form.
+
+        Returns:
+            float: Rounded ERP key.
+        """
+        return round(float(erp), 12)
+
+    def _resolve_time_to_expiry_years(self) -> float:
+        """Resolve maturity in years from metadata or market dates.
+
+        Returns:
+            float: Time to expiry in years.
+
+        Raises:
+            ValueError: If maturity cannot be inferred.
+        """
+        t_years = self._metadata.get("time_to_expiry_years")
+        if t_years is not None:
+            return float(t_years)
+
+        expiry_date = self._metadata.get("expiry_date")
+        if expiry_date is None:
+            raise ValueError(
+                "time_to_expiry_years is unavailable and expiry_date metadata is missing."
+            )
+        return float(
+            calculate_time_to_expiry(expiry_date, self.resolved_market.valuation_date)
+        )
+
+    def _resolve_forward_price(self) -> float:
+        """Resolve the forward price used for physical conversion.
+
+        Returns:
+            float: Forward price level.
+        """
+        forward = self._metadata.get("forward_price")
+        if forward is None:
+            return float(self.resolved_market.underlying_price)
+        return float(forward)
+
+    def _ensure_rn_generated(self) -> None:
+        """Ensure canonical RN arrays are available.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If RN arrays cannot be generated.
+        """
+        if (
+            self._rn_prices is not None
+            and self._rn_pdf is not None
+            and self._rn_cdf is not None
+        ):
+            return
+
+        if self._vol_curve is None:
+            raise ValueError("Risk-neutral arrays are unavailable for this curve.")
+
+        prices, pdf, cdf, metadata = derive_distribution_from_curve(
+            self._vol_curve,
+            self._resolved_market,
+            pricing_engine=self._vol_curve.pricing_engine,
+            vol_metadata=self._metadata,
+        )
+        self._rn_prices = np.asarray(prices, dtype=float)
+        self._rn_pdf = np.asarray(pdf, dtype=float)
+        self._rn_cdf = np.asarray(cdf, dtype=float)
+        self._metadata.update(metadata)
+
+        self._cached_prices = None
+        self._cached_pdf = None
+        self._cached_cdf = None
+
+    def _ensure_physical_generated(self, erp: float) -> None:
+        """Ensure physical arrays are available for the requested ERP.
+
+        Args:
+            erp: Annualized ERP in decimal form.
+
+        Returns:
+            None.
+        """
+        from oipd.core.probability_density_conversion import (
+            physical_from_rn_exponential_tilt,
+        )
+
+        erp_key = self._erp_cache_key(erp)
+        if erp_key in self._physical_cache:
+            return
+
+        self._ensure_rn_generated()
+        physical_pdf, physical_cdf, diagnostics = physical_from_rn_exponential_tilt(
+            self._rn_prices,
+            self._rn_pdf,
+            self._resolve_forward_price(),
+            self._resolve_time_to_expiry_years(),
+            float(erp),
+        )
+        self._physical_cache[erp_key] = (
+            np.asarray(physical_pdf, dtype=float),
+            np.asarray(physical_cdf, dtype=float),
+            diagnostics,
+        )
+
+    def _ensure_active_distribution(self) -> None:
+        """Populate active arrays used by probability queries.
+
+        Returns:
+            None.
         """
         if (
             self._cached_prices is not None
@@ -161,30 +321,98 @@ class ProbCurve:
         ):
             return
 
-        if self._vol_curve is None:
-            raise ValueError("Probability arrays are unavailable for this curve.")
+        self._ensure_rn_generated()
+        if self._measure == "risk_neutral":
+            self._cached_prices = np.asarray(self._rn_prices, dtype=float)
+            self._cached_pdf = np.asarray(self._rn_pdf, dtype=float)
+            self._cached_cdf = np.asarray(self._rn_cdf, dtype=float)
+            return
 
-        prices, pdf, cdf, _ = derive_distribution_from_curve(
-            self._vol_curve,
-            self._resolved_market,
-            pricing_engine=self._vol_curve.pricing_engine,
-            vol_metadata=self._metadata,
+        active_erp = float(self._erp if self._erp is not None else self._default_erp)
+        self._ensure_physical_generated(active_erp)
+        erp_key = self._erp_cache_key(active_erp)
+        physical_pdf, physical_cdf, _ = self._physical_cache[erp_key]
+        self._cached_prices = np.asarray(self._rn_prices, dtype=float)
+        self._cached_pdf = np.asarray(physical_pdf, dtype=float)
+        self._cached_cdf = np.asarray(physical_cdf, dtype=float)
+
+    def to_physical(self, *, erp: float | None = None) -> "ProbCurve":
+        """Return a new ProbCurve view in physical measure.
+
+        Args:
+            erp: Optional ERP override. Uses the current ERP, then default ERP.
+
+        Returns:
+            ProbCurve: New curve with active physical probabilities.
+        """
+        resolved_erp = (
+            float(erp)
+            if erp is not None
+            else float(self._erp if self._erp is not None else self._default_erp)
+        )
+        self._ensure_rn_generated()
+        self._ensure_physical_generated(resolved_erp)
+        return ProbCurve.from_arrays(
+            resolved_market=self.resolved_market,
+            metadata=dict(self._metadata),
+            prices=np.asarray(self._rn_prices, dtype=float),
+            pdf_values=np.asarray(self._rn_pdf, dtype=float),
+            cdf_values=np.asarray(self._rn_cdf, dtype=float),
+            measure="physical",
+            erp=resolved_erp,
+            default_erp=self._default_erp,
+            physical_cache=dict(self._physical_cache),
         )
 
-        self._cached_prices = prices
-        self._cached_pdf = pdf
-        self._cached_cdf = cdf
+    def to_risk_neutral(self) -> "ProbCurve":
+        """Return a new ProbCurve view in risk-neutral measure.
+
+        Returns:
+            ProbCurve: New curve with active risk-neutral probabilities.
+        """
+        self._ensure_rn_generated()
+        return ProbCurve.from_arrays(
+            resolved_market=self.resolved_market,
+            metadata=dict(self._metadata),
+            prices=np.asarray(self._rn_prices, dtype=float),
+            pdf_values=np.asarray(self._rn_pdf, dtype=float),
+            cdf_values=np.asarray(self._rn_cdf, dtype=float),
+            measure="risk_neutral",
+            erp=None,
+            default_erp=self._default_erp,
+            physical_cache=dict(self._physical_cache),
+        )
+
+    @property
+    def measure(self) -> Literal["physical", "risk_neutral"]:
+        """Return the active measure used by query methods.
+
+        Returns:
+            Literal["physical", "risk_neutral"]: Active measure.
+        """
+        return self._measure
+
+    @property
+    def erp(self) -> Optional[float]:
+        """Return the active ERP assumption when using physical measure.
+
+        Returns:
+            Optional[float]: ERP value for physical view, otherwise ``None``.
+        """
+        if self._measure == "physical":
+            return float(self._erp if self._erp is not None else self._default_erp)
+        return None
 
     def pdf(self, price: float | np.ndarray) -> float | np.ndarray:
-        """Evaluate the Probability Density Function (PDF) at the given price level(s).
+        """Evaluate the Probability Density Function (PDF) at price level(s).
 
         Args:
             price: Price level(s) to evaluate.
 
         Returns:
-            float | np.ndarray: PDF values.
+            float | np.ndarray: PDF values in the active measure.
         """
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         query_prices = np.asarray(price, dtype=float)
         interpolated = np.interp(
             query_prices,
@@ -205,13 +433,12 @@ class ProbCurve:
         """Probability that the asset price is below ``price``.
 
         Args:
-           price: Price level.
+            price: Price level.
 
         Returns:
-           float: Probability P(S < price).
+            float: Probability ``P(S < price)`` in the active measure.
         """
-
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         cdf_monotone = np.maximum.accumulate(np.asarray(self._cached_cdf, dtype=float))
         return float(
             np.interp(
@@ -230,9 +457,8 @@ class ProbCurve:
             price: Price level.
 
         Returns:
-            float: Probability P(S >= price).
+            float: Probability ``P(S >= price)`` in the active measure.
         """
-
         return 1.0 - self.prob_below(price)
 
     def prob_between(self, low: float, high: float) -> float:
@@ -243,34 +469,33 @@ class ProbCurve:
             high: Upper bound price.
 
         Returns:
-            float: Probability P(low <= S < high).
-        """
+            float: Probability ``P(low <= S < high)`` in the active measure.
 
+        Raises:
+            ValueError: If ``low`` exceeds ``high``.
+        """
         if low > high:
             raise ValueError("low must be <= high")
         return self.prob_below(high) - self.prob_below(low)
 
     def mean(self) -> float:
-        """Return the expected value (mean) under the fitted PDF.
+        """Return the expected value under the active PDF.
 
         Returns:
-            float: Expected price E[S].
+            float: Expected price ``E[S]``.
         """
-
-        # Moments require integration over a grid
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         return float(
             np.trapz(self._cached_prices * self._cached_pdf, self._cached_prices)
         )
 
     def variance(self) -> float:
-        """Return the variance under the fitted PDF.
+        """Return the variance under the active PDF.
 
         Returns:
-            float: Variance Var[S].
+            float: Variance ``Var[S]``.
         """
-
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         mean = self.mean()
         return float(
             np.trapz(
@@ -280,93 +505,80 @@ class ProbCurve:
         )
 
     def skew(self) -> float:
-        """Return the skewness (3rd standardized moment) of the fitted PDF.
-
-        Skew = E[(X - mu)^3] / sigma^3.
+        """Return skewness of the active probability distribution.
 
         Returns:
-            float: Skewness. (Positive = lean to right/fat right tail, but for prices usually negative/fat left tail).
+            float: Third standardized moment.
         """
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         mean = self.mean()
         var = self.variance()
         std = np.sqrt(var)
-
         moment3 = np.trapz(
             ((self._cached_prices - mean) ** 3) * self._cached_pdf, self._cached_prices
         )
-
         return float(moment3 / (std**3))
 
     def kurtosis(self) -> float:
-        """Return the excess kurtosis (4th standardized moment - 3) of the fitted PDF.
-
-        Excess Kurtosis = E[(X - mu)^4] / sigma^4 - 3.
+        """Return excess kurtosis of the active probability distribution.
 
         Returns:
-            float: Excess Kurtosis (0 = Normal). Positive = Fat Tails.
+            float: Excess kurtosis ``E[(X-mu)^4]/sigma^4 - 3``.
         """
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         mean = self.mean()
         var = self.variance()
         std = np.sqrt(var)
-
         moment4 = np.trapz(
             ((self._cached_prices - mean) ** 4) * self._cached_pdf, self._cached_prices
         )
-
-        # Excess Kurtosis
         return float(moment4 / (std**4) - 3.0)
 
     def quantile(self, q: float) -> float:
-        """Return the price level at a given probability quantile (Inverse CDF).
+        """Return the inverse-CDF price level for quantile ``q``.
 
         Args:
-            q: Probability level (0 < q < 1).
+            q: Probability level in the open interval ``(0, 1)``.
 
         Returns:
-            float: Price S such that P(Asset < S) = q.
+            float: Price ``S`` such that ``P(S_t < S) = q``.
+
+        Raises:
+            ValueError: If ``q`` is outside ``(0, 1)``.
         """
         if not (0 < q < 1):
             raise ValueError("Quantile q must be between 0 and 1")
-
-        self._ensure_grid_generated()
-
-        # Use interpolation on the cached CDF
-        # cdf_values are y, prices are x. We want x for a given y.
+        self._ensure_active_distribution()
         return float(np.interp(q, self._cached_cdf, self._cached_prices))
 
     @property
     def prices(self) -> np.ndarray:
-        """Default price grid used for standard visualization.
+        """Return the price grid for the active measure view.
 
         Returns:
-            np.ndarray: Array of price levels.
+            np.ndarray: Price levels.
         """
-
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         return self._cached_prices
 
     @property
     def pdf_values(self) -> np.ndarray:
-        """PDF values over the stored price grid.
+        """Return active-measure PDF values on ``prices``.
 
         Returns:
-            np.ndarray: Probability densities in decimals.
+            np.ndarray: Probability densities.
         """
-
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         return self._cached_pdf
 
     @property
     def cdf_values(self) -> np.ndarray:
-        """CDF values over the stored price grid.
+        """Return active-measure CDF values on ``prices``.
 
         Returns:
-            np.ndarray: Cumulative probabilities in decimals.
+            np.ndarray: Cumulative probabilities.
         """
-
-        self._ensure_grid_generated()
+        self._ensure_active_distribution()
         return self._cached_cdf
 
     @property
@@ -376,20 +588,34 @@ class ProbCurve:
         Returns:
             ResolvedMarket: Standardized market inputs.
         """
-
         if self._resolved_market is None:
             raise ValueError("Call fit before accessing the resolved market")
         return self._resolved_market
 
     @property
-    def metadata(self) -> dict[str, Any] | None:
-        """Metadata captured during estimation (vol curve, diagnostics, etc.).
+    def metadata(self) -> dict[str, Any]:
+        """Metadata captured during estimation and conversion.
 
         Returns:
-            dict[str, Any]: Metadata dictionary.
+            dict[str, Any]: Metadata dictionary with active measure annotations.
         """
-
-        return self._metadata
+        metadata = dict(self._metadata)
+        metadata["measure"] = self._measure
+        if self._measure == "physical":
+            active_erp = float(
+                self._erp if self._erp is not None else self._default_erp
+            )
+            metadata["erp"] = active_erp
+            metadata["physical_transform"] = "exponential_tilt"
+            erp_key = self._erp_cache_key(active_erp)
+            cached = self._physical_cache.get(erp_key)
+            if cached is not None:
+                metadata["physical_diagnostics"] = dict(cached[2])
+        else:
+            metadata.pop("erp", None)
+            metadata.pop("physical_transform", None)
+            metadata.pop("physical_diagnostics", None)
+        return metadata
 
     def plot(
         self,
@@ -402,7 +628,7 @@ class ProbCurve:
         points: int = 200,
         **kwargs,
     ) -> Any:
-        """Plot the risk-neutral probability distribution.
+        """Plot the active probability distribution view.
 
         Args:
             kind: Which distribution(s) to plot: ``"pdf"``, ``"cdf"``, or ``"both"``.
@@ -411,28 +637,22 @@ class ProbCurve:
             xlim: Optional x-axis limits as (min, max).
             ylim: Optional y-axis limits as (min, max).
             points: Number of points in the grid (if generating dynamically).
-            **kwargs: Additional arguments forwarded to ``oipd.presentation.plot_rnd.plot_rnd``.
+            **kwargs: Additional arguments forwarded to ``plot_rnd``.
 
         Returns:
             matplotlib.figure.Figure: The plot figure.
         """
-        underlying_price = self._resolved_market.underlying_price
-        valuation_date = self._resolved_market.valuation_date.strftime("%b %d, %Y")
-
-        # Get expiry_date from metadata (stored by vol_curve_pipeline)
+        market = self.resolved_market
+        underlying_price = market.underlying_price
+        valuation_date = market.valuation_date.strftime("%b %d, %Y")
         expiry_date_raw = self._metadata.get("expiry_date")
         expiry_date = expiry_date_raw.strftime("%b %d, %Y") if expiry_date_raw else None
 
-        # Determine grid
         if xlim is not None:
-            # Generate dynamic grid based on xlim
             grid_prices = np.linspace(xlim[0], xlim[1], points)
             grid_pdf = self.pdf(grid_prices)
-            grid_cdf = np.array(
-                [self.prob_below(p) for p in grid_prices]
-            )  # list comp for scalar cdf
+            grid_cdf = np.array([self.prob_below(p) for p in grid_prices])
         else:
-            # Use default cached grid
             grid_prices = self.prices
             grid_pdf = self.pdf_values
             grid_cdf = self.cdf_values
@@ -454,22 +674,32 @@ class ProbCurve:
 
 
 class ProbSurface:
-    """Multi-expiry risk-neutral probability surface wrapper."""
+    """Multi-date probability surface with selectable measure (physical or risk-neutral probabilities).
+
+    By default, this class returns physical probabilities (real-world view).
+    """
 
     def __init__(
         self,
         *,
         vol_surface: "VolSurface",
         grid_points: int = 241,
+        measure: Literal["physical", "risk_neutral"] = "physical",
+        erp: Optional[float] = None,
+        default_erp: float = 0.0423,
     ) -> None:
         """Initialize a ProbSurface directly from a fitted VolSurface.
 
         Args:
-            vol_surface: Fitted volatility surface used as the canonical source.
-            grid_points: Number of log-moneyness points in the unified strike grid.
+            vol_surface: Fitted volatility surface used as canonical source.
+            grid_points: Number of log-moneyness points in the shared strike grid.
+            measure: Active measure used by probability queries.
+            erp: Annualized ERP used when ``measure="physical"``.
+            default_erp: Internal fallback ERP for ``to_physical`` calls when no
+                explicit ERP override is provided.
 
         Raises:
-            ValueError: If ``vol_surface`` has not been fitted.
+            ValueError: If ``vol_surface`` has not been fitted or measure is invalid.
         """
         if (
             vol_surface._model is None
@@ -482,6 +712,11 @@ class ProbSurface:
             )
         if grid_points < 5:
             raise ValueError("grid_points must be at least 5 for finite differences.")
+        if measure not in {"physical", "risk_neutral"}:
+            raise ValueError(
+                "measure must be either 'physical' or 'risk_neutral', "
+                f"got {measure!r}."
+            )
 
         self._vol_surface = vol_surface
         self._market = vol_surface._market
@@ -491,14 +726,49 @@ class ProbSurface:
         )
         self._k_grid = self._build_k_grid(points=grid_points)
 
+        self._default_erp = float(default_erp)
+        self._measure: Literal["physical", "risk_neutral"] = measure
+        self._erp: Optional[float] = (
+            float(erp)
+            if erp is not None
+            else (self._default_erp if measure == "physical" else None)
+        )
+
         self._distribution_cache: dict[
             float, tuple[np.ndarray, np.ndarray, np.ndarray]
         ] = {}
-        self._curve_cache: dict[float, ProbCurve] = {}
+        self._physical_distribution_cache: dict[
+            tuple[float, float], tuple[np.ndarray, np.ndarray, dict[str, Any]]
+        ] = {}
+        self._curve_cache: dict[tuple[str, Optional[float], float], ProbCurve] = {}
         self._resolved_market_cache: dict[float, ResolvedMarket] = {}
 
+    @staticmethod
+    def _time_cache_key(t_years: float) -> float:
+        """Return a stable cache key for maturity.
+
+        Args:
+            t_years: Time to maturity in years.
+
+        Returns:
+            float: Rounded maturity key.
+        """
+        return round(float(t_years), 12)
+
+    @staticmethod
+    def _erp_cache_key(erp: float) -> float:
+        """Return a stable cache key for ERP.
+
+        Args:
+            erp: Annualized ERP in decimal form.
+
+        Returns:
+            float: Rounded ERP key.
+        """
+        return round(float(erp), 12)
+
     def _build_k_grid(self, *, points: int) -> np.ndarray:
-        """Build a unified log-moneyness grid shared across all maturities.
+        """Build a unified log-moneyness grid shared across maturities.
 
         Args:
             points: Number of points in the grid.
@@ -518,24 +788,21 @@ class ProbSurface:
 
         Returns:
             tuple[pd.Timestamp, float]: Expiry timestamp and year fraction.
-
-        Raises:
-            ValueError: If maturity is invalid or unsupported.
         """
         return resolve_surface_query_time(self._vol_surface, t)
 
-    def _distribution_arrays_for_t_years(
+    def _rn_distribution_arrays_for_t_years(
         self, t_years: float
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Compute and cache a distribution slice for maturity ``t_years``.
+        """Compute and cache RN distribution arrays for maturity ``t_years``.
 
         Args:
             t_years: Time to maturity in years.
 
         Returns:
-            tuple[np.ndarray, np.ndarray, np.ndarray]: Price grid, PDF, CDF.
+            tuple[np.ndarray, np.ndarray, np.ndarray]: Price grid, RN PDF, RN CDF.
         """
-        cache_key = round(float(t_years), 12)
+        cache_key = self._time_cache_key(t_years)
         if cache_key in self._distribution_cache:
             return self._distribution_cache[cache_key]
 
@@ -547,6 +814,65 @@ class ProbSurface:
         self._distribution_cache[cache_key] = result
         return result
 
+    def _physical_distribution_for_t_years(
+        self, t_years: float, erp: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute and cache physical distribution arrays for ``(t_years, erp)``.
+
+        Args:
+            t_years: Time to maturity in years.
+            erp: Annualized ERP in decimal form.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, np.ndarray]: Price grid, physical PDF, physical CDF.
+        """
+        from oipd.core.probability_density_conversion import (
+            physical_from_rn_exponential_tilt,
+        )
+
+        t_key = self._time_cache_key(t_years)
+        erp_key = self._erp_cache_key(erp)
+        cache_key = (t_key, erp_key)
+        rn_prices, rn_pdf, _ = self._rn_distribution_arrays_for_t_years(t_years)
+        if cache_key not in self._physical_distribution_cache:
+            forward_price = float(self._vol_surface.forward_price(t_years))
+            physical_pdf, physical_cdf, diagnostics = physical_from_rn_exponential_tilt(
+                rn_prices,
+                rn_pdf,
+                forward_price,
+                float(t_years),
+                float(erp),
+            )
+            self._physical_distribution_cache[cache_key] = (
+                np.asarray(physical_pdf, dtype=float),
+                np.asarray(physical_cdf, dtype=float),
+                diagnostics,
+            )
+
+        physical_pdf, physical_cdf, _ = self._physical_distribution_cache[cache_key]
+        return (
+            rn_prices,
+            np.asarray(physical_pdf, dtype=float),
+            np.asarray(physical_cdf, dtype=float),
+        )
+
+    def _distribution_arrays_for_t_years(
+        self, t_years: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return active-measure distribution arrays for maturity ``t_years``.
+
+        Args:
+            t_years: Time to maturity in years.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, np.ndarray]: Price grid, active PDF, active CDF.
+        """
+        if self._measure == "risk_neutral":
+            return self._rn_distribution_arrays_for_t_years(t_years)
+
+        active_erp = float(self._erp if self._erp is not None else self._default_erp)
+        return self._physical_distribution_for_t_years(t_years, active_erp)
+
     def _resolved_market_for_t_years(self, t_years: float) -> ResolvedMarket:
         """Build and cache a synthetic resolved market snapshot for maturity ``t``.
 
@@ -556,7 +882,7 @@ class ProbSurface:
         Returns:
             ResolvedMarket: Synthetic market snapshot aligned with maturity ``t``.
         """
-        cache_key = round(float(t_years), 12)
+        cache_key = self._time_cache_key(t_years)
         if cache_key in self._resolved_market_cache:
             return self._resolved_market_cache[cache_key]
         resolved_market = build_interpolated_resolved_market(self._vol_surface, t_years)
@@ -573,25 +899,64 @@ class ProbSurface:
             t_years: Time to maturity in years.
 
         Returns:
-            ProbCurve: Probability curve built from unified surface engine.
+            ProbCurve: Probability curve in the active measure.
         """
-        cache_key = round(float(t_years), 12)
+        t_key = self._time_cache_key(t_years)
+        erp_key = (
+            self._erp_cache_key(
+                self._erp if self._erp is not None else self._default_erp
+            )
+            if self._measure == "physical"
+            else None
+        )
+        cache_key = (self._measure, erp_key, t_key)
         if cache_key in self._curve_cache:
             return self._curve_cache[cache_key]
 
-        prices, pdf_values, cdf_values = self._distribution_arrays_for_t_years(t_years)
+        rn_prices, rn_pdf, rn_cdf = self._rn_distribution_arrays_for_t_years(t_years)
         metadata = build_probcurve_metadata(
             self._vol_surface,
             expiry_timestamp,
             t_years,
         )
-        curve = ProbCurve.from_arrays(
-            resolved_market=self._resolved_market_for_t_years(t_years),
-            metadata=metadata,
-            prices=prices,
-            pdf_values=pdf_values,
-            cdf_values=cdf_values,
-        )
+        resolved_market = self._resolved_market_for_t_years(t_years)
+
+        if self._measure == "risk_neutral":
+            curve = ProbCurve.from_arrays(
+                resolved_market=resolved_market,
+                metadata=metadata,
+                prices=rn_prices,
+                pdf_values=rn_pdf,
+                cdf_values=rn_cdf,
+                measure="risk_neutral",
+                default_erp=self._default_erp,
+            )
+        else:
+            active_erp = float(
+                self._erp if self._erp is not None else self._default_erp
+            )
+            _, physical_pdf, physical_cdf = self._physical_distribution_for_t_years(
+                t_years, active_erp
+            )
+            diagnostics = self._physical_distribution_cache[(t_key, erp_key)][2]
+            curve = ProbCurve.from_arrays(
+                resolved_market=resolved_market,
+                metadata=metadata,
+                prices=rn_prices,
+                pdf_values=rn_pdf,
+                cdf_values=rn_cdf,
+                measure="physical",
+                erp=active_erp,
+                default_erp=self._default_erp,
+                physical_cache={
+                    self._erp_cache_key(active_erp): (
+                        physical_pdf,
+                        physical_cdf,
+                        diagnostics,
+                    )
+                },
+            )
+
         self._curve_cache[cache_key] = curve
         return curve
 
@@ -604,29 +969,25 @@ class ProbSurface:
         column_mapping: Optional[Mapping[str, str]] = None,
         max_staleness_days: int = 3,
         failure_policy: Literal["raise", "skip_warn"] = "skip_warn",
+        measure: Literal["physical", "risk_neutral"] = "physical",
+        erp: float = 0.0423,
     ) -> "ProbSurface":
         """Build a ProbSurface directly from a multi-expiry option chain.
-
-        This convenience constructor fits SVI slices under the hood and then
-        derives the risk-neutral distribution surface.
 
         Args:
             chain: Option chain DataFrame containing multiple expiries.
             market: Market inputs required for calibration.
-            column_mapping: Optional mapping from input columns to OIPD
-                standard names.
+            column_mapping: Optional mapping from input columns to OIPD names.
             max_staleness_days: Maximum age of quotes in days to include.
-            failure_policy: Slice-level failure handling policy. Use ``"raise"``
-                for strict mode or ``"skip_warn"`` for best-effort surface
-                calibration.
+            failure_policy: Slice-level failure handling policy.
+            measure: Output measure, either physical or risk-neutral.
+            erp: Annualized ERP used when ``measure="physical"``.
 
         Returns:
-            ProbSurface: The fitted risk-neutral probability surface.
+            ProbSurface: Fitted probability surface in requested measure.
 
         Raises:
-            ValueError: If ``failure_policy`` is not a supported value.
-            CalculationError: If the chain has fewer than two expiries or the
-                underlying volatility calibration fails.
+            ValueError: If ``failure_policy`` is unsupported.
         """
         if failure_policy not in {"raise", "skip_warn"}:
             raise ValueError(
@@ -643,27 +1004,96 @@ class ProbSurface:
             column_mapping=column_mapping,
             failure_policy=failure_policy,
         )
-        return vol_surface.implied_distribution()
+        return vol_surface.implied_distribution(measure=measure, erp=erp)
+
+    def _spawn(
+        self,
+        *,
+        measure: Literal["physical", "risk_neutral"],
+        erp: Optional[float],
+    ) -> "ProbSurface":
+        """Create a new ProbSurface view while preserving computed caches.
+
+        Args:
+            measure: Target active measure.
+            erp: Target ERP assumption for physical measure.
+
+        Returns:
+            ProbSurface: New surface with copied canonical caches.
+        """
+        new_surface = ProbSurface(
+            vol_surface=self._vol_surface,
+            grid_points=len(self._k_grid),
+            measure=measure,
+            erp=erp,
+            default_erp=self._default_erp,
+        )
+        new_surface._k_grid = np.asarray(self._k_grid, dtype=float)
+        new_surface._distribution_cache = dict(self._distribution_cache)
+        new_surface._physical_distribution_cache = dict(
+            self._physical_distribution_cache
+        )
+        new_surface._resolved_market_cache = dict(self._resolved_market_cache)
+        return new_surface
+
+    def to_physical(self, *, erp: float | None = None) -> "ProbSurface":
+        """Return a new ProbSurface view in physical measure.
+
+        Args:
+            erp: Optional ERP override. Uses current ERP, then default ERP.
+
+        Returns:
+            ProbSurface: New surface with active physical probabilities.
+        """
+        resolved_erp = (
+            float(erp)
+            if erp is not None
+            else float(self._erp if self._erp is not None else self._default_erp)
+        )
+        return self._spawn(measure="physical", erp=resolved_erp)
+
+    def to_risk_neutral(self) -> "ProbSurface":
+        """Return a new ProbSurface view in risk-neutral measure.
+
+        Returns:
+            ProbSurface: New surface with active risk-neutral probabilities.
+        """
+        return self._spawn(measure="risk_neutral", erp=None)
+
+    @property
+    def measure(self) -> Literal["physical", "risk_neutral"]:
+        """Return active measure for probability queries.
+
+        Returns:
+            Literal["physical", "risk_neutral"]: Active measure.
+        """
+        return self._measure
+
+    @property
+    def erp(self) -> Optional[float]:
+        """Return active ERP assumption when in physical measure.
+
+        Returns:
+            Optional[float]: Active ERP for physical view, otherwise ``None``.
+        """
+        if self._measure == "physical":
+            return float(self._erp if self._erp is not None else self._default_erp)
+        return None
 
     def slice(self, expiry: str | date | pd.Timestamp) -> ProbCurve:
-        """Return a ProbCurve for the requested maturity.
+        """Return a ProbCurve slice at the requested maturity.
 
         Args:
             expiry: Expiry identifier as a date-like object.
 
         Returns:
-            ProbCurve: Probability slice at the requested maturity.
-
-        Raises:
-            ValueError: If the surface is empty or interpolation context is unavailable.
+            ProbCurve: Probability slice inheriting active measure/ERP.
         """
-
         if not isinstance(expiry, (str, date, pd.Timestamp)):
             raise ValueError(
                 "slice(expiry) requires a date-like expiry "
                 "(str, datetime.date, or pandas.Timestamp)."
             )
-
         resolved_expiry, t_years = self._resolve_query_time(expiry)
         return self._curve_for_time(resolved_expiry, t_years)
 
@@ -677,11 +1107,11 @@ class ProbSurface:
         price: float | np.ndarray,
         t: float | str | date | pd.Timestamp,
     ) -> np.ndarray:
-        """Evaluate PDF at requested price level(s) and maturity.
+        """Evaluate active-measure PDF at price level(s) and maturity.
 
         Args:
-            price: Price level(s) where the density is evaluated.
-            t: Maturity input as year-fraction float or date-like object.
+            price: Price level(s) where density is evaluated.
+            t: Maturity as year-fraction float or date-like object.
 
         Returns:
             np.ndarray: Interpolated PDF values at ``price``.
@@ -707,11 +1137,11 @@ class ProbSurface:
         price: float | np.ndarray,
         t: float | str | date | pd.Timestamp,
     ) -> np.ndarray:
-        """Evaluate CDF at requested price level(s) and maturity.
+        """Evaluate active-measure CDF at price level(s) and maturity.
 
         Args:
-            price: Price level(s) where the cumulative probability is evaluated.
-            t: Maturity input as year-fraction float or date-like object.
+            price: Price level(s) where cumulative probability is evaluated.
+            t: Maturity as year-fraction float or date-like object.
 
         Returns:
             np.ndarray: Interpolated CDF values at ``price``.
@@ -730,21 +1160,17 @@ class ProbSurface:
         q: float,
         t: float | str | date | pd.Timestamp,
     ) -> float:
-        """Return the inverse-CDF price level at quantile ``q`` for maturity ``t``.
+        """Return inverse-CDF price level at quantile ``q`` for maturity ``t``.
 
         Args:
             q: Target quantile in the open interval ``(0, 1)``.
-            t: Maturity input as year-fraction float or date-like object.
+            t: Maturity as year-fraction float or date-like object.
 
         Returns:
             float: Price level corresponding to quantile ``q``.
-
-        Raises:
-            ValueError: If ``q`` is outside the open interval ``(0, 1)``.
         """
         if not (0 < q < 1):
             raise ValueError("Quantile q must be between 0 and 1.")
-
         _, t_years = self._resolve_query_time(t)
         prices_grid, _, cdf_values = self._distribution_arrays_for_t_years(t_years)
         cdf_monotone = np.maximum.accumulate(np.asarray(cdf_values, dtype=float))
@@ -761,11 +1187,11 @@ class ProbSurface:
         figsize: tuple[float, float] = (10.0, 6.0),
         title: Optional[str] = None,
     ) -> Any:
-        """Plot a fan chart of risk-neutral quantiles across expiries.
+        """Plot fan-chart quantiles across expiries for the active measure.
 
         Args:
-            lower_percentile: Lower percentile bound for the shaded band (0-100).
-            upper_percentile: Upper percentile bound for the shaded band (0-100).
+            lower_percentile: Lower percentile bound for shaded band (0-100).
+            upper_percentile: Upper percentile bound for shaded band (0-100).
             figsize: Figure size as (width, height) in inches.
             title: Optional custom title for the plot.
 
@@ -773,14 +1199,38 @@ class ProbSurface:
             matplotlib.figure.Figure: The plot figure.
 
         Raises:
-            ValueError: If the surface is empty or unavailable.
+            ValueError: If no probability slices are available for plotting.
         """
         if len(self.expiries) == 0:
             raise ValueError("Call fit before plotting the probability surface")
-        density_data = build_daily_fan_density_frame(
-            self._vol_surface,
-            log_moneyness_grid=self._k_grid,
-        )
+
+        if self._measure == "risk_neutral":
+            density_data = build_daily_fan_density_frame(
+                self._vol_surface,
+                log_moneyness_grid=self._k_grid,
+            )
+        else:
+            first_expiry = min(self.expiries)
+            last_expiry = max(self.expiries)
+            sample_expiries = pd.date_range(first_expiry, last_expiry, freq="D")
+            frames: list[pd.DataFrame] = []
+            for expiry in sample_expiries:
+                expiry_timestamp = pd.to_datetime(expiry)
+                _, t_years = self._resolve_query_time(expiry_timestamp)
+                strikes, _, cdf_values = self._distribution_arrays_for_t_years(t_years)
+                frames.append(
+                    pd.DataFrame(
+                        {
+                            "expiry_date": np.full(strikes.shape, expiry_timestamp),
+                            "strike": strikes,
+                            "cdf": cdf_values,
+                        }
+                    )
+                )
+
+            if not frames:
+                raise ValueError("No probability slices available for plotting")
+            density_data = pd.concat(frames, ignore_index=True)
 
         return plot_probability_summary(
             density_data,

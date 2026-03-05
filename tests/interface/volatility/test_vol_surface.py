@@ -425,6 +425,18 @@ class TestVolSurfaceImpliedDistribution:
         vs.fit(multi_expiry_chain, market_inputs)
         prob_surface = vs.implied_distribution()
         assert isinstance(prob_surface, ProbSurface)
+        assert prob_surface.measure == "physical"
+
+    def test_implied_distribution_accepts_risk_neutral(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """implied_distribution(measure='risk_neutral') returns RN ProbSurface."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        prob_surface = vs.implied_distribution(measure="risk_neutral")
+        assert prob_surface.measure == "risk_neutral"
 
     def test_probsurface_has_matching_expiries(self, multi_expiry_chain, market_inputs):
         """ProbSurface has same expiries as VolSurface."""

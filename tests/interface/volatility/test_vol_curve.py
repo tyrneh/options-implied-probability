@@ -302,6 +302,18 @@ class TestVolCurveImpliedDistribution:
         vc.fit(sample_option_chain, market_inputs)
         prob = vc.implied_distribution()
         assert isinstance(prob, ProbCurve)
+        assert prob.measure == "physical"
+
+    def test_implied_distribution_accepts_risk_neutral_measure(
+        self, sample_option_chain, market_inputs
+    ):
+        """implied_distribution(measure='risk_neutral') returns RN ProbCurve."""
+        from oipd import VolCurve
+
+        vc = VolCurve()
+        vc.fit(sample_option_chain, market_inputs)
+        prob = vc.implied_distribution(measure="risk_neutral")
+        assert prob.measure == "risk_neutral"
 
     def test_implied_distribution_has_valid_pdf(
         self, sample_option_chain, market_inputs

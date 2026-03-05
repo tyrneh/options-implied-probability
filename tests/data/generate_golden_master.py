@@ -62,7 +62,7 @@ def generate_golden_master() -> None:
 
     # 4. Generate ProbCurve
     print("Generating ProbCurve...")
-    prob = vc.implied_distribution()
+    prob = vc.implied_distribution(measure="risk_neutral")
 
     # 5. Extract Test Points
     test_strikes = [150.0, 200.0, 220.0, 250.0, 300.0]

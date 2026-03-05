@@ -88,6 +88,18 @@ class TestProbCurveFromChain:
 
         prob = ProbCurve.from_chain(single_expiry_chain, market_inputs)
         assert isinstance(prob, ProbCurve)
+        assert prob.measure == "physical"
+
+    def test_from_chain_accepts_risk_neutral_measure(
+        self, single_expiry_chain, market_inputs
+    ):
+        """from_chain() supports explicit risk-neutral output."""
+        from oipd import ProbCurve
+
+        prob = ProbCurve.from_chain(
+            single_expiry_chain, market_inputs, measure="risk_neutral"
+        )
+        assert prob.measure == "risk_neutral"
 
     def test_from_chain_accepts_max_staleness(self, single_expiry_chain, market_inputs):
         """from_chain() accepts max_staleness_days."""
@@ -155,6 +167,8 @@ class TestProbCurveProperties:
         assert "expiry_date" in metadata
         assert "forward_price" in metadata
         assert "at_money_vol" in metadata
+        assert metadata["measure"] == "physical"
+        assert np.isclose(metadata["erp"], 0.0423)
         assert np.isfinite(metadata["at_money_vol"])
 
     def test_resolved_market_available(self, prob_curve):
@@ -162,6 +176,27 @@ class TestProbCurveProperties:
         resolved_market = prob_curve.resolved_market
         assert resolved_market is not None
         assert hasattr(resolved_market, "valuation_date")
+
+    def test_to_risk_neutral_returns_new_object(self, prob_curve):
+        """to_risk_neutral() returns a new ProbCurve."""
+        rn_curve = prob_curve.to_risk_neutral()
+        assert rn_curve is not prob_curve
+        assert rn_curve.measure == "risk_neutral"
+
+    def test_to_physical_roundtrip_preserves_measure(self, prob_curve):
+        """Switching RN->physical updates active measure."""
+        rn_curve = prob_curve.to_risk_neutral()
+        physical_curve = rn_curve.to_physical(erp=0.0423)
+        assert physical_curve.measure == "physical"
+
+    def test_erp_zero_is_close_to_risk_neutral(self, prob_curve):
+        """ERP=0 physical curve should target the forward mean."""
+        rn_curve = prob_curve.to_risk_neutral()
+        physical_zero = rn_curve.to_physical(erp=0.0)
+        target_mean = float(rn_curve.metadata["forward_price"])
+        rn_error = abs(rn_curve.mean() - target_mean)
+        physical_error = abs(physical_zero.mean() - target_mean)
+        assert physical_error <= rn_error + 1e-6
 
 
 # =============================================================================

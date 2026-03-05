@@ -77,7 +77,7 @@ class TestProbCurveStats:
         Kurtosis should be small positive.
         """
         vc = VolCurve().fit(flat_vol_chain, market_inputs)
-        pc = vc.implied_distribution()
+        pc = vc.implied_distribution(measure="risk_neutral")
 
         skew = pc.skew()
         kurt = pc.kurtosis()
@@ -93,7 +93,7 @@ class TestProbCurveStats:
     def test_quantile_median_approx_mean(self, flat_vol_chain, market_inputs):
         """For symmetric-ish distributions, Median (q=0.5) approx Mean."""
         vc = VolCurve().fit(flat_vol_chain, market_inputs)
-        pc = vc.implied_distribution()
+        pc = vc.implied_distribution(measure="risk_neutral")
 
         median = pc.quantile(0.5)
         mean = pc.mean()
@@ -104,7 +104,7 @@ class TestProbCurveStats:
     def test_quantile_inverse_cdf(self, flat_vol_chain, market_inputs):
         """Quantile should range correctly based on probability."""
         vc = VolCurve().fit(flat_vol_chain, market_inputs)
-        pc = vc.implied_distribution()
+        pc = vc.implied_distribution(measure="risk_neutral")
 
         p10 = pc.quantile(0.10)
         p90 = pc.quantile(0.90)
@@ -118,7 +118,7 @@ class TestProbCurveStats:
     def test_quantile_bounds(self, flat_vol_chain, market_inputs):
         """Raises error for invalid quantiles."""
         vc = VolCurve().fit(flat_vol_chain, market_inputs)
-        pc = vc.implied_distribution()
+        pc = vc.implied_distribution(measure="risk_neutral")
 
         with pytest.raises(ValueError):
             pc.quantile(-0.1)

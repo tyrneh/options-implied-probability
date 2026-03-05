@@ -466,14 +466,23 @@ class VolCurve:
             raise ValueError("Call fit before accessing the resolved market")
         return self._resolved_market
 
-    def implied_distribution(self) -> ProbCurve:
-        """Return the risk-neutral probability distribution implied by the fitted vol smile.
+    def implied_distribution(
+        self,
+        *,
+        measure: Literal["physical", "risk_neutral"] = "physical",
+        erp: float = 0.0423,
+    ) -> ProbCurve:
+        """Return the implied probability distribution from the fitted vol smile.
+
+        Args:
+            measure: Output measure, either physical or risk-neutral.
+            erp: Annualized ERP used when ``measure="physical"``.
 
         Returns:
-            ProbCurve: Fitted distribution object.
+            ProbCurve: Fitted distribution object in the requested measure.
 
         Raises:
-            ValueError: If ``fit`` has not been called.
+            ValueError: If ``fit`` has not been called or measure is invalid.
         """
 
         # For interpolated slices, _chain is None but _metadata["interpolated"] is True
@@ -490,6 +499,11 @@ class VolCurve:
 
         if is_interpolated and self._resolved_market is None:
             raise ValueError("Interpolated slice missing resolved market parameters")
+        if measure not in {"physical", "risk_neutral"}:
+            raise ValueError(
+                "measure must be either 'physical' or 'risk_neutral', "
+                f"got {measure!r}."
+            )
 
         # Delegate to the stateless pipeline
         prices, pdf, cdf, metadata = derive_distribution_from_curve(
@@ -502,7 +516,18 @@ class VolCurve:
         # Return Result Container
         from oipd.interface.probability import ProbCurve
 
-        return ProbCurve(self)
+        risk_neutral_curve = ProbCurve.from_arrays(
+            resolved_market=self._resolved_market,
+            metadata=metadata,
+            prices=prices,
+            pdf_values=pdf,
+            cdf_values=cdf,
+            measure="risk_neutral",
+            default_erp=erp,
+        )
+        if measure == "physical":
+            return risk_neutral_curve.to_physical(erp=erp)
+        return risk_neutral_curve
 
     def price(
         self,
@@ -1184,22 +1209,41 @@ class VolSurface:
         else:
             raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
 
-    def implied_distribution(self) -> ProbSurface:
-        """Return the risk-neutral distribution surface for all fitted expiries.
+    def implied_distribution(
+        self,
+        *,
+        measure: Literal["physical", "risk_neutral"] = "physical",
+        erp: float = 0.0423,
+    ) -> ProbSurface:
+        """Return the implied distribution surface for all fitted expiries.
+
+        Args:
+            measure: Output measure, either physical or risk-neutral.
+            erp: Annualized ERP used when ``measure="physical"``.
 
         Returns:
             ProbSurface: Surface with per-expiry distributions.
 
         Raises:
-            ValueError: If ``fit`` has not been called.
+            ValueError: If ``fit`` has not been called or measure is invalid.
         """
 
         if self._model is None:
             raise ValueError("Call fit before deriving the distribution surface")
+        if measure not in {"physical", "risk_neutral"}:
+            raise ValueError(
+                "measure must be either 'physical' or 'risk_neutral', "
+                f"got {measure!r}."
+            )
 
         from oipd.interface.probability import ProbSurface
 
-        return ProbSurface(vol_surface=self)
+        return ProbSurface(
+            vol_surface=self,
+            measure=measure,
+            erp=erp,
+            default_erp=erp,
+        )
 
     def atm_vol(self, t: float | str | date | pd.Timestamp) -> float:
         """Return At-The-Money (ATM) implied volatility at time t.

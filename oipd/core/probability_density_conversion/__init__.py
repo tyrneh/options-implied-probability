@@ -5,6 +5,7 @@ from .finite_diff import (  # noqa: F401
     finite_diff_second_derivative,
 )
 from .price_curve import price_curve_from_iv  # noqa: F401
+from .physical import physical_from_rn_exponential_tilt  # noqa: F401
 from .rnd import (  # noqa: F401
     calculate_cdf_from_pdf,
     calculate_quartiles,
@@ -21,6 +22,7 @@ __all__ = [
     "finite_diff_second_derivative",
     "finite_diff_first_derivative",
     "price_curve_from_iv",
+    "physical_from_rn_exponential_tilt",
     "pdf_from_price_curve",
     "calculate_cdf_from_pdf",
     "calculate_quartiles",

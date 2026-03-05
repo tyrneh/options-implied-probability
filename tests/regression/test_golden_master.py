@@ -172,7 +172,7 @@ class TestDistributionRegression:
         vc = VolCurve(method="svi")
         vc.method_options = {"random_seed": 42}
         vc.fit(df_slice, market, column_mapping=column_mapping)
-        prob = vc.implied_distribution()
+        prob = vc.implied_distribution(measure="risk_neutral")
 
         expected_prices = np.array(gm["distribution"]["prices"])
         expected_pdf = np.array(gm["distribution"]["pdf"])

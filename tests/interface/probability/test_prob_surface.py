@@ -138,6 +138,20 @@ class TestProbSurfaceFromChain:
 
         prob = ProbSurface.from_chain(multi_expiry_chain, market_inputs)
         assert isinstance(prob, ProbSurface)
+        assert prob.measure == "physical"
+
+    def test_from_chain_accepts_risk_neutral_measure(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """from_chain() supports explicit risk-neutral output."""
+        from oipd import ProbSurface
+
+        prob = ProbSurface.from_chain(
+            multi_expiry_chain,
+            market_inputs,
+            measure="risk_neutral",
+        )
+        assert prob.measure == "risk_neutral"
 
     def test_from_chain_accepts_max_staleness(self, multi_expiry_chain, market_inputs):
         """from_chain() accepts max_staleness_days."""
@@ -244,6 +258,14 @@ class TestProbSurfaceProperties:
         """ProbSurface has same expiries as source VolSurface."""
         assert len(prob_surface.expiries) == len(fitted_vol_surface.expiries)
 
+    def test_conversion_methods_return_new_surface(self, prob_surface):
+        """to_risk_neutral()/to_physical() return new objects."""
+        rn_surface = prob_surface.to_risk_neutral()
+        assert rn_surface is not prob_surface
+        assert rn_surface.measure == "risk_neutral"
+        physical_surface = rn_surface.to_physical(erp=0.0423)
+        assert physical_surface.measure == "physical"
+
 
 # =============================================================================
 # ProbSurface.slice() Tests
@@ -260,6 +282,7 @@ class TestProbSurfaceSlice:
         first_exp = prob_surface.expiries[0]
         curve = prob_surface.slice(first_exp)
         assert isinstance(curve, ProbCurve)
+        assert curve.measure == prob_surface.measure
 
     def test_slice_has_valid_pdf(self, prob_surface):
         """Sliced ProbCurve has valid PDF."""
@@ -425,15 +448,16 @@ class TestProbSurfacePlotFan:
 
     def test_plot_fan_has_no_pillar_regime_jump(self, prob_surface, market_inputs):
         """Daily medians should not show a large discontinuity at pillar dates."""
-        first_expiry = min(prob_surface.expiries)
-        last_expiry = max(prob_surface.expiries)
+        rn_surface = prob_surface.to_risk_neutral()
+        first_expiry = min(rn_surface.expiries)
+        last_expiry = max(rn_surface.expiries)
         sample_expiries = pd.date_range(first_expiry, last_expiry, freq="D")
         valuation_timestamp = pd.Timestamp(market_inputs.valuation_date)
 
         medians = []
         for expiry_timestamp in sample_expiries:
             t_years = (expiry_timestamp - valuation_timestamp).days / 365.0
-            medians.append(prob_surface.quantile(0.5, t=t_years))
+            medians.append(rn_surface.quantile(0.5, t=t_years))
         medians = np.asarray(medians, dtype=float)
         jumps = np.abs(np.diff(medians))
 
@@ -442,7 +466,7 @@ class TestProbSurfacePlotFan:
 
         pillar_jump_indices = []
         for jump_index, right_day in enumerate(sample_expiries[1:]):
-            if right_day in set(prob_surface.expiries):
+            if right_day in set(rn_surface.expiries):
                 pillar_jump_indices.append(jump_index)
 
         if not pillar_jump_indices:

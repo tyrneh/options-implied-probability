@@ -103,6 +103,11 @@ class TestVolCurveContract:
 
         result = fitted_vol_curve.implied_distribution()
         assert isinstance(result, ProbCurve)
+        assert result.measure == "physical"
+
+    def test_implied_distribution_accepts_risk_neutral_measure(self, fitted_vol_curve):
+        result = fitted_vol_curve.implied_distribution(measure="risk_neutral")
+        assert result.measure == "risk_neutral"
 
 
 # =============================================================================
@@ -198,6 +203,13 @@ class TestVolSurfaceContract:
 
         result = fitted_vol_surface.implied_distribution()
         assert isinstance(result, ProbSurface)
+        assert result.measure == "physical"
+
+    def test_implied_distribution_surface_accepts_risk_neutral(
+        self, fitted_vol_surface
+    ):
+        result = fitted_vol_surface.implied_distribution(measure="risk_neutral")
+        assert result.measure == "risk_neutral"
 
 
 # =============================================================================
@@ -213,6 +225,7 @@ class TestProbCurveContract:
 
         result = ProbCurve.from_chain(single_expiry_chain, market_inputs)
         assert isinstance(result, ProbCurve)
+        assert result.measure == "physical"
 
     def test_pdf_exists(self, prob_curve):
         result = prob_curve.pdf(100.0)
@@ -285,6 +298,17 @@ class TestProbCurveContract:
         assert resolved_market is not None
         assert hasattr(resolved_market, "valuation_date")
 
+    def test_measure_property_exists(self, prob_curve):
+        assert prob_curve.measure in {"physical", "risk_neutral"}
+
+    def test_to_physical_exists(self, prob_curve):
+        converted = prob_curve.to_physical()
+        assert converted.measure == "physical"
+
+    def test_to_risk_neutral_exists(self, prob_curve):
+        converted = prob_curve.to_risk_neutral()
+        assert converted.measure == "risk_neutral"
+
 
 # =============================================================================
 # ProbSurface Contract Tests
@@ -299,6 +323,7 @@ class TestProbSurfaceContract:
 
         result = ProbSurface.from_chain(multi_expiry_chain, market_inputs)
         assert isinstance(result, ProbSurface)
+        assert result.measure == "physical"
 
     def test_slice_exists(self, prob_surface):
         from oipd.interface.probability import ProbCurve
@@ -328,3 +353,7 @@ class TestProbSurfaceContract:
     def test_call_alias_exists(self, prob_surface):
         result = prob_surface(100.0, t=45 / 365.0)
         assert isinstance(result, np.ndarray)
+
+    def test_surface_conversion_methods_exist(self, prob_surface):
+        assert prob_surface.to_physical().measure == "physical"
+        assert prob_surface.to_risk_neutral().measure == "risk_neutral"

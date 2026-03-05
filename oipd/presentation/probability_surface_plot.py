@@ -1,4 +1,4 @@
-"""2D plotting utilities for risk-neutral density summaries."""
+"""2D plotting utilities for implied probability surface summaries."""
 
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ def plot_probability_summary(
     ax.margins(x=0.02)
 
     if title is None:
-        title = "Risk-neutral price distribution over time"
+        title = "Market-implied price forecast over time"
     ax.set_title(title)
 
     legend = ax.legend(loc="best")
