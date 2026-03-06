@@ -15,6 +15,7 @@ from oipd.core.utils import (
 )
 from oipd.market_inputs import ResolvedMarket
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
+from oipd.pipelines.utils.surface_export import validate_export_domain
 from oipd.core.probability_density_conversion import (
     price_curve_from_iv,
     pdf_from_price_curve,
@@ -288,3 +289,66 @@ def derive_distribution_from_curve(
     metadata["time_to_expiry_years"] = years_to_expiry
 
     return pdf_prices, pdf_values, cdf_values, metadata
+
+
+def build_density_results_frame(
+    prices: np.ndarray,
+    pdf_values: np.ndarray,
+    cdf_values: np.ndarray,
+    *,
+    domain: Optional[Tuple[float, float]] = None,
+    points: Optional[int] = None,
+) -> pd.DataFrame:
+    """Build a density export DataFrame from aligned probability arrays.
+
+    Args:
+        prices: Price grid for the fitted probability slice.
+        pdf_values: PDF values aligned with ``prices``.
+        cdf_values: CDF values aligned with ``prices``.
+        domain: Optional explicit export domain as ``(min_price, max_price)``.
+        points: Optional number of points when resampling to ``domain``.
+
+    Returns:
+        DataFrame with columns ``price``, ``pdf``, and ``cdf``.
+
+    Raises:
+        ValueError: If the export domain or resampling grid is invalid.
+    """
+    validated_domain = validate_export_domain(domain)
+
+    prices_array = np.asarray(prices, dtype=float)
+    pdf_array = np.asarray(pdf_values, dtype=float)
+    cdf_array = np.asarray(cdf_values, dtype=float)
+
+    if validated_domain is None:
+        return pd.DataFrame(
+            {
+                "price": prices_array,
+                "pdf": pdf_array,
+                "cdf": cdf_array,
+            }
+        )
+
+    if points is None:
+        grid_points = 200
+    else:
+        if isinstance(points, bool) or not isinstance(points, int) or points <= 0:
+            raise ValueError("points must be None or a strictly positive integer.")
+        grid_points = points
+
+    grid_prices = np.linspace(validated_domain[0], validated_domain[1], grid_points)
+    cdf_monotone = np.maximum.accumulate(cdf_array)
+
+    return pd.DataFrame(
+        {
+            "price": grid_prices,
+            "pdf": np.interp(grid_prices, prices_array, pdf_array, left=0.0, right=0.0),
+            "cdf": np.interp(
+                grid_prices,
+                prices_array,
+                cdf_monotone,
+                left=0.0,
+                right=1.0,
+            ),
+        }
+    )

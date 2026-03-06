@@ -407,6 +407,109 @@ class TestVolSurfaceMaturityDomain:
 
 
 # =============================================================================
+# VolSurface.iv_results() Tests
+# =============================================================================
+
+
+class TestVolSurfaceIvResults:
+    """Tests for VolSurface.iv_results() long-format exports."""
+
+    def test_iv_results_defaults_to_pillar_expiries(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Default export contains one slice per fitted pillar."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        result = vs.iv_results()
+
+        assert isinstance(result, pd.DataFrame)
+        assert "expiry" in result.columns
+        assert tuple(pd.to_datetime(result["expiry"]).drop_duplicates()) == vs.expiries
+
+    def test_iv_results_step_grid_includes_off_step_pillars(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Stepped export keeps in-window pillar expiries even off-step."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        result = vs.iv_results(step_days=30)
+
+        unique_expiries = tuple(pd.to_datetime(result["expiry"]).drop_duplicates())
+        assert vs.expiries[0] in unique_expiries
+        assert vs.expiries[1] in unique_expiries
+        assert len(unique_expiries) > len(vs.expiries)
+
+    def test_iv_results_respects_hard_bounds(self, multi_expiry_chain, market_inputs):
+        """Start and end hard-bound the returned expiry rows."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        result = vs.iv_results(start="2025-02-25", end="2025-05-01", step_days=7)
+
+        unique_expiries = pd.to_datetime(result["expiry"]).drop_duplicates()
+        assert unique_expiries.min() >= pd.Timestamp("2025-02-25")
+        assert unique_expiries.max() <= pd.Timestamp("2025-05-01")
+
+    def test_iv_results_forwards_domain_points_and_observed_flag(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Strike-grid arguments are forwarded to per-slice exports."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        pillar_expiry = vs.expiries[0]
+
+        result = vs.iv_results(
+            domain=(85.0, 115.0),
+            points=12,
+            include_observed=False,
+            start=pillar_expiry,
+            end=pillar_expiry,
+        )
+
+        assert len(result) >= 12
+        assert np.isclose(result["strike"].iloc[0], 85.0)
+        assert np.isclose(result["strike"].iloc[-1], 115.0)
+        assert "market_iv" not in result.columns
+
+    def test_iv_results_matches_slice_export_for_single_expiry(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Single-expiry surface export matches the underlying slice export."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        pillar_expiry = vs.expiries[0]
+
+        surface_frame = vs.iv_results(start=pillar_expiry, end=pillar_expiry)
+        slice_frame = vs.slice(pillar_expiry).iv_results()
+
+        pd.testing.assert_frame_equal(
+            surface_frame.drop(columns=["expiry"]).reset_index(drop=True),
+            slice_frame.reset_index(drop=True),
+        )
+
+    def test_iv_results_rejects_invalid_inputs(self, multi_expiry_chain, market_inputs):
+        """Invalid domains and step sizes are rejected."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+
+        with pytest.raises(ValueError, match="strictly increasing"):
+            vs.iv_results(domain=(110.0, 90.0))
+        with pytest.raises(ValueError, match="strictly positive integer"):
+            vs.iv_results(step_days=0)
+
+
+# =============================================================================
 # VolSurface.implied_distribution() Tests
 # =============================================================================
 

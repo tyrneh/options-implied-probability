@@ -8,6 +8,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from oipd.pipelines.probability.rnd_curve import build_density_results_frame
+from oipd.pipelines.utils.surface_export import (
+    resolve_surface_export_expiries,
+    validate_export_domain,
+)
 from oipd.core.probability_density_conversion import (
     normalized_cdf_from_call_curve,
     pdf_and_cdf_from_normalized_cdf,
@@ -229,47 +234,74 @@ def build_probcurve_metadata(
     }
 
 
-def build_daily_fan_density_frame(
-    vol_surface: Any,
-    *,
-    log_moneyness_grid: np.ndarray,
-) -> pd.DataFrame:
-    """Build daily density-frame payload used by ``ProbSurface.plot_fan``.
+def build_daily_fan_density_frame(prob_surface: Any) -> pd.DataFrame:
+    """Build the daily density payload used by ``ProbSurface.plot_fan``.
 
     Args:
-        vol_surface: Fitted volatility surface interface object.
-        log_moneyness_grid: Shared log-moneyness evaluation grid.
+        prob_surface: Probability surface interface object.
 
     Returns:
-        pd.DataFrame: Long dataframe with columns ``expiry_date``, ``strike``, ``cdf``.
+        Long DataFrame with columns ``expiry_date``, ``strike``, and ``cdf``.
 
     Raises:
         ValueError: If no slices are generated.
     """
-    first_expiry = min(vol_surface.expiries)
-    last_expiry = max(vol_surface.expiries)
-    sample_expiries = pd.date_range(first_expiry, last_expiry, freq="D")
+    density_results = build_surface_density_results_frame(prob_surface, step_days=1)
+    if density_results.empty:
+        raise ValueError("No probability slices available for plotting")
+
+    return density_results.rename(columns={"expiry": "expiry_date", "price": "strike"})[
+        ["expiry_date", "strike", "cdf"]
+    ]
+
+
+def build_surface_density_results_frame(
+    prob_surface: Any,
+    *,
+    domain: tuple[float, float] | None = None,
+    points: int | None = None,
+    start: str | date | pd.Timestamp | None = None,
+    end: str | date | pd.Timestamp | None = None,
+    step_days: int | None = None,
+) -> pd.DataFrame:
+    """Build a long-format density export DataFrame for a probability surface.
+
+    Args:
+        prob_surface: Probability surface interface object.
+        domain: Optional export domain as ``(min_price, max_price)``.
+        points: Optional number of resampled grid points.
+        start: Optional lower expiry bound.
+        end: Optional upper expiry bound.
+        step_days: Optional calendar-day sampling interval.
+
+    Returns:
+        Long DataFrame with columns ``expiry``, ``price``, ``pdf``, and ``cdf``.
+    """
+    validate_export_domain(domain)
+    export_expiries = resolve_surface_export_expiries(
+        prob_surface,
+        start=start,
+        end=end,
+        step_days=step_days,
+    )
+    if not export_expiries:
+        return pd.DataFrame(columns=["expiry", "price", "pdf", "cdf"])
 
     frames: list[pd.DataFrame] = []
-    for expiry in sample_expiries:
-        expiry_timestamp = pd.to_datetime(expiry)
-        _, t_years = resolve_surface_query_time(vol_surface, expiry_timestamp)
-        strikes, _, cdf_values = derive_surface_distribution_at_t(
-            vol_surface,
-            t_years,
-            log_moneyness_grid=log_moneyness_grid,
+    for expiry_timestamp in export_expiries:
+        _, t_years = prob_surface._resolve_query_time(expiry_timestamp)
+        prices, pdf_values, cdf_values = prob_surface._distribution_arrays_for_t_years(
+            t_years
         )
-        frame = pd.DataFrame(
-            {
-                "expiry_date": np.full(strikes.shape, expiry_timestamp),
-                "strike": strikes,
-                "cdf": cdf_values,
-            }
+        frame = build_density_results_frame(
+            prices,
+            pdf_values,
+            cdf_values,
+            domain=domain,
+            points=points,
         )
+        frame.insert(0, "expiry", pd.Timestamp(expiry_timestamp))
         frames.append(frame)
-
-    if not frames:
-        raise ValueError("No probability slices available for plotting")
 
     return pd.concat(frames, ignore_index=True)
 
@@ -278,6 +310,7 @@ __all__ = [
     "build_daily_fan_density_frame",
     "build_global_log_moneyness_grid",
     "build_interpolated_resolved_market",
+    "build_surface_density_results_frame",
     "build_probcurve_metadata",
     "derive_surface_distribution_at_t",
     "resolve_surface_query_time",
