@@ -58,6 +58,7 @@ from oipd.pipelines.probability import (
     resolve_surface_query_time,
 )
 from oipd.pipelines.vol_surface import fit_surface
+from oipd.pipelines.vol_surface.export import build_surface_iv_results_frame
 from oipd.pipelines.vol_surface.models import FittedSurface
 from oipd.pipelines.vol_surface.interpolator import (
     build_interpolator_from_fitted_surface,
@@ -1217,31 +1218,44 @@ class VolSurface:
         F = self.forward_price(t_years)
         return self.implied_vol(F, t_years)
 
-    def iv_results(self) -> pd.DataFrame:
-        """Return a concatenated DataFrame of calibration results for all fitted expiries.
+    def iv_results(
+        self,
+        domain: Optional[tuple[float, float]] = None,
+        points: int = 200,
+        include_observed: bool = True,
+        start: str | date | pd.Timestamp | None = None,
+        end: str | date | pd.Timestamp | None = None,
+        step_days: int | None = 1,
+    ) -> pd.DataFrame:
+        """Return a long-format DataFrame of fitted IV results across expiries.
+
+        Args:
+            domain: Optional strike domain as ``(min_strike, max_strike)``.
+            points: Number of fitted-curve evaluation points per expiry.
+            include_observed: Whether to include observed market IV columns.
+            start: Optional lower expiry bound. If omitted, uses the first fitted
+                pillar expiry.
+            end: Optional upper expiry bound. If omitted, uses the last fitted
+                pillar expiry.
+            step_days: Calendar-day sampling interval. Defaults to ``1`` so the
+                export includes a daily grid. Fitted pillar expiries are always
+                included even when they fall off the stepped schedule. Use
+                ``None`` to export fitted pillars only.
 
         Returns:
-            pd.DataFrame: Long-format DataFrame with 'expiry' column added.
+            Long-format DataFrame with an ``expiry`` column.
         """
         if self._model is None:
             raise ValueError("Surface not fitted.")
-
-        dfs = []
-        for expiry in self.expiries:
-            # slice() ensures we get the real fitted curve
-            curve = self.slice(expiry)
-            try:
-                # curve.iv_results() returns the DataFrame for that slice
-                df = curve.iv_results()
-                df["expiry"] = expiry
-                dfs.append(df)
-            except ValueError:
-                continue
-
-        if not dfs:
-            return pd.DataFrame()
-
-        return pd.concat(dfs, ignore_index=True)
+        return build_surface_iv_results_frame(
+            self,
+            domain=domain,
+            points=points,
+            include_observed=include_observed,
+            start=start,
+            end=end,
+            step_days=step_days,
+        )
 
     @property
     def params(self) -> dict[pd.Timestamp, Any]:

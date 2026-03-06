@@ -220,11 +220,8 @@ def test_build_daily_fan_density_frame_uses_daily_sampling(
     fitted_surface: VolSurface,
 ) -> None:
     """Daily fan dataframe includes one maturity per calendar day."""
-    k_grid = build_global_log_moneyness_grid(fitted_surface, points=241)
-    frame = build_daily_fan_density_frame(
-        fitted_surface,
-        log_moneyness_grid=k_grid,
-    )
+    prob_surface = fitted_surface.implied_distribution()
+    frame = build_daily_fan_density_frame(prob_surface)
 
     first_expiry = min(fitted_surface.expiries)
     last_expiry = max(fitted_surface.expiries)

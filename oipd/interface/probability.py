@@ -15,9 +15,11 @@ from oipd.presentation.probability_surface_plot import plot_probability_summary
 from oipd.core.utils import calculate_time_to_expiry
 from oipd.pipelines.probability import (
     build_daily_fan_density_frame,
+    build_density_results_frame,
     build_global_log_moneyness_grid,
     build_interpolated_resolved_market,
     build_probcurve_metadata,
+    build_surface_density_results_frame,
     derive_distribution_from_curve,
     derive_surface_distribution_at_t,
     resolve_surface_query_time,
@@ -391,6 +393,30 @@ class ProbCurve:
 
         return self._metadata
 
+    def density_results(
+        self,
+        domain: tuple[float, float] | None = None,
+        points: int = 200,
+    ) -> pd.DataFrame:
+        """Return a DataFrame view of the fitted probability density.
+
+        Args:
+            domain: Optional explicit export domain as ``(min_price, max_price)``.
+            points: Number of resampled points when ``domain`` is set. Ignored
+                when ``domain`` is omitted and the native fitted grid is used.
+
+        Returns:
+            DataFrame with columns ``price``, ``pdf``, and ``cdf``.
+        """
+        self._ensure_grid_generated()
+        return build_density_results_frame(
+            self._cached_prices,
+            self._cached_pdf,
+            self._cached_cdf,
+            domain=domain,
+            points=points,
+        )
+
     def plot(
         self,
         *,
@@ -753,6 +779,41 @@ class ProbSurface:
         q_clamped = float(np.clip(q, cdf_min, cdf_max))
         return float(np.interp(q_clamped, cdf_monotone, prices_grid))
 
+    def density_results(
+        self,
+        domain: tuple[float, float] | None = None,
+        points: int = 200,
+        start: str | date | pd.Timestamp | None = None,
+        end: str | date | pd.Timestamp | None = None,
+        step_days: int | None = 1,
+    ) -> pd.DataFrame:
+        """Return a long-format DataFrame view of surface probability slices.
+
+        Args:
+            domain: Optional explicit export domain as ``(min_price, max_price)``.
+            points: Number of resampled points when ``domain`` is set. Ignored
+                when ``domain`` is omitted and the native slice grids are used.
+            start: Optional lower expiry bound. If omitted, uses the first fitted
+                pillar expiry.
+            end: Optional upper expiry bound. If omitted, uses the last fitted
+                pillar expiry.
+            step_days: Calendar-day sampling interval. Defaults to ``1`` so the
+                export includes a daily grid. Fitted pillar expiries are always
+                included even when they fall off the stepped schedule. Use
+                ``None`` to export fitted pillars only.
+
+        Returns:
+            DataFrame with columns ``expiry``, ``price``, ``pdf``, and ``cdf``.
+        """
+        return build_surface_density_results_frame(
+            self,
+            domain=domain,
+            points=points,
+            start=start,
+            end=end,
+            step_days=step_days,
+        )
+
     def plot_fan(
         self,
         *,
@@ -777,10 +838,7 @@ class ProbSurface:
         """
         if len(self.expiries) == 0:
             raise ValueError("Call fit before plotting the probability surface")
-        density_data = build_daily_fan_density_frame(
-            self._vol_surface,
-            log_moneyness_grid=self._k_grid,
-        )
+        density_data = build_daily_fan_density_frame(self)
 
         return plot_probability_summary(
             density_data,

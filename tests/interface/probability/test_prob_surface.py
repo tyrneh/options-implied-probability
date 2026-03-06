@@ -397,6 +397,90 @@ class TestProbSurfaceQueryApi:
 
 
 # =============================================================================
+# ProbSurface.density_results() Tests
+# =============================================================================
+
+
+class TestProbSurfaceDensityResults:
+    """Tests for ProbSurface.density_results() exports."""
+
+    def test_density_results_returns_long_format_schema(self, prob_surface):
+        """density_results() returns expiry-indexed long format."""
+        result = prob_surface.density_results()
+        assert isinstance(result, pd.DataFrame)
+        assert list(result.columns) == ["expiry", "price", "pdf", "cdf"]
+        unique_expiries = pd.to_datetime(result["expiry"]).unique()
+        assert pd.Timestamp(min(prob_surface.expiries)) == pd.Timestamp(
+            unique_expiries.min()
+        )
+        assert pd.Timestamp(max(prob_surface.expiries)) == pd.Timestamp(
+            unique_expiries.max()
+        )
+
+    def test_density_results_defaults_to_daily_grid(self, prob_surface):
+        """Default export contains a daily grid spanning the fitted horizon."""
+        result = prob_surface.density_results()
+        unique_expiries = pd.to_datetime(result["expiry"]).drop_duplicates()
+        expected_days = (
+            max(prob_surface.expiries) - min(prob_surface.expiries)
+        ).days + 1
+        assert unique_expiries.min() == min(prob_surface.expiries)
+        assert unique_expiries.max() == max(prob_surface.expiries)
+        assert len(unique_expiries) == expected_days
+
+    def test_density_results_step_grid_includes_off_step_pillars(self, prob_surface):
+        """Off-step fitted pillars are preserved alongside stepped dates."""
+        result = prob_surface.density_results(step_days=30)
+        unique_expiries = tuple(pd.to_datetime(result["expiry"]).drop_duplicates())
+        assert prob_surface.expiries[0] in unique_expiries
+        assert prob_surface.expiries[1] in unique_expiries
+        assert len(unique_expiries) > len(prob_surface.expiries)
+
+    def test_density_results_respects_hard_date_bounds(self, prob_surface):
+        """Start and end act as hard bounds on output rows."""
+        result = prob_surface.density_results(
+            start="2025-02-25",
+            end="2025-05-01",
+            step_days=7,
+        )
+        unique_expiries = pd.to_datetime(result["expiry"]).drop_duplicates()
+        assert unique_expiries.min() >= pd.Timestamp("2025-02-25")
+        assert unique_expiries.max() <= pd.Timestamp("2025-05-01")
+        assert pd.Timestamp("2025-02-21") not in set(unique_expiries)
+        assert pd.Timestamp("2025-05-21") not in set(unique_expiries)
+
+    def test_density_results_matches_slice_export_for_pillar(self, prob_surface):
+        """Surface export rows match the corresponding single-slice export."""
+        pillar_expiry = prob_surface.expiries[0]
+        surface_frame = prob_surface.density_results(
+            start=pillar_expiry, end=pillar_expiry
+        )
+        slice_frame = prob_surface.slice(pillar_expiry).density_results()
+
+        pd.testing.assert_frame_equal(
+            surface_frame.drop(columns=["expiry"]).reset_index(drop=True),
+            slice_frame.reset_index(drop=True),
+        )
+
+    def test_density_results_rejects_invalid_inputs(self, prob_surface):
+        """Invalid domains and step sizes are rejected."""
+        with pytest.raises(ValueError, match="strictly increasing"):
+            prob_surface.density_results(domain=(120.0, 80.0))
+        with pytest.raises(ValueError, match="strictly positive integer"):
+            prob_surface.density_results(step_days=0)
+
+    def test_density_results_domain_defaults_to_200_points(self, prob_surface):
+        """Explicit domain with omitted points defaults to 200 rows per expiry."""
+        pillar_expiry = prob_surface.expiries[0]
+        result = prob_surface.density_results(
+            domain=(80.0, 120.0),
+            start=pillar_expiry,
+            end=pillar_expiry,
+        )
+        assert len(result) == 200
+
+
+# =============================================================================
 # ProbSurface.plot_fan() Tests
 # =============================================================================
 
@@ -419,8 +503,10 @@ class TestProbSurfacePlotFan:
         first_expiry = min(prob_surface.expiries)
         last_expiry = max(prob_surface.expiries)
         expected_points = (last_expiry - first_expiry).days + 1
+        export_points = prob_surface.density_results(step_days=1)["expiry"].nunique()
 
         assert len(xdata) == expected_points
+        assert len(xdata) == export_points
         plt.close(fig)
 
     def test_plot_fan_has_no_pillar_regime_jump(self, prob_surface, market_inputs):

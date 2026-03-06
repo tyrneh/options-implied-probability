@@ -273,6 +273,10 @@ class TestProbCurveContract:
         result = prob_curve.cdf_values
         assert isinstance(result, np.ndarray)
 
+    def test_density_results_exists(self, prob_curve):
+        result = prob_curve.density_results()
+        assert isinstance(result, pd.DataFrame)
+
     def test_metadata_exists(self, prob_curve):
         metadata = prob_curve.metadata
         assert isinstance(metadata, dict)
@@ -324,6 +328,10 @@ class TestProbSurfaceContract:
         result = prob_surface.quantile(0.5, t=45 / 365.0)
         assert isinstance(result, (float, np.floating))
         assert result > 0
+
+    def test_density_results_exists(self, prob_surface):
+        result = prob_surface.density_results()
+        assert isinstance(result, pd.DataFrame)
 
     def test_call_alias_exists(self, prob_surface):
         result = prob_surface(100.0, t=45 / 365.0)
