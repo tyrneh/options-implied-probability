@@ -5,6 +5,14 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2]
+### Added
+- Added symmetric DataFrame export APIs for fitted volatility and probability objects so downstream website/data pipelines can save fitted results without manually rebuilding arrays.
+    - Added `ProbCurve.density_results(domain=None, points=None)` for single-expiry probability exports with `price`, `pdf`, and `cdf` columns.
+    - Added `ProbSurface.density_results(domain=None, points=None, start=None, end=None, step_days=None)` for long-format multi-expiry probability exports with `expiry`, `price`, `pdf`, and `cdf` columns.
+### Changed
+- Extended `VolSurface.iv_results(...)` to support the same strike-grid controls as `VolCurve.iv_results(...)` plus expiry-grid selection via `start`, `end`, and `step_days`.
+
 ## [2.0.1] - 2025-02-17
 ### Code improvements
 - Reworked `ProbSurface` to use fitted `VolSurface` as the canonical source of truth. Probability is now derived from interpolated volatility and option prices at query time, rather than interpolating probabilities directly. This is important because only the fitted vol smiles can be linearly interpolated in total-variance space; probabilities can't be interpolated directly. 

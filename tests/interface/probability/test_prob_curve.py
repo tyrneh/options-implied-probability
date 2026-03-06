@@ -203,6 +203,66 @@ class TestProbCurveProperties:
 
 
 # =============================================================================
+# ProbCurve.density_results() Tests
+# =============================================================================
+
+
+class TestProbCurveDensityResults:
+    """Tests for ProbCurve.density_results() exports."""
+
+    def test_density_results_returns_expected_columns(self, prob_curve):
+        """density_results() returns the canonical export schema."""
+        result = prob_curve.density_results()
+        assert isinstance(result, pd.DataFrame)
+        assert list(result.columns) == ["price", "pdf", "cdf"]
+
+    def test_density_results_uses_native_grid_by_default(self, prob_curve):
+        """density_results() reuses the active native grid when no domain is set."""
+        result = prob_curve.density_results()
+        np.testing.assert_allclose(
+            result["price"].to_numpy(dtype=float), prob_curve.prices
+        )
+        np.testing.assert_allclose(
+            result["pdf"].to_numpy(dtype=float), prob_curve.pdf_values
+        )
+        np.testing.assert_allclose(
+            result["cdf"].to_numpy(dtype=float), prob_curve.cdf_values
+        )
+
+    def test_density_results_resamples_explicit_domain(self, prob_curve):
+        """Explicit domain triggers interpolation onto the requested grid."""
+        result = prob_curve.density_results(domain=(80.0, 120.0), points=25)
+        assert len(result) == 25
+        assert np.isclose(result["price"].iloc[0], 80.0)
+        assert np.isclose(result["price"].iloc[-1], 120.0)
+
+    def test_density_results_domain_defaults_to_200_points(self, prob_curve):
+        """Explicit domain with omitted points defaults to 200 rows."""
+        result = prob_curve.density_results(domain=(80.0, 120.0))
+        assert len(result) == 200
+
+    def test_density_results_matches_probability_queries(self, prob_curve):
+        """Exported values stay consistent with PDF/CDF query methods."""
+        result = prob_curve.density_results(domain=(85.0, 115.0), points=11)
+        prices = result["price"].to_numpy(dtype=float)
+        np.testing.assert_allclose(
+            result["pdf"].to_numpy(dtype=float),
+            prob_curve.pdf(prices),
+            rtol=1e-8,
+        )
+        np.testing.assert_allclose(
+            result["cdf"].to_numpy(dtype=float),
+            [prob_curve.prob_below(price) for price in prices],
+            rtol=1e-8,
+        )
+
+    def test_density_results_rejects_invalid_domain(self, prob_curve):
+        """Invalid domains are rejected at the export boundary."""
+        with pytest.raises(ValueError, match="strictly increasing"):
+            prob_curve.density_results(domain=(120.0, 80.0))
+
+
+# =============================================================================
 # ProbCurve.prob_below() Tests
 # =============================================================================
 

@@ -14,10 +14,12 @@ from oipd.presentation.probability_surface_plot import plot_probability_summary
 
 from oipd.core.utils import calculate_time_to_expiry
 from oipd.pipelines.probability import (
+    build_density_results_frame,
     build_daily_fan_density_frame,
     build_global_log_moneyness_grid,
     build_interpolated_resolved_market,
     build_probcurve_metadata,
+    build_surface_density_results_frame,
     derive_distribution_from_curve,
     derive_surface_distribution_at_t,
     resolve_surface_query_time,
@@ -580,6 +582,29 @@ class ProbCurve:
             metadata.pop("risk_aversion", None)
             metadata.pop("physical_transform", None)
         return metadata
+
+    def density_results(
+        self,
+        domain: tuple[float, float] | None = None,
+        points: int | None = None,
+    ) -> pd.DataFrame:
+        """Return a DataFrame view of the active probability density.
+
+        Args:
+            domain: Optional export domain as ``(min_price, max_price)``.
+            points: Optional number of resampled points when ``domain`` is set.
+
+        Returns:
+            pd.DataFrame: DataFrame with columns ``price``, ``pdf``, and ``cdf``.
+        """
+        self._ensure_active_distribution()
+        return build_density_results_frame(
+            self._cached_prices,
+            self._cached_pdf,
+            self._cached_cdf,
+            domain=domain,
+            points=points,
+        )
 
     def plot(
         self,
@@ -1147,6 +1172,36 @@ class ProbSurface:
         q_clamped = float(np.clip(q, cdf_min, cdf_max))
         return float(np.interp(q_clamped, cdf_monotone, prices_grid))
 
+    def density_results(
+        self,
+        domain: tuple[float, float] | None = None,
+        points: int | None = None,
+        start: str | date | pd.Timestamp | None = None,
+        end: str | date | pd.Timestamp | None = None,
+        step_days: int | None = None,
+    ) -> pd.DataFrame:
+        """Return a long-format DataFrame view of surface probability slices.
+
+        Args:
+            domain: Optional export domain as ``(min_price, max_price)``.
+            points: Optional number of resampled points when ``domain`` is set.
+            start: Optional lower expiry bound.
+            end: Optional upper expiry bound.
+            step_days: Optional calendar-day sampling interval.
+
+        Returns:
+            pd.DataFrame: DataFrame with columns ``expiry``, ``price``, ``pdf``,
+            and ``cdf``.
+        """
+        return build_surface_density_results_frame(
+            self,
+            domain=domain,
+            points=points,
+            start=start,
+            end=end,
+            step_days=step_days,
+        )
+
     def plot_fan(
         self,
         *,
@@ -1172,33 +1227,7 @@ class ProbSurface:
         if len(self.expiries) == 0:
             raise ValueError("Call fit before plotting the probability surface")
 
-        if self._measure == "risk_neutral":
-            density_data = build_daily_fan_density_frame(
-                self._vol_surface,
-                log_moneyness_grid=self._k_grid,
-            )
-        else:
-            first_expiry = min(self.expiries)
-            last_expiry = max(self.expiries)
-            sample_expiries = pd.date_range(first_expiry, last_expiry, freq="D")
-            frames: list[pd.DataFrame] = []
-            for expiry in sample_expiries:
-                expiry_timestamp = pd.to_datetime(expiry)
-                _, t_years = self._resolve_query_time(expiry_timestamp)
-                strikes, _, cdf_values = self._distribution_arrays_for_t_years(t_years)
-                frames.append(
-                    pd.DataFrame(
-                        {
-                            "expiry_date": np.full(strikes.shape, expiry_timestamp),
-                            "strike": strikes,
-                            "cdf": cdf_values,
-                        }
-                    )
-                )
-
-            if not frames:
-                raise ValueError("No probability slices available for plotting")
-            density_data = pd.concat(frames, ignore_index=True)
+        density_data = build_daily_fan_density_frame(self)
 
         return plot_probability_summary(
             density_data,

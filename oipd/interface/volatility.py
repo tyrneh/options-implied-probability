@@ -62,6 +62,7 @@ from oipd.pipelines.vol_surface.models import FittedSurface
 from oipd.pipelines.vol_surface.interpolator import (
     build_interpolator_from_fitted_surface,
 )
+from oipd.pipelines.vol_surface.export import build_surface_iv_results_frame
 from oipd.presentation.iv_plotting import ForwardPriceAnnotation, plot_iv_smile
 
 
@@ -1261,31 +1262,40 @@ class VolSurface:
         F = self.forward_price(t_years)
         return self.implied_vol(F, t_years)
 
-    def iv_results(self) -> pd.DataFrame:
-        """Return a concatenated DataFrame of calibration results for all fitted expiries.
+    def iv_results(
+        self,
+        domain: Optional[tuple[float, float]] = None,
+        points: int = 200,
+        include_observed: bool = True,
+        start: str | date | pd.Timestamp | None = None,
+        end: str | date | pd.Timestamp | None = None,
+        step_days: int | None = None,
+    ) -> pd.DataFrame:
+        """Return a long-format DataFrame of fitted IV results across expiries.
+
+        Args:
+            domain: Optional strike domain as ``(min_strike, max_strike)``.
+            points: Number of fitted-curve evaluation points per expiry.
+            include_observed: Whether to include observed market IV columns.
+            start: Optional lower expiry bound.
+            end: Optional upper expiry bound.
+            step_days: Optional calendar-day sampling interval.
 
         Returns:
-            pd.DataFrame: Long-format DataFrame with 'expiry' column added.
+            pd.DataFrame: Long-format DataFrame with an ``expiry`` column.
         """
         if self._model is None:
             raise ValueError("Surface not fitted.")
 
-        dfs = []
-        for expiry in self.expiries:
-            # slice() ensures we get the real fitted curve
-            curve = self.slice(expiry)
-            try:
-                # curve.iv_results() returns the DataFrame for that slice
-                df = curve.iv_results()
-                df["expiry"] = expiry
-                dfs.append(df)
-            except ValueError:
-                continue
-
-        if not dfs:
-            return pd.DataFrame()
-
-        return pd.concat(dfs, ignore_index=True)
+        return build_surface_iv_results_frame(
+            self,
+            domain=domain,
+            points=points,
+            include_observed=include_observed,
+            start=start,
+            end=end,
+            step_days=step_days,
+        )
 
     @property
     def params(self) -> dict[pd.Timestamp, Any]:

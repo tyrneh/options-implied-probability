@@ -141,7 +141,7 @@ Both surface objects support *slicing*:
 1. `VolSurface.slice(expiry)` returns a `VolCurve`.
 2. `ProbSurface.slice(expiry)` returns a `ProbCurve`.
 
-After slicing, you can use the same methods you would use on regular curve objects (`implied_vol`, `price`, `greeks`, `iv_results` for volatility curves; `pdf`, `prob_below`, `quantile`, `plot` for probability curves).
+After slicing, you can use the same methods you would use on regular curve objects (`implied_vol`, `price`, `greeks`, `iv_results` for volatility curves; `pdf`, `prob_below`, `quantile`, `density_results`, `plot` for probability curves).
 
 ```python
 # volatility surface -> volatility curve snapshot
@@ -167,7 +167,7 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Forward Price** | `forward_price` (property) | Parity-implied forward $F$. | `forward_price(t)` | Interpolated forward $F(t)$. |
 | **Greeks (Bulk)** | `greeks(K)` | DataFrame of all Greeks. | `greeks(K, t)` | DataFrame of interpolated Greeks. |
 | **Individual Greeks** | `delta`, `gamma`, `vega`... | Partials w.r.t $S, \sigma, t, r$. | `delta`, `gamma`, `vega`... | Interpolated Greeks at $(K, t)$. |
-| **Calibration Data** | `iv_results()` | DataFrame of fitted vs market. | `iv_results()` | Long-format DataFrame of all fits. |
+| **Calibration Data** | `iv_results(domain=None, points=200, include_observed=True)` | DataFrame of fitted vs market for one expiry. | `iv_results(domain=None, points=200, include_observed=True, start=None, end=None, step_days=None)` | Long-format DataFrame across fitted or interpolated expiries. |
 | **Parameters** | `params` | Fitted coeffs (SVI `a, b...`). | `params` (dict) | Dict of `{expiry: params}`. |
 | **Slicing** | | | `slice(expiry)` | Extract a `VolCurve` snapshot. |
 | **Expiries** | `expiries` (1-tuple) | Single expiry date. | `expiries` (list) | List of fitted expiry dates. |
@@ -185,6 +185,7 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Density (PDF)** | `pdf(S)` | Probability density at price $S$. | `pdf(S, t)` | Probability density at price $S$ for a given maturity `t`. |
 | **Callable Alias** | `__call__(S)` | Alias for `pdf(S)`. | `__call__(S, t)` | Alias for `pdf(S, t)`. |
 | **CDF** | `prob_below(S)` | Cumulative distribution function at price $S$. | `cdf(S, t)` | CDF at price $S$ for maturity `t`. |
+| **Export Data** | `density_results(domain=None, points=None)` | DataFrame with `price`, `pdf`, and `cdf` for one expiry. | `density_results(domain=None, points=None, start=None, end=None, step_days=None)` | Long-format DataFrame with `expiry`, `price`, `pdf`, and `cdf`. |
 | **Tail Probabilities** | `prob_above(S)`, `prob_between(L, H)` | Upper tail and interval probabilities. | `slice(expiry).prob_above(S)`, `slice(expiry).prob_between(L, H)` | Tail methods are exposed on the sliced `ProbCurve`. |
 | **Quantile** | `quantile(q)` | Inverse CDF (price at probability $q$). | `quantile(q, t)` | Direct surface quantile query at maturity `t` (also available via `slice(expiry).quantile(q)`). |
 | **Moments** | `mean()`, `variance()`, `skew()`, `kurtosis()` | Distribution moments. | `slice(expiry).mean()` etc. | Moments for a selected expiry. |
