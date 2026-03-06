@@ -31,7 +31,7 @@ from oipd.market_inputs import (
     resolve_market,
 )
 
-__version__ = "0.1.0"
+__version__ = "2.0.2"
 
 __all__ = [
     # Core functions
