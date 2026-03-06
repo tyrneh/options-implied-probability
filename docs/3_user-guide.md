@@ -141,7 +141,7 @@ Both surface objects support *slicing*:
 1. `VolSurface.slice(expiry)` returns a `VolCurve`.
 2. `ProbSurface.slice(expiry)` returns a `ProbCurve`.
 
-After slicing, you can use the same methods you would use on regular curve objects (`implied_vol`, `price`, `greeks`, `iv_results` for volatility curves; `pdf`, `prob_below`, `quantile`, `plot` for probability curves).
+After slicing, you can use the same methods you would use on regular curve objects (`implied_vol`, `price`, `greeks`, `iv_results` for volatility curves; `pdf`, `prob_below`, `quantile`, `density_results`, `plot` for probability curves).
 
 ```python
 # volatility surface -> volatility curve snapshot
@@ -167,7 +167,7 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Forward Price** | `forward_price` (property) | Parity-implied forward $F$. | `forward_price(t)` | Interpolated forward $F(t)$. |
 | **Greeks (Bulk)** | `greeks(K)` | DataFrame of all Greeks. | `greeks(K, t)` | DataFrame of interpolated Greeks. |
 | **Individual Greeks** | `delta`, `gamma`, `vega`... | Partials w.r.t $S, \sigma, t, r$. | `delta`, `gamma`, `vega`... | Interpolated Greeks at $(K, t)$. |
-| **Calibration Data** | `iv_results()` | DataFrame of fitted vs market. | `iv_results()` | Long-format DataFrame of all fits. |
+| **Calibration Data** | `iv_results(domain=None, points=200, include_observed=True)` | Single-slice DataFrame of fitted IV vs observed quotes on a configurable strike grid. | `iv_results(domain=None, points=200, include_observed=True, start=None, end=None, step_days=None)` | Long-format IV export across fitted or interpolated expiries. |
 | **Parameters** | `params` | Fitted coeffs (SVI `a, b...`). | `params` (dict) | Dict of `{expiry: params}`. |
 | **Slicing** | | | `slice(expiry)` | Extract a `VolCurve` snapshot. |
 | **Expiries** | `expiries` (1-tuple) | Single expiry date. | `expiries` (list) | List of fitted expiry dates. |
@@ -189,6 +189,7 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Quantile** | `quantile(q)` | Inverse CDF (price at probability $q$). | `quantile(q, t)` | Direct surface quantile query at maturity `t` (also available via `slice(expiry).quantile(q)`). |
 | **Moments** | `mean()`, `variance()`, `skew()`, `kurtosis()` | Distribution moments. | `slice(expiry).mean()` etc. | Moments for a selected expiry. |
 | **Grid Access** | `prices`, `pdf_values`, `cdf_values` | Cached evaluation grid for plots and queries. | `slice(expiry).prices` etc. | Grid for a selected expiry. |
+| **Data Export** | `density_results(domain=None, points=None)` | DataFrame with `price`, `pdf`, and `cdf`; uses the native fitted grid by default or resamples to an explicit export grid. | `density_results(domain=None, points=None, start=None, end=None, step_days=None)` | Long-format export with `expiry`, `price`, `pdf`, and `cdf` across fitted or interpolated maturities. |
 | **Visualization (2D)** | `plot(kind=...)` | PDF/CDF plot for one expiry. | `plot_fan()` | Fan chart of quantile bands over expiries. |
 | **Metadata / Expiries** | `resolved_market`, `metadata` | Market snapshot + fit metadata. | `expiries` | Available expiry dates. |
 | **Slicing** | | | `slice(expiry)` | Extract a `ProbCurve` snapshot. |

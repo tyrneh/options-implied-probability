@@ -5,6 +5,13 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-03-06
+### Added
+- Added stable DataFrame export methods for fitted results:
+    - `ProbCurve.density_results(domain=None, points=None)`
+    - `ProbSurface.density_results(domain=None, points=None, start=None, end=None, step_days=None)`
+    - extended `VolSurface.iv_results(domain=None, points=200, include_observed=True, start=None, end=None, step_days=None)`
+
 ## [2.0.1] - 2025-02-17
 ### Code improvements
 - Reworked `ProbSurface` to use fitted `VolSurface` as the canonical source of truth. Probability is now derived from interpolated volatility and option prices at query time, rather than interpolating probabilities directly. This is important because only the fitted vol smiles can be linearly interpolated in total-variance space; probabilities can't be interpolated directly. 
