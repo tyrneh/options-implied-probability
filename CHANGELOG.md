@@ -8,9 +8,14 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [2.0.2] - 2026-03-06
 ### Added
 - Added stable DataFrame export methods for fitted results:
-    - `ProbCurve.density_results(domain=None, points=None)`
-    - `ProbSurface.density_results(domain=None, points=None, start=None, end=None, step_days=None)`
-    - extended `VolSurface.iv_results(domain=None, points=200, include_observed=True, start=None, end=None, step_days=None)`
+    - `ProbCurve.density_results(domain=None, points=200)`
+    - `ProbSurface.density_results(domain=None, points=200, start=None, end=None, step_days=1)`
+    - extended `VolSurface.iv_results(domain=None, points=200, include_observed=True, start=None, end=None, step_days=1)`
+
+### Changed
+- Surface DataFrame exports now default to a daily expiry grid (`step_days=1`).
+- When `start` and `end` are omitted, surface exports automatically span the first and last fitted pillar expiries.
+- Fitted pillar expiries are always included in surface exports, even when they fall off the stepped calendar grid.
 
 ## [2.0.1] - 2025-02-17
 ### Code improvements

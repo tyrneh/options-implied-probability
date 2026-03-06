@@ -414,10 +414,8 @@ class TestVolSurfaceMaturityDomain:
 class TestVolSurfaceIvResults:
     """Tests for VolSurface.iv_results() long-format exports."""
 
-    def test_iv_results_defaults_to_pillar_expiries(
-        self, multi_expiry_chain, market_inputs
-    ):
-        """Default export contains one slice per fitted pillar."""
+    def test_iv_results_defaults_to_daily_grid(self, multi_expiry_chain, market_inputs):
+        """Default export contains a daily grid spanning the fitted horizon."""
         from oipd import VolSurface
 
         vs = VolSurface()
@@ -426,7 +424,11 @@ class TestVolSurfaceIvResults:
 
         assert isinstance(result, pd.DataFrame)
         assert "expiry" in result.columns
-        assert tuple(pd.to_datetime(result["expiry"]).drop_duplicates()) == vs.expiries
+        unique_expiries = pd.to_datetime(result["expiry"]).drop_duplicates()
+        expected_days = (max(vs.expiries) - min(vs.expiries)).days + 1
+        assert unique_expiries.min() == min(vs.expiries)
+        assert unique_expiries.max() == max(vs.expiries)
+        assert len(unique_expiries) == expected_days
 
     def test_iv_results_step_grid_includes_off_step_pillars(
         self, multi_expiry_chain, market_inputs

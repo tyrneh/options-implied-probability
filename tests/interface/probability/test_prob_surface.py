@@ -409,15 +409,24 @@ class TestProbSurfaceDensityResults:
         result = prob_surface.density_results()
         assert isinstance(result, pd.DataFrame)
         assert list(result.columns) == ["expiry", "price", "pdf", "cdf"]
-        assert set(pd.to_datetime(result["expiry"]).unique()) == set(
-            prob_surface.expiries
+        unique_expiries = pd.to_datetime(result["expiry"]).unique()
+        assert pd.Timestamp(min(prob_surface.expiries)) == pd.Timestamp(
+            unique_expiries.min()
+        )
+        assert pd.Timestamp(max(prob_surface.expiries)) == pd.Timestamp(
+            unique_expiries.max()
         )
 
-    def test_density_results_defaults_to_pillar_expiries(self, prob_surface):
-        """Without step_days the export only contains fitted pillars."""
+    def test_density_results_defaults_to_daily_grid(self, prob_surface):
+        """Default export contains a daily grid spanning the fitted horizon."""
         result = prob_surface.density_results()
-        unique_expiries = tuple(pd.to_datetime(result["expiry"]).drop_duplicates())
-        assert unique_expiries == prob_surface.expiries
+        unique_expiries = pd.to_datetime(result["expiry"]).drop_duplicates()
+        expected_days = (
+            max(prob_surface.expiries) - min(prob_surface.expiries)
+        ).days + 1
+        assert unique_expiries.min() == min(prob_surface.expiries)
+        assert unique_expiries.max() == max(prob_surface.expiries)
+        assert len(unique_expiries) == expected_days
 
     def test_density_results_step_grid_includes_off_step_pillars(self, prob_surface):
         """Off-step fitted pillars are preserved alongside stepped dates."""
@@ -459,6 +468,16 @@ class TestProbSurfaceDensityResults:
             prob_surface.density_results(domain=(120.0, 80.0))
         with pytest.raises(ValueError, match="strictly positive integer"):
             prob_surface.density_results(step_days=0)
+
+    def test_density_results_domain_defaults_to_200_points(self, prob_surface):
+        """Explicit domain with omitted points defaults to 200 rows per expiry."""
+        pillar_expiry = prob_surface.expiries[0]
+        result = prob_surface.density_results(
+            domain=(80.0, 120.0),
+            start=pillar_expiry,
+            end=pillar_expiry,
+        )
+        assert len(result) == 200
 
 
 # =============================================================================

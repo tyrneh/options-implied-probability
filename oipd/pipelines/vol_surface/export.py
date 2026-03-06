@@ -22,7 +22,7 @@ def build_surface_iv_results_frame(
     include_observed: bool = True,
     start: str | date | pd.Timestamp | None = None,
     end: str | date | pd.Timestamp | None = None,
-    step_days: int | None = None,
+    step_days: int | None = 1,
 ) -> pd.DataFrame:
     """Build a long-format implied-volatility export for a fitted surface.
 
@@ -31,9 +31,13 @@ def build_surface_iv_results_frame(
         domain: Optional strike domain as ``(min_strike, max_strike)``.
         points: Number of curve evaluation points per expiry.
         include_observed: Whether to include observed market IV columns.
-        start: Optional lower expiry bound.
-        end: Optional upper expiry bound.
-        step_days: Optional calendar-day sampling interval.
+        start: Optional lower expiry bound. If omitted, the export starts at
+            the first fitted pillar expiry.
+        end: Optional upper expiry bound. If omitted, the export ends at the
+            last fitted pillar expiry.
+        step_days: Calendar-day sampling interval. Defaults to ``1`` so the
+            export includes a daily grid while still preserving all fitted
+            pillar expiries. Use ``None`` to export fitted pillars only.
 
     Returns:
         Long DataFrame with an ``expiry`` column.

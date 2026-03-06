@@ -259,20 +259,26 @@ def build_surface_density_results_frame(
     prob_surface: Any,
     *,
     domain: tuple[float, float] | None = None,
-    points: int | None = None,
+    points: int = 200,
     start: str | date | pd.Timestamp | None = None,
     end: str | date | pd.Timestamp | None = None,
-    step_days: int | None = None,
+    step_days: int | None = 1,
 ) -> pd.DataFrame:
     """Build a long-format density export DataFrame for a probability surface.
 
     Args:
         prob_surface: Probability surface interface object.
         domain: Optional export domain as ``(min_price, max_price)``.
-        points: Optional number of resampled grid points.
-        start: Optional lower expiry bound.
-        end: Optional upper expiry bound.
-        step_days: Optional calendar-day sampling interval.
+        points: Number of resampled grid points when ``domain`` is set.
+            Ignored when ``domain`` is omitted and the native slice grids are
+            returned unchanged.
+        start: Optional lower expiry bound. If omitted, the export starts at
+            the first fitted pillar expiry.
+        end: Optional upper expiry bound. If omitted, the export ends at the
+            last fitted pillar expiry.
+        step_days: Calendar-day sampling interval. Defaults to ``1`` so the
+            export includes a daily grid while still preserving all fitted
+            pillar expiries. Use ``None`` to export fitted pillars only.
 
     Returns:
         Long DataFrame with columns ``expiry``, ``price``, ``pdf``, and ``cdf``.

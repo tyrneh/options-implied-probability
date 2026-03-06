@@ -1225,7 +1225,7 @@ class VolSurface:
         include_observed: bool = True,
         start: str | date | pd.Timestamp | None = None,
         end: str | date | pd.Timestamp | None = None,
-        step_days: int | None = None,
+        step_days: int | None = 1,
     ) -> pd.DataFrame:
         """Return a long-format DataFrame of fitted IV results across expiries.
 
@@ -1233,9 +1233,14 @@ class VolSurface:
             domain: Optional strike domain as ``(min_strike, max_strike)``.
             points: Number of fitted-curve evaluation points per expiry.
             include_observed: Whether to include observed market IV columns.
-            start: Optional lower expiry bound.
-            end: Optional upper expiry bound.
-            step_days: Optional calendar-day sampling interval.
+            start: Optional lower expiry bound. If omitted, uses the first fitted
+                pillar expiry.
+            end: Optional upper expiry bound. If omitted, uses the last fitted
+                pillar expiry.
+            step_days: Calendar-day sampling interval. Defaults to ``1`` so the
+                export includes a daily grid. Fitted pillar expiries are always
+                included even when they fall off the stepped schedule. Use
+                ``None`` to export fitted pillars only.
 
         Returns:
             Long-format DataFrame with an ``expiry`` column.

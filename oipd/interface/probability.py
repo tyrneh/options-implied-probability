@@ -396,13 +396,14 @@ class ProbCurve:
     def density_results(
         self,
         domain: tuple[float, float] | None = None,
-        points: int | None = None,
+        points: int = 200,
     ) -> pd.DataFrame:
         """Return a DataFrame view of the fitted probability density.
 
         Args:
             domain: Optional explicit export domain as ``(min_price, max_price)``.
-            points: Optional number of resampled points when ``domain`` is set.
+            points: Number of resampled points when ``domain`` is set. Ignored
+                when ``domain`` is omitted and the native fitted grid is used.
 
         Returns:
             DataFrame with columns ``price``, ``pdf``, and ``cdf``.
@@ -781,19 +782,25 @@ class ProbSurface:
     def density_results(
         self,
         domain: tuple[float, float] | None = None,
-        points: int | None = None,
+        points: int = 200,
         start: str | date | pd.Timestamp | None = None,
         end: str | date | pd.Timestamp | None = None,
-        step_days: int | None = None,
+        step_days: int | None = 1,
     ) -> pd.DataFrame:
         """Return a long-format DataFrame view of surface probability slices.
 
         Args:
             domain: Optional explicit export domain as ``(min_price, max_price)``.
-            points: Optional number of resampled points when ``domain`` is set.
-            start: Optional lower expiry bound.
-            end: Optional upper expiry bound.
-            step_days: Optional calendar-day sampling interval.
+            points: Number of resampled points when ``domain`` is set. Ignored
+                when ``domain`` is omitted and the native slice grids are used.
+            start: Optional lower expiry bound. If omitted, uses the first fitted
+                pillar expiry.
+            end: Optional upper expiry bound. If omitted, uses the last fitted
+                pillar expiry.
+            step_days: Calendar-day sampling interval. Defaults to ``1`` so the
+                export includes a daily grid. Fitted pillar expiries are always
+                included even when they fall off the stepped schedule. Use
+                ``None`` to export fitted pillars only.
 
         Returns:
             DataFrame with columns ``expiry``, ``price``, ``pdf``, and ``cdf``.

@@ -47,9 +47,13 @@ def resolve_surface_export_expiries(
     Args:
         surface: Fitted surface-like interface exposing ``expiries`` and
             ``_resolve_query_time``.
-        start: Optional lower date bound.
-        end: Optional upper date bound.
-        step_days: Optional sampling step in calendar days.
+        start: Optional lower date bound. If omitted, defaults to the first
+            fitted pillar expiry.
+        end: Optional upper date bound. If omitted, defaults to the last
+            fitted pillar expiry.
+        step_days: Optional sampling step in calendar days. When provided,
+            fitted pillar expiries are always preserved even if they do not
+            land on the stepped schedule.
 
     Returns:
         Sorted, deduplicated export expiries.

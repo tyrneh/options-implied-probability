@@ -297,7 +297,7 @@ def build_density_results_frame(
     cdf_values: np.ndarray,
     *,
     domain: Optional[Tuple[float, float]] = None,
-    points: Optional[int] = None,
+    points: int = 200,
 ) -> pd.DataFrame:
     """Build a density export DataFrame from aligned probability arrays.
 
@@ -306,7 +306,8 @@ def build_density_results_frame(
         pdf_values: PDF values aligned with ``prices``.
         cdf_values: CDF values aligned with ``prices``.
         domain: Optional explicit export domain as ``(min_price, max_price)``.
-        points: Optional number of points when resampling to ``domain``.
+        points: Number of points when resampling to ``domain``. Ignored when
+            ``domain`` is omitted and the native grid is returned unchanged.
 
     Returns:
         DataFrame with columns ``price``, ``pdf``, and ``cdf``.
@@ -329,12 +330,9 @@ def build_density_results_frame(
             }
         )
 
-    if points is None:
-        grid_points = 200
-    else:
-        if isinstance(points, bool) or not isinstance(points, int) or points <= 0:
-            raise ValueError("points must be None or a strictly positive integer.")
-        grid_points = points
+    if isinstance(points, bool) or not isinstance(points, int) or points <= 0:
+        raise ValueError("points must be a strictly positive integer.")
+    grid_points = points
 
     grid_prices = np.linspace(validated_domain[0], validated_domain[1], grid_points)
     cdf_monotone = np.maximum.accumulate(cdf_array)
