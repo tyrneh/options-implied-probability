@@ -30,9 +30,10 @@ if TYPE_CHECKING:
 
 
 class ProbCurve:
-    """Single-date probability curve with selectable measure (physical or risk-neutral probabilities).
+    """Single-date probability curve in physical or risk-neutral measure.
 
-    By default, this class returns physical probabilities (real-world view).
+    Public constructors default to physical probabilities. Users can request a
+    risk-neutral view explicitly or switch measures after creation.
     """
 
     def __init__(
@@ -45,11 +46,9 @@ class ProbCurve:
         pdf_values: Optional[np.ndarray] = None,
         cdf_values: Optional[np.ndarray] = None,
         measure: Literal["physical", "risk_neutral"] = "physical",
-        erp: Optional[float] = None,
-        default_erp: float = 0.0423,
-        physical_cache: Optional[
-            dict[float, tuple[np.ndarray, np.ndarray, dict[str, Any]]]
-        ] = None,
+        risk_aversion: Optional[float] = None,
+        default_risk_aversion: float = 3.0,
+        physical_cache: Optional[dict[float, tuple[np.ndarray, np.ndarray]]] = None,
     ) -> None:
         """Initialize a ProbCurve result container.
 
@@ -61,11 +60,11 @@ class ProbCurve:
             pdf_values: Optional precomputed RN PDF values.
             cdf_values: Optional precomputed RN CDF values.
             measure: Active measure for probability queries.
-            erp: Annualized equity risk premium for physical conversion.
-            default_erp: Internal fallback ERP used when switching to physical
-                without an explicit value. Public APIs pass their ``erp``
-                argument through this field.
-            physical_cache: Optional cache of precomputed physical distributions by ERP key.
+            risk_aversion: CRRA coefficient used for physical conversion.
+            default_risk_aversion: Default CRRA coefficient used by
+                ``to_physical`` when callers do not override it.
+            physical_cache: Optional cache of precomputed physical distributions
+                by risk-aversion key.
 
         Raises:
             ValueError: If neither a fitted curve nor resolved market is supplied.
@@ -88,12 +87,12 @@ class ProbCurve:
             self._resolved_market = resolved_market
             self._metadata = dict(metadata or {})
 
-        self._default_erp = float(default_erp)
+        self._default_risk_aversion = float(default_risk_aversion)
         self._measure: Literal["physical", "risk_neutral"] = measure
-        self._erp: Optional[float] = (
-            float(erp)
-            if erp is not None
-            else (self._default_erp if measure == "physical" else None)
+        self._risk_aversion: Optional[float] = (
+            float(risk_aversion)
+            if risk_aversion is not None
+            else (self._default_risk_aversion if measure == "physical" else None)
         )
 
         self._rn_prices: Optional[np.ndarray] = (
@@ -106,9 +105,9 @@ class ProbCurve:
             np.asarray(cdf_values, dtype=float) if cdf_values is not None else None
         )
 
-        self._physical_cache: dict[
-            float, tuple[np.ndarray, np.ndarray, dict[str, Any]]
-        ] = dict(physical_cache or {})
+        self._physical_cache: dict[float, tuple[np.ndarray, np.ndarray]] = dict(
+            physical_cache or {}
+        )
 
         self._cached_prices: Optional[np.ndarray] = None
         self._cached_pdf: Optional[np.ndarray] = None
@@ -124,11 +123,9 @@ class ProbCurve:
         pdf_values: np.ndarray,
         cdf_values: np.ndarray,
         measure: Literal["physical", "risk_neutral"] = "physical",
-        erp: Optional[float] = None,
-        default_erp: float = 0.0423,
-        physical_cache: Optional[
-            dict[float, tuple[np.ndarray, np.ndarray, dict[str, Any]]]
-        ] = None,
+        risk_aversion: Optional[float] = None,
+        default_risk_aversion: float = 3.0,
+        physical_cache: Optional[dict[float, tuple[np.ndarray, np.ndarray]]] = None,
     ) -> "ProbCurve":
         """Build a ProbCurve from precomputed risk-neutral arrays.
 
@@ -139,10 +136,11 @@ class ProbCurve:
             pdf_values: RN PDF values aligned with ``prices``.
             cdf_values: RN CDF values aligned with ``prices``.
             measure: Active measure for probability queries.
-            erp: Annualized ERP used when ``measure="physical"``.
-            default_erp: Internal fallback ERP for later ``to_physical`` calls
-                when no explicit ERP override is provided.
-            physical_cache: Optional cache of physical densities by ERP.
+            risk_aversion: CRRA coefficient used when ``measure="physical"``.
+            default_risk_aversion: Default CRRA coefficient for later
+                ``to_physical`` calls.
+            physical_cache: Optional cache of physical densities by
+                risk-aversion key.
 
         Returns:
             ProbCurve: Array-backed probability curve.
@@ -155,8 +153,8 @@ class ProbCurve:
             pdf_values=pdf_values,
             cdf_values=cdf_values,
             measure=measure,
-            erp=erp,
-            default_erp=default_erp,
+            risk_aversion=risk_aversion,
+            default_risk_aversion=default_risk_aversion,
             physical_cache=physical_cache,
         )
 
@@ -169,7 +167,7 @@ class ProbCurve:
         column_mapping: Optional[Mapping[str, str]] = None,
         max_staleness_days: int = 3,
         measure: Literal["physical", "risk_neutral"] = "physical",
-        erp: float = 0.0423,
+        risk_aversion: float = 3.0,
     ) -> "ProbCurve":
         """Build a ProbCurve directly from a single-expiry option chain.
 
@@ -183,7 +181,7 @@ class ProbCurve:
                 standard names.
             max_staleness_days: Maximum age of quotes in days to include.
             measure: Output measure, either physical or risk-neutral.
-            erp: Annualized ERP used when ``measure="physical"``.
+            risk_aversion: CRRA coefficient used when ``measure="physical"``.
 
         Returns:
             ProbCurve: The fitted probability curve in the requested measure.
@@ -196,52 +194,21 @@ class ProbCurve:
 
         vol_curve = VolCurve(method="svi", max_staleness_days=max_staleness_days)
         vol_curve.fit(chain, market, column_mapping=column_mapping)
-        return vol_curve.implied_distribution(measure=measure, erp=erp)
-
-    @staticmethod
-    def _erp_cache_key(erp: float) -> float:
-        """Return a stable numeric key for ERP-based caches.
-
-        Args:
-            erp: Annualized ERP in decimal form.
-
-        Returns:
-            float: Rounded ERP key.
-        """
-        return round(float(erp), 12)
-
-    def _resolve_time_to_expiry_years(self) -> float:
-        """Resolve maturity in years from metadata or market dates.
-
-        Returns:
-            float: Time to expiry in years.
-
-        Raises:
-            ValueError: If maturity cannot be inferred.
-        """
-        t_years = self._metadata.get("time_to_expiry_years")
-        if t_years is not None:
-            return float(t_years)
-
-        expiry_date = self._metadata.get("expiry_date")
-        if expiry_date is None:
-            raise ValueError(
-                "time_to_expiry_years is unavailable and expiry_date metadata is missing."
-            )
-        return float(
-            calculate_time_to_expiry(expiry_date, self.resolved_market.valuation_date)
+        return vol_curve.implied_distribution(
+            measure=measure, risk_aversion=risk_aversion
         )
 
-    def _resolve_forward_price(self) -> float:
-        """Resolve the forward price used for physical conversion.
+    @staticmethod
+    def _risk_aversion_cache_key(risk_aversion: float) -> float:
+        """Return a stable numeric key for risk-aversion caches.
+
+        Args:
+            risk_aversion: CRRA coefficient.
 
         Returns:
-            float: Forward price level.
+            float: Rounded risk-aversion key.
         """
-        forward = self._metadata.get("forward_price")
-        if forward is None:
-            return float(self.resolved_market.underlying_price)
-        return float(forward)
+        return round(float(risk_aversion), 12)
 
     def _ensure_rn_generated(self) -> None:
         """Ensure canonical RN arrays are available.
@@ -277,35 +244,32 @@ class ProbCurve:
         self._cached_pdf = None
         self._cached_cdf = None
 
-    def _ensure_physical_generated(self, erp: float) -> None:
-        """Ensure physical arrays are available for the requested ERP.
+    def _ensure_physical_generated(self, risk_aversion: float) -> None:
+        """Ensure physical arrays are available for the requested risk aversion.
 
         Args:
-            erp: Annualized ERP in decimal form.
+            risk_aversion: CRRA coefficient.
 
         Returns:
             None.
         """
         from oipd.core.probability_density_conversion import (
-            physical_from_rn_exponential_tilt,
+            physical_from_rn_crra,
         )
 
-        erp_key = self._erp_cache_key(erp)
-        if erp_key in self._physical_cache:
+        risk_aversion_key = self._risk_aversion_cache_key(risk_aversion)
+        if risk_aversion_key in self._physical_cache:
             return
 
         self._ensure_rn_generated()
-        physical_pdf, physical_cdf, diagnostics = physical_from_rn_exponential_tilt(
+        physical_pdf, physical_cdf = physical_from_rn_crra(
             self._rn_prices,
             self._rn_pdf,
-            self._resolve_forward_price(),
-            self._resolve_time_to_expiry_years(),
-            float(erp),
+            float(risk_aversion),
         )
-        self._physical_cache[erp_key] = (
+        self._physical_cache[risk_aversion_key] = (
             np.asarray(physical_pdf, dtype=float),
             np.asarray(physical_cdf, dtype=float),
-            diagnostics,
         )
 
     def _ensure_active_distribution(self) -> None:
@@ -328,30 +292,29 @@ class ProbCurve:
             self._cached_cdf = np.asarray(self._rn_cdf, dtype=float)
             return
 
-        active_erp = float(self._erp if self._erp is not None else self._default_erp)
-        self._ensure_physical_generated(active_erp)
-        erp_key = self._erp_cache_key(active_erp)
-        physical_pdf, physical_cdf, _ = self._physical_cache[erp_key]
+        active_risk_aversion = float(
+            self._risk_aversion
+            if self._risk_aversion is not None
+            else self._default_risk_aversion
+        )
+        self._ensure_physical_generated(active_risk_aversion)
+        risk_aversion_key = self._risk_aversion_cache_key(active_risk_aversion)
+        physical_pdf, physical_cdf = self._physical_cache[risk_aversion_key]
         self._cached_prices = np.asarray(self._rn_prices, dtype=float)
         self._cached_pdf = np.asarray(physical_pdf, dtype=float)
         self._cached_cdf = np.asarray(physical_cdf, dtype=float)
 
-    def to_physical(self, *, erp: float | None = None) -> "ProbCurve":
+    def to_physical(self, *, risk_aversion: float = 3.0) -> "ProbCurve":
         """Return a new ProbCurve view in physical measure.
 
         Args:
-            erp: Optional ERP override. Uses the current ERP, then default ERP.
+            risk_aversion: CRRA coefficient used for the physical view.
 
         Returns:
             ProbCurve: New curve with active physical probabilities.
         """
-        resolved_erp = (
-            float(erp)
-            if erp is not None
-            else float(self._erp if self._erp is not None else self._default_erp)
-        )
         self._ensure_rn_generated()
-        self._ensure_physical_generated(resolved_erp)
+        self._ensure_physical_generated(risk_aversion)
         return ProbCurve.from_arrays(
             resolved_market=self.resolved_market,
             metadata=dict(self._metadata),
@@ -359,8 +322,8 @@ class ProbCurve:
             pdf_values=np.asarray(self._rn_pdf, dtype=float),
             cdf_values=np.asarray(self._rn_cdf, dtype=float),
             measure="physical",
-            erp=resolved_erp,
-            default_erp=self._default_erp,
+            risk_aversion=risk_aversion,
+            default_risk_aversion=self._default_risk_aversion,
             physical_cache=dict(self._physical_cache),
         )
 
@@ -378,8 +341,8 @@ class ProbCurve:
             pdf_values=np.asarray(self._rn_pdf, dtype=float),
             cdf_values=np.asarray(self._rn_cdf, dtype=float),
             measure="risk_neutral",
-            erp=None,
-            default_erp=self._default_erp,
+            risk_aversion=None,
+            default_risk_aversion=self._default_risk_aversion,
             physical_cache=dict(self._physical_cache),
         )
 
@@ -393,14 +356,18 @@ class ProbCurve:
         return self._measure
 
     @property
-    def erp(self) -> Optional[float]:
-        """Return the active ERP assumption when using physical measure.
+    def risk_aversion(self) -> Optional[float]:
+        """Return the active CRRA coefficient when using physical measure.
 
         Returns:
-            Optional[float]: ERP value for physical view, otherwise ``None``.
+            Optional[float]: Risk-aversion value for physical view, otherwise ``None``.
         """
         if self._measure == "physical":
-            return float(self._erp if self._erp is not None else self._default_erp)
+            return float(
+                self._risk_aversion
+                if self._risk_aversion is not None
+                else self._default_risk_aversion
+            )
         return None
 
     def pdf(self, price: float | np.ndarray) -> float | np.ndarray:
@@ -602,19 +569,16 @@ class ProbCurve:
         metadata = dict(self._metadata)
         metadata["measure"] = self._measure
         if self._measure == "physical":
-            active_erp = float(
-                self._erp if self._erp is not None else self._default_erp
+            active_risk_aversion = float(
+                self._risk_aversion
+                if self._risk_aversion is not None
+                else self._default_risk_aversion
             )
-            metadata["erp"] = active_erp
-            metadata["physical_transform"] = "exponential_tilt"
-            erp_key = self._erp_cache_key(active_erp)
-            cached = self._physical_cache.get(erp_key)
-            if cached is not None:
-                metadata["physical_diagnostics"] = dict(cached[2])
+            metadata["risk_aversion"] = active_risk_aversion
+            metadata["physical_transform"] = "crra_power_utility"
         else:
-            metadata.pop("erp", None)
+            metadata.pop("risk_aversion", None)
             metadata.pop("physical_transform", None)
-            metadata.pop("physical_diagnostics", None)
         return metadata
 
     def plot(
@@ -674,9 +638,10 @@ class ProbCurve:
 
 
 class ProbSurface:
-    """Multi-date probability surface with selectable measure (physical or risk-neutral probabilities).
+    """Multi-date probability surface in physical or risk-neutral measure.
 
-    By default, this class returns physical probabilities (real-world view).
+    Public constructors default to physical probabilities. Users can request a
+    risk-neutral view explicitly or switch measures after creation.
     """
 
     def __init__(
@@ -685,8 +650,8 @@ class ProbSurface:
         vol_surface: "VolSurface",
         grid_points: int = 241,
         measure: Literal["physical", "risk_neutral"] = "physical",
-        erp: Optional[float] = None,
-        default_erp: float = 0.0423,
+        risk_aversion: Optional[float] = None,
+        default_risk_aversion: float = 3.0,
     ) -> None:
         """Initialize a ProbSurface directly from a fitted VolSurface.
 
@@ -694,9 +659,9 @@ class ProbSurface:
             vol_surface: Fitted volatility surface used as canonical source.
             grid_points: Number of log-moneyness points in the shared strike grid.
             measure: Active measure used by probability queries.
-            erp: Annualized ERP used when ``measure="physical"``.
-            default_erp: Internal fallback ERP for ``to_physical`` calls when no
-                explicit ERP override is provided.
+            risk_aversion: CRRA coefficient used when ``measure="physical"``.
+            default_risk_aversion: Default CRRA coefficient used by
+                ``to_physical`` when callers do not override it.
 
         Raises:
             ValueError: If ``vol_surface`` has not been fitted or measure is invalid.
@@ -726,19 +691,19 @@ class ProbSurface:
         )
         self._k_grid = self._build_k_grid(points=grid_points)
 
-        self._default_erp = float(default_erp)
+        self._default_risk_aversion = float(default_risk_aversion)
         self._measure: Literal["physical", "risk_neutral"] = measure
-        self._erp: Optional[float] = (
-            float(erp)
-            if erp is not None
-            else (self._default_erp if measure == "physical" else None)
+        self._risk_aversion: Optional[float] = (
+            float(risk_aversion)
+            if risk_aversion is not None
+            else (self._default_risk_aversion if measure == "physical" else None)
         )
 
         self._distribution_cache: dict[
             float, tuple[np.ndarray, np.ndarray, np.ndarray]
         ] = {}
         self._physical_distribution_cache: dict[
-            tuple[float, float], tuple[np.ndarray, np.ndarray, dict[str, Any]]
+            tuple[float, float], tuple[np.ndarray, np.ndarray]
         ] = {}
         self._curve_cache: dict[tuple[str, Optional[float], float], ProbCurve] = {}
         self._resolved_market_cache: dict[float, ResolvedMarket] = {}
@@ -756,16 +721,16 @@ class ProbSurface:
         return round(float(t_years), 12)
 
     @staticmethod
-    def _erp_cache_key(erp: float) -> float:
-        """Return a stable cache key for ERP.
+    def _risk_aversion_cache_key(risk_aversion: float) -> float:
+        """Return a stable cache key for risk aversion.
 
         Args:
-            erp: Annualized ERP in decimal form.
+            risk_aversion: CRRA coefficient.
 
         Returns:
-            float: Rounded ERP key.
+            float: Rounded risk-aversion key.
         """
-        return round(float(erp), 12)
+        return round(float(risk_aversion), 12)
 
     def _build_k_grid(self, *, points: int) -> np.ndarray:
         """Build a unified log-moneyness grid shared across maturities.
@@ -815,41 +780,37 @@ class ProbSurface:
         return result
 
     def _physical_distribution_for_t_years(
-        self, t_years: float, erp: float
+        self, t_years: float, risk_aversion: float
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Compute and cache physical distribution arrays for ``(t_years, erp)``.
+        """Compute and cache physical distribution arrays for a maturity.
 
         Args:
             t_years: Time to maturity in years.
-            erp: Annualized ERP in decimal form.
+            risk_aversion: CRRA coefficient.
 
         Returns:
             tuple[np.ndarray, np.ndarray, np.ndarray]: Price grid, physical PDF, physical CDF.
         """
         from oipd.core.probability_density_conversion import (
-            physical_from_rn_exponential_tilt,
+            physical_from_rn_crra,
         )
 
         t_key = self._time_cache_key(t_years)
-        erp_key = self._erp_cache_key(erp)
-        cache_key = (t_key, erp_key)
+        risk_aversion_key = self._risk_aversion_cache_key(risk_aversion)
+        cache_key = (t_key, risk_aversion_key)
         rn_prices, rn_pdf, _ = self._rn_distribution_arrays_for_t_years(t_years)
         if cache_key not in self._physical_distribution_cache:
-            forward_price = float(self._vol_surface.forward_price(t_years))
-            physical_pdf, physical_cdf, diagnostics = physical_from_rn_exponential_tilt(
+            physical_pdf, physical_cdf = physical_from_rn_crra(
                 rn_prices,
                 rn_pdf,
-                forward_price,
-                float(t_years),
-                float(erp),
+                float(risk_aversion),
             )
             self._physical_distribution_cache[cache_key] = (
                 np.asarray(physical_pdf, dtype=float),
                 np.asarray(physical_cdf, dtype=float),
-                diagnostics,
             )
 
-        physical_pdf, physical_cdf, _ = self._physical_distribution_cache[cache_key]
+        physical_pdf, physical_cdf = self._physical_distribution_cache[cache_key]
         return (
             rn_prices,
             np.asarray(physical_pdf, dtype=float),
@@ -870,8 +831,12 @@ class ProbSurface:
         if self._measure == "risk_neutral":
             return self._rn_distribution_arrays_for_t_years(t_years)
 
-        active_erp = float(self._erp if self._erp is not None else self._default_erp)
-        return self._physical_distribution_for_t_years(t_years, active_erp)
+        active_risk_aversion = float(
+            self._risk_aversion
+            if self._risk_aversion is not None
+            else self._default_risk_aversion
+        )
+        return self._physical_distribution_for_t_years(t_years, active_risk_aversion)
 
     def _resolved_market_for_t_years(self, t_years: float) -> ResolvedMarket:
         """Build and cache a synthetic resolved market snapshot for maturity ``t``.
@@ -902,14 +867,16 @@ class ProbSurface:
             ProbCurve: Probability curve in the active measure.
         """
         t_key = self._time_cache_key(t_years)
-        erp_key = (
-            self._erp_cache_key(
-                self._erp if self._erp is not None else self._default_erp
+        risk_aversion_key = (
+            self._risk_aversion_cache_key(
+                self._risk_aversion
+                if self._risk_aversion is not None
+                else self._default_risk_aversion
             )
             if self._measure == "physical"
             else None
         )
-        cache_key = (self._measure, erp_key, t_key)
+        cache_key = (self._measure, risk_aversion_key, t_key)
         if cache_key in self._curve_cache:
             return self._curve_cache[cache_key]
 
@@ -929,16 +896,17 @@ class ProbSurface:
                 pdf_values=rn_pdf,
                 cdf_values=rn_cdf,
                 measure="risk_neutral",
-                default_erp=self._default_erp,
+                default_risk_aversion=self._default_risk_aversion,
             )
         else:
-            active_erp = float(
-                self._erp if self._erp is not None else self._default_erp
+            active_risk_aversion = float(
+                self._risk_aversion
+                if self._risk_aversion is not None
+                else self._default_risk_aversion
             )
             _, physical_pdf, physical_cdf = self._physical_distribution_for_t_years(
-                t_years, active_erp
+                t_years, active_risk_aversion
             )
-            diagnostics = self._physical_distribution_cache[(t_key, erp_key)][2]
             curve = ProbCurve.from_arrays(
                 resolved_market=resolved_market,
                 metadata=metadata,
@@ -946,13 +914,12 @@ class ProbSurface:
                 pdf_values=rn_pdf,
                 cdf_values=rn_cdf,
                 measure="physical",
-                erp=active_erp,
-                default_erp=self._default_erp,
+                risk_aversion=active_risk_aversion,
+                default_risk_aversion=self._default_risk_aversion,
                 physical_cache={
-                    self._erp_cache_key(active_erp): (
+                    self._risk_aversion_cache_key(active_risk_aversion): (
                         physical_pdf,
                         physical_cdf,
-                        diagnostics,
                     )
                 },
             )
@@ -970,7 +937,7 @@ class ProbSurface:
         max_staleness_days: int = 3,
         failure_policy: Literal["raise", "skip_warn"] = "skip_warn",
         measure: Literal["physical", "risk_neutral"] = "physical",
-        erp: float = 0.0423,
+        risk_aversion: float = 3.0,
     ) -> "ProbSurface":
         """Build a ProbSurface directly from a multi-expiry option chain.
 
@@ -981,7 +948,7 @@ class ProbSurface:
             max_staleness_days: Maximum age of quotes in days to include.
             failure_policy: Slice-level failure handling policy.
             measure: Output measure, either physical or risk-neutral.
-            erp: Annualized ERP used when ``measure="physical"``.
+            risk_aversion: CRRA coefficient used when ``measure="physical"``.
 
         Returns:
             ProbSurface: Fitted probability surface in requested measure.
@@ -1004,19 +971,21 @@ class ProbSurface:
             column_mapping=column_mapping,
             failure_policy=failure_policy,
         )
-        return vol_surface.implied_distribution(measure=measure, erp=erp)
+        return vol_surface.implied_distribution(
+            measure=measure, risk_aversion=risk_aversion
+        )
 
     def _spawn(
         self,
         *,
         measure: Literal["physical", "risk_neutral"],
-        erp: Optional[float],
+        risk_aversion: Optional[float],
     ) -> "ProbSurface":
         """Create a new ProbSurface view while preserving computed caches.
 
         Args:
             measure: Target active measure.
-            erp: Target ERP assumption for physical measure.
+            risk_aversion: Target CRRA coefficient for physical measure.
 
         Returns:
             ProbSurface: New surface with copied canonical caches.
@@ -1025,8 +994,8 @@ class ProbSurface:
             vol_surface=self._vol_surface,
             grid_points=len(self._k_grid),
             measure=measure,
-            erp=erp,
-            default_erp=self._default_erp,
+            risk_aversion=risk_aversion,
+            default_risk_aversion=self._default_risk_aversion,
         )
         new_surface._k_grid = np.asarray(self._k_grid, dtype=float)
         new_surface._distribution_cache = dict(self._distribution_cache)
@@ -1036,21 +1005,16 @@ class ProbSurface:
         new_surface._resolved_market_cache = dict(self._resolved_market_cache)
         return new_surface
 
-    def to_physical(self, *, erp: float | None = None) -> "ProbSurface":
+    def to_physical(self, *, risk_aversion: float = 3.0) -> "ProbSurface":
         """Return a new ProbSurface view in physical measure.
 
         Args:
-            erp: Optional ERP override. Uses current ERP, then default ERP.
+            risk_aversion: CRRA coefficient used for the physical view.
 
         Returns:
             ProbSurface: New surface with active physical probabilities.
         """
-        resolved_erp = (
-            float(erp)
-            if erp is not None
-            else float(self._erp if self._erp is not None else self._default_erp)
-        )
-        return self._spawn(measure="physical", erp=resolved_erp)
+        return self._spawn(measure="physical", risk_aversion=risk_aversion)
 
     def to_risk_neutral(self) -> "ProbSurface":
         """Return a new ProbSurface view in risk-neutral measure.
@@ -1058,7 +1022,7 @@ class ProbSurface:
         Returns:
             ProbSurface: New surface with active risk-neutral probabilities.
         """
-        return self._spawn(measure="risk_neutral", erp=None)
+        return self._spawn(measure="risk_neutral", risk_aversion=None)
 
     @property
     def measure(self) -> Literal["physical", "risk_neutral"]:
@@ -1070,14 +1034,18 @@ class ProbSurface:
         return self._measure
 
     @property
-    def erp(self) -> Optional[float]:
-        """Return active ERP assumption when in physical measure.
+    def risk_aversion(self) -> Optional[float]:
+        """Return the active CRRA coefficient when in physical measure.
 
         Returns:
-            Optional[float]: Active ERP for physical view, otherwise ``None``.
+            Optional[float]: Active risk aversion for physical view, otherwise ``None``.
         """
         if self._measure == "physical":
-            return float(self._erp if self._erp is not None else self._default_erp)
+            return float(
+                self._risk_aversion
+                if self._risk_aversion is not None
+                else self._default_risk_aversion
+            )
         return None
 
     def slice(self, expiry: str | date | pd.Timestamp) -> ProbCurve:
@@ -1087,7 +1055,7 @@ class ProbSurface:
             expiry: Expiry identifier as a date-like object.
 
         Returns:
-            ProbCurve: Probability slice inheriting active measure/ERP.
+            ProbCurve: Probability slice inheriting active measure and risk aversion.
         """
         if not isinstance(expiry, (str, date, pd.Timestamp)):
             raise ValueError(

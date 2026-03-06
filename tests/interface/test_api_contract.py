@@ -301,9 +301,13 @@ class TestProbCurveContract:
     def test_measure_property_exists(self, prob_curve):
         assert prob_curve.measure in {"physical", "risk_neutral"}
 
+    def test_risk_aversion_property_exists(self, prob_curve):
+        assert isinstance(prob_curve.risk_aversion, (float, np.floating))
+
     def test_to_physical_exists(self, prob_curve):
         converted = prob_curve.to_physical()
         assert converted.measure == "physical"
+        assert np.isclose(converted.risk_aversion, 3.0)
 
     def test_to_risk_neutral_exists(self, prob_curve):
         converted = prob_curve.to_risk_neutral()
@@ -357,3 +361,4 @@ class TestProbSurfaceContract:
     def test_surface_conversion_methods_exist(self, prob_surface):
         assert prob_surface.to_physical().measure == "physical"
         assert prob_surface.to_risk_neutral().measure == "risk_neutral"
+        assert np.isclose(prob_surface.to_physical().risk_aversion, 3.0)

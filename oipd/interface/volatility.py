@@ -470,13 +470,13 @@ class VolCurve:
         self,
         *,
         measure: Literal["physical", "risk_neutral"] = "physical",
-        erp: float = 0.0423,
+        risk_aversion: float = 3.0,
     ) -> ProbCurve:
         """Return the implied probability distribution from the fitted vol smile.
 
         Args:
             measure: Output measure, either physical or risk-neutral.
-            erp: Annualized ERP used when ``measure="physical"``.
+            risk_aversion: CRRA coefficient used when ``measure="physical"``.
 
         Returns:
             ProbCurve: Fitted distribution object in the requested measure.
@@ -523,10 +523,10 @@ class VolCurve:
             pdf_values=pdf,
             cdf_values=cdf,
             measure="risk_neutral",
-            default_erp=erp,
+            default_risk_aversion=risk_aversion,
         )
         if measure == "physical":
-            return risk_neutral_curve.to_physical(erp=erp)
+            return risk_neutral_curve.to_physical(risk_aversion=risk_aversion)
         return risk_neutral_curve
 
     def price(
@@ -1213,13 +1213,13 @@ class VolSurface:
         self,
         *,
         measure: Literal["physical", "risk_neutral"] = "physical",
-        erp: float = 0.0423,
+        risk_aversion: float = 3.0,
     ) -> ProbSurface:
         """Return the implied distribution surface for all fitted expiries.
 
         Args:
             measure: Output measure, either physical or risk-neutral.
-            erp: Annualized ERP used when ``measure="physical"``.
+            risk_aversion: CRRA coefficient used when ``measure="physical"``.
 
         Returns:
             ProbSurface: Surface with per-expiry distributions.
@@ -1241,8 +1241,8 @@ class VolSurface:
         return ProbSurface(
             vol_surface=self,
             measure=measure,
-            erp=erp,
-            default_erp=erp,
+            risk_aversion=risk_aversion,
+            default_risk_aversion=risk_aversion,
         )
 
     def atm_vol(self, t: float | str | date | pd.Timestamp) -> float:

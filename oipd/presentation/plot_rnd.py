@@ -182,7 +182,7 @@ def plot_rnd(
             plot_title = (
                 f"Implied PDF and CDF of price on {expiry_date}"
                 if expiry_date
-                else "Risk-Neutral Distribution"
+                else "Market-implied distribution"
             )
     else:
         plot_title = title

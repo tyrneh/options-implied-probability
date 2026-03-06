@@ -263,8 +263,9 @@ class TestProbSurfaceProperties:
         rn_surface = prob_surface.to_risk_neutral()
         assert rn_surface is not prob_surface
         assert rn_surface.measure == "risk_neutral"
-        physical_surface = rn_surface.to_physical(erp=0.0423)
+        physical_surface = rn_surface.to_physical(risk_aversion=3.0)
         assert physical_surface.measure == "physical"
+        assert np.isclose(physical_surface.risk_aversion, 3.0)
 
 
 # =============================================================================
@@ -283,6 +284,7 @@ class TestProbSurfaceSlice:
         curve = prob_surface.slice(first_exp)
         assert isinstance(curve, ProbCurve)
         assert curve.measure == prob_surface.measure
+        assert np.isclose(curve.risk_aversion, prob_surface.risk_aversion)
 
     def test_slice_has_valid_pdf(self, prob_surface):
         """Sliced ProbCurve has valid PDF."""

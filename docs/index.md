@@ -10,6 +10,7 @@ has_children: true
 
 **1. Compute market-implied probability distributions of future asset prices.**
 - While markets don't predict the future with certainty, under the efficient market view, these market expectations represent the best available estimate of what might happen.
+- OIPD can compute both risk-neutral and real-world physical probabilities.
 - The probability distribution is a transformation of the volatility surface. Thus, accurately modelling a volatility surface is crucial to computing the distribution, which leads to OIPD's second feature below.
 
 <p align="center" style="margin-top: 20px;">

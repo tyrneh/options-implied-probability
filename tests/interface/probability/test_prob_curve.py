@@ -168,7 +168,8 @@ class TestProbCurveProperties:
         assert "forward_price" in metadata
         assert "at_money_vol" in metadata
         assert metadata["measure"] == "physical"
-        assert np.isclose(metadata["erp"], 0.0423)
+        assert np.isclose(metadata["risk_aversion"], 3.0)
+        assert metadata["physical_transform"] == "crra_power_utility"
         assert np.isfinite(metadata["at_money_vol"])
 
     def test_resolved_market_available(self, prob_curve):
@@ -186,17 +187,19 @@ class TestProbCurveProperties:
     def test_to_physical_roundtrip_preserves_measure(self, prob_curve):
         """Switching RN->physical updates active measure."""
         rn_curve = prob_curve.to_risk_neutral()
-        physical_curve = rn_curve.to_physical(erp=0.0423)
+        physical_curve = rn_curve.to_physical(risk_aversion=3.0)
         assert physical_curve.measure == "physical"
+        assert np.isclose(physical_curve.risk_aversion, 3.0)
 
-    def test_erp_zero_is_close_to_risk_neutral(self, prob_curve):
-        """ERP=0 physical curve should target the forward mean."""
+    def test_risk_aversion_zero_matches_risk_neutral(self, prob_curve):
+        """Gamma=0 should recover the risk-neutral distribution."""
         rn_curve = prob_curve.to_risk_neutral()
-        physical_zero = rn_curve.to_physical(erp=0.0)
-        target_mean = float(rn_curve.metadata["forward_price"])
-        rn_error = abs(rn_curve.mean() - target_mean)
-        physical_error = abs(physical_zero.mean() - target_mean)
-        assert physical_error <= rn_error + 1e-6
+        physical_zero = rn_curve.to_physical(risk_aversion=0.0)
+        np.testing.assert_allclose(
+            physical_zero.pdf_values,
+            rn_curve.pdf_values,
+            atol=1e-10,
+        )
 
 
 # =============================================================================

@@ -58,3 +58,44 @@ We find that QuantLib's SVI fitter is significant faster as it is written in C++
 | Negative RND grid points (native 200-point RND grid) | 0 | 14 |
 
 For arbitrage checks, higher `min(g(k))` is better, and any negative value is a warning for butterfly arbitrage. Likewise, lower values are better for both `Share of grid with g(k) < 0` and `Negative RND grid points`; `0` is the clean no-violation outcome on the tested grid.
+
+## 4. Conversion to probability
+
+### 4.1 From fitted volatility to a risk-neutral density
+Risk-neutral probabilities are for pricing; physical probabilities are for forecasting and real-world decision questions.
+
+OIPD first calculates the **risk-neutral** density \(q(S_T)\): the distribution consistent with no-arbitrage option pricing. Then, we apply a change of measure from \(q(S_T)\) to a physical probability \(p(S_T)\), using a simple parametric pricing-kernel adjustment.
+
+However, according to "https://pages.stern.nyu.edu/~sfiglews/documents/RND%20Review%20ver4.pdf":
+"This section reviews attempts to extract information about
+objective probabilities—the P-distribution—such as future realized volatility. But as just
+discussed, the nearly universal conclusion remains that it can't be done without imposing
+additional assumptions."
+
+
+### 4.3 OIPD behavior
+OIPD defaults to physical probabilities:
+- `.implied_distribution(...)`
+- `ProbCurve.from_chain(...)`
+- `ProbSurface.from_chain(...)`
+
+Users can still request risk-neutral explicitly with `measure="risk_neutral"`, and can switch after creation via `.to_physical(...)` and `.to_risk_neutral()`.
+
+### 4.4 MVP model used in OIPD: exponential tilt
+Current physical conversion uses a one-parameter exponential tilt:
+\[
+p_\lambda(S) \propto q(S)\exp\!\left(\lambda\log\frac{S}{F}\right)
+\]
+with \(\lambda\) chosen so that:
+\[
+\mathbb{E}_{p}[S_T] = F \exp(\text{ERP}\cdot T).
+\]
+
+Inputs required are:
+- forward \(F\),
+- horizon \(T\) in years,
+- ERP (annualized, decimal).
+
+OIPD currently uses `erp=0.0423` by default (4.23%), sourced from Damodaran’s implied ERP data page:
+[https://pages.stern.nyu.edu/adamodar/New_Home_Page/home.htm](https://pages.stern.nyu.edu/adamodar/New_Home_Page/home.htm)
+

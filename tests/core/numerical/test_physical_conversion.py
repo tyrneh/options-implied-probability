@@ -1,115 +1,60 @@
-"""Tests for risk-neutral to physical probability conversion."""
+"""Tests for CRRA-based physical probability conversion."""
 
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from oipd.core.errors import InvalidInputError
-from oipd.core.probability_density_conversion import (
-    physical_from_rn_exponential_tilt,
-)
+from oipd.core.probability_density_conversion import physical_from_rn_crra
 
 
-def _build_rn_pdf(forward: float = 100.0) -> tuple[np.ndarray, np.ndarray]:
+def _build_rn_pdf(center: float = 100.0) -> tuple[np.ndarray, np.ndarray]:
     """Build a smooth synthetic risk-neutral PDF on a positive grid.
 
     Args:
-        forward: Forward level for the synthetic density center.
+        center: Center of the synthetic density.
 
     Returns:
         tuple[np.ndarray, np.ndarray]: Price grid and normalized RN PDF.
     """
     prices = np.linspace(40.0, 180.0, 401)
     sigma = 0.20
-    rn_pdf = np.exp(-0.5 * ((np.log(prices / forward) / sigma) ** 2))
+    rn_pdf = np.exp(-0.5 * ((np.log(prices / center) / sigma) ** 2))
     rn_pdf /= np.trapz(rn_pdf, prices)
     return prices, rn_pdf
 
 
-def test_physical_conversion_preserves_pdf_properties() -> None:
-    """Physical PDF is non-negative, finite, and normalized."""
+def test_risk_aversion_zero_returns_risk_neutral_density() -> None:
+    """Gamma=0 should leave the RN density unchanged."""
     prices, rn_pdf = _build_rn_pdf()
-    physical_pdf, physical_cdf, _ = physical_from_rn_exponential_tilt(
-        prices,
-        rn_pdf,
-        forward_price=100.0,
-        time_to_expiry_years=0.5,
-        erp=0.0423,
-    )
+    physical_pdf, physical_cdf = physical_from_rn_crra(prices, rn_pdf, 0.0)
 
-    assert np.all(np.isfinite(physical_pdf))
-    assert np.all(physical_pdf >= 0.0)
-    assert np.isclose(np.trapz(physical_pdf, prices), 1.0, atol=1e-4)
-
-    assert np.all(np.isfinite(physical_cdf))
-    assert np.all(np.diff(physical_cdf) >= -1e-10)
-    assert 0.0 <= float(np.min(physical_cdf)) <= 1.0
-    assert 0.0 <= float(np.max(physical_cdf)) <= 1.0
-    assert np.isclose(float(physical_cdf[-1]), 1.0, atol=1e-4)
+    np.testing.assert_allclose(physical_pdf, rn_pdf, atol=1e-10)
+    np.testing.assert_allclose(physical_cdf[-1], 1.0, atol=1e-10)
 
 
-def test_physical_conversion_matches_target_mean() -> None:
-    """Calibrated physical density matches ERP-implied target mean."""
+def test_physical_pdf_integrates_to_one() -> None:
+    """Converted physical PDF remains normalized."""
     prices, rn_pdf = _build_rn_pdf()
-    erp = 0.05
-    maturity = 0.75
-    target_mean = 100.0 * np.exp(erp * maturity)
+    physical_pdf, _ = physical_from_rn_crra(prices, rn_pdf, 3.0)
 
-    physical_pdf, _, diagnostics = physical_from_rn_exponential_tilt(
-        prices,
-        rn_pdf,
-        forward_price=100.0,
-        time_to_expiry_years=maturity,
-        erp=erp,
-    )
-    realized_mean = float(np.trapz(prices * physical_pdf, prices))
-    assert np.isclose(realized_mean, target_mean, atol=1e-4)
-    assert np.isclose(diagnostics["realized_mean"], target_mean, atol=1e-4)
+    assert np.isclose(np.trapz(physical_pdf, prices), 1.0, atol=1e-8)
 
 
-def test_physical_conversion_with_zero_erp_targets_forward_mean() -> None:
-    """Zero ERP enforces a physical mean equal to the forward."""
+def test_physical_cdf_is_monotone_and_ends_at_one() -> None:
+    """Converted physical CDF is usable for quantile and probability queries."""
     prices, rn_pdf = _build_rn_pdf()
-    target_mean = 100.0
-    rn_mean = float(np.trapz(prices * rn_pdf, prices))
-    physical_pdf, _, _ = physical_from_rn_exponential_tilt(
-        prices,
-        rn_pdf,
-        forward_price=100.0,
-        time_to_expiry_years=1.0,
-        erp=0.0,
-    )
-    physical_mean = float(np.trapz(prices * physical_pdf, prices))
-    assert abs(physical_mean - target_mean) <= abs(rn_mean - target_mean) + 1e-8
+    _, physical_cdf = physical_from_rn_crra(prices, rn_pdf, 3.0)
+
+    assert np.all(np.diff(physical_cdf) >= -1e-12)
+    assert np.isclose(float(physical_cdf[-1]), 1.0, atol=1e-10)
 
 
-def test_physical_conversion_rejects_invalid_inputs() -> None:
-    """Invalid scalar and array inputs are rejected."""
+def test_higher_risk_aversion_shifts_mass_to_higher_prices() -> None:
+    """Larger CRRA coefficients should increase the physical mean price."""
     prices, rn_pdf = _build_rn_pdf()
-    with pytest.raises(InvalidInputError):
-        physical_from_rn_exponential_tilt(
-            prices,
-            rn_pdf[:-1],
-            forward_price=100.0,
-            time_to_expiry_years=0.5,
-            erp=0.0423,
-        )
+    pdf_low, _ = physical_from_rn_crra(prices, rn_pdf, 1.0)
+    pdf_high, _ = physical_from_rn_crra(prices, rn_pdf, 5.0)
 
-    with pytest.raises(InvalidInputError):
-        physical_from_rn_exponential_tilt(
-            prices,
-            rn_pdf,
-            forward_price=-1.0,
-            time_to_expiry_years=0.5,
-            erp=0.0423,
-        )
-
-    with pytest.raises(InvalidInputError):
-        physical_from_rn_exponential_tilt(
-            prices,
-            rn_pdf,
-            forward_price=100.0,
-            time_to_expiry_years=0.0,
-            erp=0.0423,
-        )
+    mean_low = float(np.trapz(prices * pdf_low, prices))
+    mean_high = float(np.trapz(prices * pdf_high, prices))
+    assert mean_high > mean_low
