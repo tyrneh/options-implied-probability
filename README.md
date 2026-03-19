@@ -7,17 +7,16 @@
 
 # Overview
 
-### OIPD (Options-implied Probability Distribution) provides 2 capabilities:
+OIPD answers a simple question: **what future price distribution is the options market implying right now?** While markets don't predict the future with certainty, under the efficient market view, these market expectations represent the best available estimate of what might happen.
 
-**1. Compute market-implied probability distributions of future asset prices.**
-   - While markets don't predict the future with certainty, under the efficient market view, these market expectations represent the best available estimate of what might happen.
+It does this by taking listed options data, fitting an arbitrage-free implied volatility curve or surface, and then transforming that fitted object into a probability distribution over future asset prices. In practice, that provides two core capabilities in one library:
+
+- **Volatility modeling:** fit single-expiry smiles and multi-expiry volatility surfaces for pricing and risk work.
+- **Probability extraction:** compute market-implied probability distributions, cumulative probabilities, quantiles, and distributional moments from those fitted volatility objects.
 
 <p align="center" style="margin-top: 80px;">
   <img src="https://raw.githubusercontent.com/Open-Lemma/options-implied-probability/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
 </p>
-
-**2. Fit arbitrage-free volatility smiles and surfaces for pricing and risk analysis.**
-   - Fitting a vol surface well is a complex and expensive process, with the leading software provider costing $50k USD/month/seat. OIPD open-sources the entire pipeline fairly rigorously, with further improvements in the roadmap.
 
 <table align="center" cellspacing="12" style="margin-top:120px; width:100%; border-collapse:separate;">
   <tr>
