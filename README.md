@@ -12,7 +12,7 @@ OIPD computes the probabilities implied by the options market for an asset’s f
 It does this by taking listed options data, fitting an arbitrage-free implied volatility curve or surface, and then transforming that fitted object into a probability distribution over future asset prices. In practice, that provides two core capabilities in one library:
 
 - **Volatility modeling:** fit single-expiry smiles and multi-expiry volatility surfaces for pricing and risk work.
-- **Probability extraction:** compute market-implied probability distributions, cumulative probabilities, quantiles, and distributional moments from those fitted volatility objects.
+- **Probability extraction:** compute market-implied probability distributions, cumulative probabilities, quantiles, and distributional moments.
 
 
 <p align="center" style="margin-top: 80px;">
