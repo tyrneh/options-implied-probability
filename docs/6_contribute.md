@@ -10,7 +10,7 @@ Contributions are welcome. Please open an issue first for non-trivial changes so
 ## Development Setup
 
 ```bash
-git clone https://github.com/tyrneh/options-implied-probability.git
+git clone https://github.com/Open-Lemma/options-implied-probability.git
 cd options-implied-probability
 pip install -e '.[dev]'
 ```
@@ -43,6 +43,5 @@ isort .
 mypy oipd
 pytest -q
 ```
-
 
 

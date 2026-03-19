@@ -65,8 +65,8 @@ dev = [
 
 
 [project.urls]
-"Homepage" = "https://github.com/tyrneh/options-implied-probability"
-"Bug Tracker" = "https://github.com/tyrneh/options-implied-probability/issues"
+"Homepage" = "https://github.com/Open-Lemma/options-implied-probability"
+"Bug Tracker" = "https://github.com/Open-Lemma/options-implied-probability/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,7 +1,7 @@
-![OIPD logo](https://github.com/tyrneh/options-implied-probability/blob/main/.meta/images/OIPD%20Logo.png)
+![OIPD logo](https://raw.githubusercontent.com/Open-Lemma/options-implied-probability/main/.meta/images/OIPD%20Logo.png)
 
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/oipd?logo=python&logoColor=white)](https://pypi.org/project/oipd/)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tyrneh/options-implied-probability/blob/main/OIPD_Demo.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Open-Lemma/options-implied-probability/blob/main/OIPD_Demo.ipynb)
 [![Chat on Discord](https://img.shields.io/badge/chat-on%20Discord-brightgreen?logo=discord&logoColor=white)](https://discord.gg/NHxWPGhhSQ)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/oipd?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/oipd)
 
@@ -13,7 +13,7 @@
    - While markets don't predict the future with certainty, under the efficient market view, these market expectations represent the best available estimate of what might happen.
 
 <p align="center" style="margin-top: 80px;">
-  <img src="https://github.com/tyrneh/options-implied-probability/blob/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
+  <img src="https://raw.githubusercontent.com/Open-Lemma/options-implied-probability/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
 </p>
 
 **2. Fit arbitrage-free volatility smiles and surfaces for pricing and risk analysis.**
@@ -30,7 +30,7 @@
   </tr>
 </table>
 
-See the [full documentation site](https://tyrneh.github.io/options-implied-probability/) for details.
+See the [full documentation site](https://open-lemma.github.io/options-implied-probability/) for details.
 
 # Quick start
 
@@ -83,7 +83,7 @@ Step 2: Convert fitted volatility to probability
 
 This quickstart will cover the functionality in **(1) computing market-implied probabilities**. See the [included jupyter notebook ](examples/quickstart_yfinance.ipynb) for a full example on using the automated yfinance connection to download options data and compute market-implied probabilities for Palantir. 
 
-For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the [full documentation](https://tyrneh.github.io/options-implied-probability/).
+For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the [full documentation](https://open-lemma.github.io/options-implied-probability/).
 
 ### 3A. Usage for computing a probability distribution on a specific future date
 
@@ -187,7 +187,7 @@ Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, disc
 
 **Thanks to everyone who has contributed code:**
 
-[![Contributors](https://contrib.rocks/image?repo=tyrneh/options-implied-probability)](https://github.com/tyrneh/options-implied-probability/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=Open-Lemma/options-implied-probability)](https://github.com/Open-Lemma/options-implied-probability/graphs/contributors)
 
 **And special thanks for support on theory, implementation, or advisory:**
 - [integral-alpha.com](https://integral-alpha.com)
