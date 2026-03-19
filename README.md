@@ -7,12 +7,13 @@
 
 # Overview
 
-OIPD answers a simple question: **what future price distribution is the options market implying right now?** While markets don't predict the future with certainty, under the efficient market view, these market expectations represent the best available estimate of what might happen.
+OIPD computes the probabilities implied by the options market for an asset’s future prices.
 
 It does this by taking listed options data, fitting an arbitrage-free implied volatility curve or surface, and then transforming that fitted object into a probability distribution over future asset prices. In practice, that provides two core capabilities in one library:
 
 - **Volatility modeling:** fit single-expiry smiles and multi-expiry volatility surfaces for pricing and risk work.
 - **Probability extraction:** compute market-implied probability distributions, cumulative probabilities, quantiles, and distributional moments from those fitted volatility objects.
+
 
 <p align="center" style="margin-top: 80px;">
   <img src="https://raw.githubusercontent.com/Open-Lemma/options-implied-probability/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
