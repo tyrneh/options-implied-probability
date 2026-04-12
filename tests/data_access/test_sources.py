@@ -11,7 +11,6 @@ import pandas as pd
 from datetime import date
 from unittest.mock import patch, MagicMock
 
-
 # =============================================================================
 # sources.from_csv() Tests
 # =============================================================================

@@ -25,7 +25,6 @@ from oipd.pipelines.probability import (
     resolve_surface_query_time,
 )
 
-
 if TYPE_CHECKING:
     from oipd.market_inputs import MarketInputs
     from oipd.interface.volatility import VolSurface

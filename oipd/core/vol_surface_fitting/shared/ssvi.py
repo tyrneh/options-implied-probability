@@ -8,7 +8,6 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 from scipy import interpolate
 
-
 RHO_BOUND: float = 0.999
 
 

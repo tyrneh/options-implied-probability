@@ -13,7 +13,6 @@ from .algorithms import svi as _svi  # noqa: F401  - ensure registration
 from .algorithms.bspline import DEFAULT_BSPLINE_OPTIONS
 from .registry import get_slice_fitter
 
-
 AVAILABLE_SURFACE_FITS: tuple[str, ...] = ("bspline", "svi")
 _ALIASES: dict[str, str] = {"svi-jw": "svi"}
 

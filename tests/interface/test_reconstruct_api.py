@@ -7,7 +7,6 @@ import pytest
 
 from oipd import rebuild_slice_from_svi, rebuild_surface_from_ssvi
 
-
 SVI_PARAMS = {
     "a": 0.01,
     "b": 0.12,

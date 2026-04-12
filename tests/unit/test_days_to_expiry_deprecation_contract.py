@@ -6,7 +6,6 @@ import ast
 from pathlib import Path
 import re
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SEARCH_ROOTS = [
     REPO_ROOT / "oipd" / "core",

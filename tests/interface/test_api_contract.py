@@ -10,7 +10,6 @@ They should NEVER fail due to refactoring internal logic.
 import numpy as np
 import pandas as pd
 
-
 # =============================================================================
 # Market Input Contract Tests
 # =============================================================================

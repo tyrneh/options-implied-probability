@@ -6,7 +6,6 @@ from typing import Dict, Mapping, Tuple
 
 from .api import SliceFitter, SurfaceFitter
 
-
 _SLICE_FITTERS: Dict[str, SliceFitter] = {}
 _SURFACE_FITTERS: Dict[str, SurfaceFitter] = {}
 
