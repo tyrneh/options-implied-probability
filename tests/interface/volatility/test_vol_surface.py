@@ -467,9 +467,7 @@ class TestVolSurfaceInterpolation:
         assert metadata["time_to_expiry_years"] == pytest.approx(
             resolved.time_to_expiry_years
         )
-        assert (
-            metadata["calendar_days_to_expiry"] == resolved.calendar_days_to_expiry
-        )
+        assert metadata["calendar_days_to_expiry"] == resolved.calendar_days_to_expiry
         assert float(metadata["forward_price"]) > 0.0
         assert float(metadata["at_money_vol"]) > 0.0
 

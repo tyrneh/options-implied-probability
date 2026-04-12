@@ -239,9 +239,7 @@ def _resolve_snapshot_maturity_years(df: pd.DataFrame) -> pd.Series:
                 "SSVI params no longer accept 'maturity'; rename it to "
                 "'time_to_expiry_years'."
             )
-        raise ValueError(
-            "SSVI params must include canonical 'time_to_expiry_years'."
-        )
+        raise ValueError("SSVI params must include canonical 'time_to_expiry_years'.")
     if "maturity" in df.columns:
         raise ValueError(
             "SSVI params no longer accept 'maturity'; rename it to "

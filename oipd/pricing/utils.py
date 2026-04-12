@@ -37,9 +37,7 @@ def _present_value(
         timestamp.
     """
     valuation_timestamp = normalize_datetime_like(valuation_date)
-    expiry_timestamp = (
-        normalize_datetime_like(expiry) if expiry is not None else None
-    )
+    expiry_timestamp = normalize_datetime_like(expiry) if expiry is not None else None
     pv = 0.0
     for ex_date, cash in schedule[["ex_date", "amount"]].itertuples(index=False):
         ex_timestamp = normalize_datetime_like(ex_date)

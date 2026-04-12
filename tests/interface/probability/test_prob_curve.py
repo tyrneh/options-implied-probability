@@ -222,9 +222,7 @@ class TestProbCurveProperties:
         )
 
         assert metadata["expiry"] == resolved.expiry
-        assert (
-            metadata["calendar_days_to_expiry"] == resolved.calendar_days_to_expiry
-        )
+        assert metadata["calendar_days_to_expiry"] == resolved.calendar_days_to_expiry
 
     def test_resolved_market_available(self, prob_curve):
         """resolved_market is available on ProbCurve."""

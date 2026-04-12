@@ -121,9 +121,7 @@ def test_legacy_estimate_same_day_intraday_smoke():
     resolved_maturity = meta["resolved_maturity"]
     assert resolved_maturity.time_to_expiry_days > 0.0
     assert resolved_maturity.calendar_days_to_expiry == 0
-    assert resolved_maturity.time_to_expiry_years == pytest.approx(
-        6.5 / (24.0 * 365.0)
-    )
+    assert resolved_maturity.time_to_expiry_years == pytest.approx(6.5 / (24.0 * 365.0))
 
 
 def test_legacy_rndresult_summary_uses_calendar_days():
