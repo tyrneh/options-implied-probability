@@ -6,11 +6,11 @@ from typing import Any, Dict, Mapping
 
 import numpy as np
 
+from oipd.core.maturity import resolve_maturity
 from oipd.core.vol_surface_fitting.forward_interpolator import ForwardInterpolator
 from oipd.core.vol_surface_fitting.variance_interpolator import (
     TotalVarianceInterpolator,
 )
-from oipd.core.utils import calculate_days_to_expiry
 from oipd.pipelines.vol_surface.models import FittedSurface
 
 
@@ -84,19 +84,30 @@ def build_interpolator_from_fitted_surface(
     forwards = {}
     for expiry_ts in fitted_surface.expiries:
         slice_data = fitted_surface.get_slice(expiry_ts)
-        # Time in years
-        # ResolvedMarket must be present in the slice data from fit_surface
+        # Time in years.
+        # ResolvedMarket must be present in the slice data from fit_surface.
         resolved_market = slice_data.get("resolved_market")
         if not resolved_market:
-            # Should not happen if coming from fit_surface
+            # Should not happen if coming from fit_surface.
             raise ValueError(f"ResolvedMarket missing for expiry {expiry_ts}")
 
-        # Calculate T locally
-        days = calculate_days_to_expiry(expiry_ts, resolved_market.valuation_date)
-        t = days / 365.0
+        metadata = slice_data.get("metadata", {})
+        t = metadata.get("time_to_expiry_years")
+        if t is None:
+            resolved_maturity = resolve_maturity(
+                expiry_ts,
+                resolved_market.valuation_timestamp,
+                floor_at_zero=False,
+            )
+            t = resolved_maturity.time_to_expiry_years
+        t = float(t)
+        if t <= 0.0:
+            raise ValueError(
+                f"Non-positive maturity for expiry {expiry_ts}. Cannot build interpolator."
+            )
         slices[t] = slice_data["curve"]
 
-        forward = slice_data["metadata"].get("forward_price")
+        forward = metadata.get("forward_price")
         if forward is None:
             raise ValueError(
                 f"Forward price missing for expiry slice t={t:.4f}. Cannot build interpolator."

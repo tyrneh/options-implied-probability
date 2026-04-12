@@ -37,7 +37,7 @@ def generate_golden_master() -> None:
 
     # Expiry from data (for metadata)
     expiry_date_str = "2026-01-16"
-    expiry_date = date.fromisoformat(expiry_date_str)
+    expiry = date.fromisoformat(expiry_date_str)
 
     market = MarketInputs(
         valuation_date=val_date,
@@ -72,7 +72,7 @@ def generate_golden_master() -> None:
     gm_data = {
         "metadata": {
             "valuation_date": val_date.isoformat(),
-            "expiry_date": expiry_date.isoformat(),
+            "expiry": expiry.isoformat(),
             "r": risk_free_rate,
             "underlying": underlying_price,
             "generated_by": "VolCurve",

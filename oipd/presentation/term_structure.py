@@ -20,11 +20,11 @@ from oipd.presentation.publication import (
 
 
 def plot_term_structure(
-    days_to_expiry: np.ndarray,
+    time_to_expiry_days: np.ndarray,
     atm_ivs: np.ndarray,
     *,
     title: str = "ATM Implied Volatility Term Structure",
-    xlabel: str = "Days to Expiry",
+    xlabel: str = "Time to Expiry (days)",
     ylabel: str = "Implied Volatility (%)",
     figsize: tuple[float, float] = (10, 6),
     marker: str = "",
@@ -39,7 +39,7 @@ def plot_term_structure(
     uncertainty over time.
 
     Args:
-        days_to_expiry: Array of days-to-expiry for each pillar.
+        time_to_expiry_days: Array of continuous day-equivalent maturities.
         atm_ivs: Array of ATM implied volatilities (in percentage, e.g., 30 for 30%).
         title: Plot title.
         xlabel: X-axis label.
@@ -53,7 +53,7 @@ def plot_term_structure(
         matplotlib.figure.Figure: The generated figure.
 
     Example:
-        >>> days = np.array([7, 14, 30, 60, 90])
+        >>> days = np.array([7.0, 14.0, 30.0, 60.0, 90.0])
         >>> ivs = np.array([25.0, 26.5, 28.0, 30.0, 32.5])
         >>> fig = plot_term_structure(days, ivs)
         >>> plt.show()
@@ -79,9 +79,9 @@ def plot_term_structure(
     # -------------------------------------------------------------------------
     # Plot Data
     # -------------------------------------------------------------------------
-    # Sort by days to ensure proper line connection
-    sort_idx = np.argsort(days_to_expiry)
-    x = days_to_expiry[sort_idx]
+    # Sort by time to expiry to ensure proper line connection
+    sort_idx = np.argsort(time_to_expiry_days)
+    x = time_to_expiry_days[sort_idx]
     y = atm_ivs[sort_idx]
 
     ax.plot(

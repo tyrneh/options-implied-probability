@@ -10,8 +10,34 @@ from scipy.interpolate import interp1d
 from scipy.optimize import brentq
 
 from oipd.core.errors import InvalidInputError
-from oipd.core.utils import convert_days_to_years
 from .finite_diff import finite_diff_second_derivative
+
+
+def _resolve_time_to_expiry_years(
+    *,
+    time_to_expiry_years: Optional[float],
+) -> float:
+    """Validate one explicit year-fraction maturity value.
+
+    Args:
+        time_to_expiry_years: Canonical year-fraction maturity input.
+
+    Returns:
+        float: Finite maturity in year fractions.
+
+    Raises:
+        InvalidInputError: If no maturity is provided or the resolved value is
+            not finite.
+    """
+    if time_to_expiry_years is None:
+        raise InvalidInputError("time_to_expiry_years is required.")
+
+    years = float(time_to_expiry_years)
+
+    if not np.isfinite(years):
+        raise InvalidInputError("time_to_expiry_years must be finite.")
+
+    return years
 
 
 def pdf_from_price_curve(
@@ -19,7 +45,6 @@ def pdf_from_price_curve(
     call_prices: np.ndarray,
     *,
     risk_free_rate: float,
-    days_to_expiry: Optional[int] = None,
     time_to_expiry_years: Optional[float] = None,
     min_strike: float | None = None,
     max_strike: float | None = None,
@@ -30,10 +55,7 @@ def pdf_from_price_curve(
         strikes: Strike grid for option prices.
         call_prices: Call prices aligned with ``strikes``.
         risk_free_rate: Continuously compounded risk-free rate.
-        days_to_expiry: Optional days-to-expiry input. Used when
-            ``time_to_expiry_years`` is not provided.
-        time_to_expiry_years: Optional explicit maturity in year fractions.
-            Takes precedence over ``days_to_expiry`` when provided.
+        time_to_expiry_years: Explicit maturity in year fractions.
         min_strike: Optional left strike cutoff.
         max_strike: Optional right strike cutoff.
 
@@ -51,14 +73,9 @@ def pdf_from_price_curve(
         raise InvalidInputError("Strikes and prices must have the same shape")
 
     second_derivative = finite_diff_second_derivative(prices_arr, strikes_arr)
-    if time_to_expiry_years is not None:
-        years = float(time_to_expiry_years)
-    elif days_to_expiry is not None:
-        years = float(convert_days_to_years(days_to_expiry))
-    else:
-        raise InvalidInputError(
-            "Either days_to_expiry or time_to_expiry_years must be provided."
-        )
+    years = _resolve_time_to_expiry_years(
+        time_to_expiry_years=time_to_expiry_years,
+    )
     pdf = np.exp(risk_free_rate * years) * second_derivative
     pdf = np.maximum(pdf, 0.0)
 

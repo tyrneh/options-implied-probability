@@ -28,7 +28,6 @@ from oipd.core.data_processing.parity import (
 )
 from oipd.core.data_processing import filter_stale_options, select_price_column
 
-
 _BASE_EXPORTS = [
     "calculate_cdf_from_pdf",
     "calculate_quartiles",

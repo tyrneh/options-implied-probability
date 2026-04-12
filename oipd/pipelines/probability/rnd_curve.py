@@ -8,9 +8,8 @@ import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
+from oipd.core.maturity import build_maturity_metadata, resolve_maturity
 from oipd.core.utils import (
-    calculate_days_to_expiry,
-    convert_days_to_years,
     resolve_risk_free_rate,
 )
 from oipd.market_inputs import ResolvedMarket
@@ -29,7 +28,6 @@ def _build_strike_grid(
     vol_meta: Mapping[str, Any],
     *,
     pricing_underlying: float,
-    days_to_expiry: Optional[int] = None,
     time_to_expiry_years: Optional[float] = None,
     domain: Optional[Tuple[float, float]] = None,
     points: int = 200,
@@ -40,8 +38,7 @@ def _build_strike_grid(
         resolved_market: Fully resolved market inputs.
         vol_meta: Metadata from the volatility calibration.
         pricing_underlying: Forward/spot used for pricing calls.
-        days_to_expiry: Optional days-to-expiry input for backwards compatibility.
-        time_to_expiry_years: Optional explicit time to expiry in years.
+        time_to_expiry_years: Explicit time to expiry in years.
         domain: Optional strike domain as (min, max).
         points: Number of grid points to generate.
 
@@ -88,14 +85,12 @@ def _build_strike_grid(
         except Exception:
             pass
 
-    if time_to_expiry_years is not None:
-        T = float(time_to_expiry_years)
-    elif days_to_expiry is not None:
-        T = float(convert_days_to_years(days_to_expiry))
-    else:
+    if time_to_expiry_years is None:
         raise CalculationError(
-            "Either days_to_expiry or time_to_expiry_years must be provided."
+            "time_to_expiry_years is required to build a default strike grid."
         )
+
+    T = float(time_to_expiry_years)
 
     if T <= 0:
         raise CalculationError(
@@ -203,7 +198,8 @@ def derive_distribution_from_curve(
         domain estimate (metadata, observed strikes, or ATM-based fallback).
     """
     vol_meta = vol_metadata or {}
-    valuation_date = resolved_market.valuation_date
+    valuation_timestamp = resolved_market.valuation_timestamp
+    resolved_maturity = None
 
     # 1. Determine maturity and resolve rate convention
     if time_to_expiry_years is not None:
@@ -213,13 +209,22 @@ def derive_distribution_from_curve(
                 "time_to_expiry_years must be positive to derive distribution."
             )
     else:
-        expiry_date = vol_meta.get("expiry_date")
-        if expiry_date is None:
+        expiry = vol_meta.get("expiry")
+        if expiry is None:
             raise CalculationError(
-                "Volatility metadata missing 'expiry_date'. Cannot derive distribution."
+                "Volatility metadata missing canonical 'expiry'. Cannot derive "
+                "distribution."
             )
-        days_to_expiry = calculate_days_to_expiry(expiry_date, valuation_date)
-        years_to_expiry = convert_days_to_years(days_to_expiry)
+        resolved_maturity = resolve_maturity(
+            expiry,
+            valuation_timestamp,
+            floor_at_zero=False,
+        )
+        years_to_expiry = float(resolved_maturity.time_to_expiry_years)
+        if years_to_expiry <= 0:
+            raise CalculationError(
+                "Expiry must be strictly after valuation_date to derive distribution."
+            )
 
     rate_mode = resolved_market.source_meta["risk_free_rate_mode"]
     effective_r = resolve_risk_free_rate(
@@ -233,7 +238,8 @@ def derive_distribution_from_curve(
             dividend_schedule=resolved_market.dividend_schedule,
             dividend_yield=resolved_market.dividend_yield,
             r=effective_r,
-            valuation_date=valuation_date,
+            valuation_date=resolved_market.valuation_timestamp,
+            expiry=resolved_maturity.expiry,
         )
         pricing_underlying = effective_spot
     else:
@@ -286,7 +292,11 @@ def derive_distribution_from_curve(
 
     # 6. Assemble Metadata
     metadata = vol_meta.copy()
-    metadata["time_to_expiry_years"] = years_to_expiry
+    if resolved_maturity is not None:
+        metadata.update(build_maturity_metadata(resolved_maturity))
+    else:
+        metadata["time_to_expiry_years"] = years_to_expiry
+        metadata["time_to_expiry_days"] = years_to_expiry * 365.0
 
     return pdf_prices, pdf_values, cdf_values, metadata
 

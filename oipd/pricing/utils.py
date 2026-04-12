@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Utility helpers shared across pricing modules."""
 
-from datetime import date
 from typing import Optional, Tuple
 
 import numpy as np
@@ -11,16 +10,44 @@ import pandas as pd
 __all__ = ["prepare_dividends", "implied_dividend_yield_from_forward"]
 
 
-from oipd.core.utils import calculate_time_to_expiry
+from oipd.core.maturity import (
+    DateTimeLike,
+    calculate_time_to_expiry,
+    normalize_datetime_like,
+)
 
 
-def _present_value(schedule: pd.DataFrame, r: float, valuation_date: date) -> float:
-    """Compute PV of all cash dividends with *ex_date* ≥ valuation_date."""
+def _present_value(
+    schedule: pd.DataFrame,
+    r: float,
+    valuation_date: DateTimeLike,
+    expiry: Optional[DateTimeLike] = None,
+) -> float:
+    """Compute PV of all cash dividends still live at the valuation timestamp.
+
+    Args:
+        schedule: Dividend schedule containing ``ex_date`` and ``amount``.
+        r: Continuously compounded discount rate.
+        valuation_date: Valuation anchor date/time.
+        expiry: Optional option expiry used to exclude post-expiry cashflows.
+
+    Returns:
+        float: Present value of dividends with ex-date not earlier than the
+        valuation timestamp and, when provided, not later than the expiry
+        timestamp.
+    """
+    valuation_timestamp = normalize_datetime_like(valuation_date)
+    expiry_timestamp = normalize_datetime_like(expiry) if expiry is not None else None
     pv = 0.0
     for ex_date, cash in schedule[["ex_date", "amount"]].itertuples(index=False):
-        if ex_date >= valuation_date:
-            tau = calculate_time_to_expiry(ex_date, valuation_date)
-            pv += cash * np.exp(-r * tau)
+        ex_timestamp = normalize_datetime_like(ex_date)
+        if ex_timestamp < valuation_timestamp:
+            continue
+        if expiry_timestamp is not None and ex_timestamp > expiry_timestamp:
+            continue
+
+        tau = calculate_time_to_expiry(ex_timestamp, valuation_timestamp)
+        pv += cash * np.exp(-r * tau)
     return pv
 
 
@@ -30,7 +57,8 @@ def prepare_dividends(
     dividend_schedule: Optional[pd.DataFrame] = None,
     dividend_yield: Optional[float] = None,
     r: float,
-    valuation_date: date,
+    valuation_date: DateTimeLike,
+    expiry: Optional[DateTimeLike] = None,
 ) -> Tuple[float, float]:
     """Return ``(adjusted_underlying, effective_q)`` according to the user's inputs.
 
@@ -40,6 +68,19 @@ def prepare_dividends(
     2. **Continuous yield only**  → no price change → ``(S, q)``
     3. **Both provided**          → *error* (ambiguous)
     4. **Neither provided**       → ``(S, 0.0)``
+
+    Args:
+        underlying: Spot input before dividend adjustment.
+        dividend_schedule: Optional discrete cash dividend schedule.
+        dividend_yield: Optional continuous dividend yield.
+        r: Continuously compounded risk-free rate.
+        valuation_date: Valuation anchor date/time for dividend inclusion and
+            discounting.
+        expiry: Optional option expiry used to filter discrete dividends to the
+            live option window only.
+
+    Returns:
+        Tuple[float, float]: Adjusted underlying and effective dividend yield.
     """
     if dividend_schedule is not None and dividend_yield not in (None, 0, 0.0):
         raise ValueError(
@@ -49,7 +90,7 @@ def prepare_dividends(
     if dividend_schedule is not None:
         if not {"ex_date", "amount"}.issubset(dividend_schedule.columns):
             raise ValueError("schedule must contain 'ex_date' and 'amount' columns")
-        pv = _present_value(dividend_schedule, r, valuation_date)
+        pv = _present_value(dividend_schedule, r, valuation_date, expiry=expiry)
         return underlying - pv, 0.0
 
     # Continuous yield path ----------------------------------------------

@@ -101,7 +101,7 @@ chain, snapshot = sources.fetch_chain(ticker, expiries=single_expiry) # download
 
 # 2. fill in the parameters 
 market = MarketInputs(
-    valuation_date=snapshot.date,               # date on which the options data was downloaded
+    valuation_date=snapshot.asof,               # datetime on which the options data was downloaded
     underlying_price=snapshot.underlying_price, # the price of the underlying stock at the time when the options data was downloaded 
     risk_free_rate=0.04,                        # the risk-free rate of return. Use the US Fed or Treasury yields that are closest to the horizon of the expiry date
 )
@@ -141,7 +141,7 @@ chain_surface, snapshot_surface = sources.fetch_chain(
 
 # 2. fill in the parameters
 surface_market = MarketInputs(
-    valuation_date=snapshot_surface.date,               # date on which the options data was downloaded
+    valuation_date=snapshot_surface.asof,               # datetime on which the options data was downloaded
     underlying_price=snapshot_surface.underlying_price, # price of the underlying stock at download time
     risk_free_rate=0.04,                                # risk-free rate for the horizon
 )
@@ -154,9 +154,9 @@ surface.plot_fan() # Plot a fan chart of price probability over time
 plt.show()
 
 # 5. query at arbitrary maturities directly from ProbSurface
-pdf_45d = surface.pdf(100, t=45/365)       # density at K=100, 45 days
-cdf_45d = surface.cdf(100, t="2025-02-15") # equivalent date-style maturity input
-q50_45d = surface.quantile(0.50, t=45/365) # median at 45 days
+pdf_45d = surface.pdf(100, t=45/365)                      # density at K=100, 45.0 ACT/365 days from valuation_date
+cdf_intraday = surface.cdf(100, t="2025-02-15 09:30:00")  # example timestamp-style maturity input
+q50_45d = surface.quantile(0.50, t=45/365)                # median at 45 days
 
 # 6. "slice" the surface to get a ProbCurve, and query its statistical properties in the same manner as in example A 
 surface.expiries                                  # list all the expiry dates that were captured

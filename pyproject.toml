@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oipd"
-version = "2.0.2"
+version = "2.0.3"
 readme = "README.md"
 authors = [
   { name="Henry Tian", email="tyrneh@gmail.com" },
@@ -31,10 +31,10 @@ classifiers = [
 
 # Default dependencies - includes data vendor integrations
 dependencies = [
-    "numpy>=1.26.0",
-    "pandas>=2.1.0",
-    "scipy>=1.11.0",
-    "matplotlib>=3.8.0",
+    "numpy>=2.0.0",
+    "pandas>=2.2.2",
+    "scipy>=1.13.0",
+    "matplotlib>=3.9.0",
     "matplotlib-label-lines>=0.6.0",
     "plotly>=5,<6",
     "traitlets>=5.12.0",
@@ -44,10 +44,10 @@ dependencies = [
 [project.optional-dependencies]
 # Minimal installation - no external data vendors (for internal/corporate use)
 minimal = [
-    "numpy>=1.26.0",
-    "pandas>=2.1.0",
-    "scipy>=1.11.0",
-    "matplotlib>=3.8.0",
+    "numpy>=2.0.0",
+    "pandas>=2.2.2",
+    "scipy>=1.13.0",
+    "matplotlib>=3.9.0",
     "matplotlib-label-lines>=0.6.0",
     "plotly>=5,<6",
     "traitlets>=5.12.0",
@@ -55,7 +55,7 @@ minimal = [
 
 # Developer tools (formatting, linting, testing, build)
 dev = [
-    "black>=24.3.0",
+    "black>=26.3.1",
     "isort>=5.13.0",
     "pytest>=8.0.0",
     "mypy>=1.8.0",

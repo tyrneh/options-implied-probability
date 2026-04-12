@@ -36,6 +36,11 @@ from oipd.market_inputs import (
     ResolvedMarket,
     resolve_market,
 )
+from oipd.core.maturity import (
+    normalize_datetime_like,
+    resolve_maturity,
+    format_timestamp_for_display,
+)
 from oipd.presentation.iv_plotting import ForwardPriceAnnotation, plot_iv_smile
 
 FillMode = Literal["missing", "vendor_only", "strict"]
@@ -118,6 +123,27 @@ class RNDResult:
     market: ResolvedMarket
     meta: Dict[str, Any] = field(default_factory=dict)
 
+    def _resolved_maturity(self):
+        """Return resolved maturity metadata when available.
+
+        Returns:
+            ResolvedMaturity | None: Canonical maturity information or ``None``
+            when the result metadata does not carry expiry information.
+        """
+        resolved_maturity = self.meta.get("resolved_maturity")
+        if resolved_maturity is not None:
+            return resolved_maturity
+
+        expiry = self.meta.get("expiry")
+        if expiry is None:
+            return None
+
+        return resolve_maturity(
+            expiry,
+            self.market.valuation_timestamp,
+            floor_at_zero=False,
+        )
+
     # ------------------------------------------------------------------
     # Convenience helpers
     # ------------------------------------------------------------------
@@ -135,7 +161,7 @@ class RNDResult:
         underlying = self.market.underlying_price
         price_src = self.market.provenance.price
         div_src = self.market.provenance.dividends
-        days = self.market.days_to_expiry
+        resolved_maturity = self._resolved_maturity()
         r = self.market.risk_free_rate
 
         # Dividends wording with explicit yield when available
@@ -168,7 +194,15 @@ class RNDResult:
             except Exception:
                 pass
 
-        msg += f"; days_to_expiry={days}; r={r};"
+        if resolved_maturity is not None:
+            msg += (
+                f"; calendar_days_to_expiry="
+                f"{resolved_maturity.calendar_days_to_expiry}"
+            )
+        else:
+            msg += "; calendar_days_to_expiry=unknown"
+
+        msg += f"; r={r};"
         return msg
 
     def prob_at_or_above(self, price: float) -> float:
@@ -247,7 +281,10 @@ class RNDResult:
         S = float(self.market.underlying_price)
         if S <= 0:
             raise ValueError("Invalid underlying price for implied yield calculation.")
-        T = float(self.market.days_to_expiry) / 365.0
+        resolved_maturity = self._resolved_maturity()
+        if resolved_maturity is None:
+            raise ValueError("No resolved maturity available to imply dividend yield.")
+        T = float(resolved_maturity.time_to_expiry_years)
         if T <= 0:
             raise ValueError("Non-positive time to expiry.")
         r = float(self.market.risk_free_rate)
@@ -292,10 +329,13 @@ class RNDResult:
         from oipd.presentation import plot_rnd
 
         underlying_price = self.market.underlying_price
-        valuation_date_obj = self.market.valuation_date
-        expiry_date_obj = self.market.expiry_date
-        valuation_date = valuation_date_obj.strftime("%b %d, %Y")
-        expiry_date = expiry_date_obj.strftime("%b %d, %Y")
+        resolved_maturity = self._resolved_maturity()
+        valuation_date = format_timestamp_for_display(self.market.valuation_timestamp)
+        expiry_date = (
+            format_timestamp_for_display(resolved_maturity.expiry)
+            if resolved_maturity is not None
+            else None
+        )
 
         return plot_rnd(
             prices=self.prices,
@@ -523,21 +563,25 @@ class RNDResult:
 
         reference_annotation = None
         if reference_price is not None:
-            valuation_date = self.market.valuation_date.strftime("%b %d, %Y")
             label_prefix = (
                 "Parity forward on" if forward_price is not None else "Price on"
             )
             reference_annotation = ForwardPriceAnnotation(
                 value=float(reference_price),
-                label=f"{label_prefix} {valuation_date}\n${reference_price:,.2f}",
+                label=(
+                    f"{label_prefix} "
+                    f"{format_timestamp_for_display(self.market.valuation_timestamp)}\n"
+                    f"${reference_price:,.2f}"
+                ),
             )
 
         if title is not None:
             resolved_title = title
         else:
-            expiry_obj = self.market.expiry_date
+            resolved_maturity = self._resolved_maturity()
+            expiry_obj = resolved_maturity.expiry if resolved_maturity else None
             resolved_title = (
-                f"Implied Volatility Smile (Expiry {expiry_obj.strftime('%b %d, %Y')})"
+                f"Implied Volatility Smile (Expiry {format_timestamp_for_display(expiry_obj)})"
                 if expiry_obj is not None
                 else None
             )
@@ -659,6 +703,41 @@ class TickerSource:
         return self._dividend_schedule
 
 
+def _resolve_legacy_estimator_maturity(
+    options_data: pd.DataFrame,
+    resolved_market: ResolvedMarket,
+):
+    """Resolve the single expiry used by the legacy estimator flow.
+
+    Args:
+        options_data: Single-expiry option chain.
+        resolved_market: Resolved market state containing valuation timestamp.
+
+    Returns:
+        ResolvedMaturity: Canonical maturity for the legacy estimation flow.
+
+    Raises:
+        InvalidInputError: If the chain is missing an expiry column or contains
+            multiple expiries.
+    """
+    if "expiry" not in options_data.columns:
+        raise InvalidInputError("Legacy estimator requires an 'expiry' column.")
+
+    expiry_values = (
+        options_data["expiry"].dropna().map(normalize_datetime_like).drop_duplicates()
+    )
+    if expiry_values.empty:
+        raise InvalidInputError("Legacy estimator requires at least one expiry value.")
+    if len(expiry_values) != 1:
+        raise InvalidInputError("Legacy estimator requires a single expiry slice.")
+
+    return resolve_maturity(
+        expiry_values.iloc[0],
+        resolved_market.valuation_timestamp,
+        floor_at_zero=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Core estimation routine (non-public)
 # ---------------------------------------------------------------------------
@@ -672,7 +751,11 @@ def _estimate(
     """Run the core RND estimation given fully validated input data."""
 
     # Note when the market snapshot was taken so all filters line up with it
-    valuation_date = resolved_market.valuation_date
+    valuation_timestamp = resolved_market.valuation_timestamp
+    resolved_maturity = _resolve_legacy_estimator_maturity(
+        options_data,
+        resolved_market,
+    )
 
     # Ensure we actually have the data needed to price with mid quotes if requested
     if model.price_method == "mid" and model.price_method_explicit:
@@ -702,7 +785,8 @@ def _estimate(
             dividend_schedule=resolved_market.dividend_schedule,
             dividend_yield=resolved_market.dividend_yield,
             r=resolved_market.risk_free_rate,
-            valuation_date=valuation_date,
+            valuation_date=valuation_timestamp,
+            expiry=resolved_maturity.expiry,
         )
     else:
         effective_spot_price = resolved_market.underlying_price
@@ -731,7 +815,7 @@ def _estimate(
     # Remove quotes that are too old relative to the valuation date
     staleness_filtered_options, _ = filter_stale_options(
         parity_adjusted_options,
-        valuation_date,
+        valuation_timestamp,
         model.max_staleness_days,
         emit_warning=True,
     )
@@ -747,7 +831,7 @@ def _estimate(
     options_with_calculated_iv = compute_iv(
         options_with_selected_price,
         underlying_price,
-        days_to_expiry=resolved_market.days_to_expiry,
+        time_to_expiry_years=resolved_maturity.time_to_expiry_years,
         risk_free_rate=resolved_market.risk_free_rate,
         solver_method=model.solver,
         pricing_engine=model.pricing_engine,
@@ -784,7 +868,7 @@ def _estimate(
             iv_df = compute_iv(
                 priced,
                 underlying_price,
-                days_to_expiry=resolved_market.days_to_expiry,
+                time_to_expiry_years=resolved_maturity.time_to_expiry_years,
                 risk_free_rate=resolved_market.risk_free_rate,
                 solver_method=model.solver,
                 pricing_engine=model.pricing_engine,
@@ -808,7 +892,7 @@ def _estimate(
         surface_fit_kwargs.update(
             {
                 "forward": underlying_price,
-                "maturity_years": resolved_market.days_to_expiry / 365.0,
+                "maturity_years": resolved_maturity.time_to_expiry_years,
             }
         )
 
@@ -867,7 +951,7 @@ def _estimate(
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
         fitted_volatility_curve,
         underlying_price,
-        days_to_expiry=resolved_market.days_to_expiry,
+        time_to_expiry_years=resolved_maturity.time_to_expiry_years,
         risk_free_rate=resolved_market.risk_free_rate,
         pricing_engine=model.pricing_engine,
         dividend_yield=effective_dividend_yield,
@@ -882,7 +966,7 @@ def _estimate(
         pricing_strike_grid,
         pricing_call_prices,
         risk_free_rate=resolved_market.risk_free_rate,
-        days_to_expiry=resolved_market.days_to_expiry,
+        time_to_expiry_years=resolved_maturity.time_to_expiry_years,
         min_strike=observed_min_strike,
         max_strike=observed_max_strike,
     )
@@ -910,6 +994,8 @@ def _estimate(
             result_metadata["forward_price"] = float(parity_implied_forward_price)
         except Exception:
             pass
+    result_metadata["resolved_maturity"] = resolved_maturity
+    result_metadata["expiry"] = resolved_maturity.expiry
     result_metadata["surface_fit"] = surface_method_used
     return pdf_strike_values, pdf_values, cdf_values, result_metadata
 

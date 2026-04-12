@@ -10,6 +10,47 @@ They should NEVER fail due to refactoring internal logic.
 import numpy as np
 import pandas as pd
 
+# =============================================================================
+# Market Input Contract Tests
+# =============================================================================
+
+
+class TestMarketInputContract:
+    """Verify market input objects expose the timestamp-preserving contract."""
+
+    def test_market_inputs_preserve_timestamp_and_date_views(self):
+        from datetime import date
+
+        from oipd import MarketInputs
+
+        valuation_timestamp = pd.Timestamp("2025-01-15 09:30:00")
+        market = MarketInputs(
+            valuation_date=valuation_timestamp,
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+        )
+
+        assert market.valuation_date == valuation_timestamp
+        assert market.valuation_calendar_date == date(2025, 1, 15)
+        assert market.valuation_timestamp == valuation_timestamp
+
+    def test_resolved_market_preserves_timestamp_and_date_views(self):
+        from datetime import date
+
+        from oipd import MarketInputs, resolve_market
+
+        valuation_timestamp = pd.Timestamp("2025-01-15 09:30:00")
+        market = MarketInputs(
+            valuation_date=valuation_timestamp,
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+        )
+        resolved = resolve_market(market)
+
+        assert resolved.valuation_date == valuation_timestamp
+        assert resolved.valuation_calendar_date == date(2025, 1, 15)
+        assert resolved.valuation_timestamp == valuation_timestamp
+
 
 # =============================================================================
 # VolCurve Contract Tests
@@ -280,7 +321,7 @@ class TestProbCurveContract:
     def test_metadata_exists(self, prob_curve):
         metadata = prob_curve.metadata
         assert isinstance(metadata, dict)
-        assert "expiry_date" in metadata
+        assert "expiry" in metadata
         assert "forward_price" in metadata
         assert "at_money_vol" in metadata
 

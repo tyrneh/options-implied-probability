@@ -104,6 +104,33 @@ class TestVolCurveGreeks:
         assert list(df.columns) == ["strike", "delta", "gamma", "vega", "theta", "rho"]
         assert len(df) == 3
 
+    def test_bs_greeks_with_dividend_schedule_do_not_raise(self, single_expiry_chain):
+        """BS Greeks should work when discrete dividends are supplied as a schedule."""
+        market_schedule = MarketInputs(
+            valuation_date=date(2025, 1, 1),
+            risk_free_rate=0.05,
+            underlying_price=100.0,
+            dividend_schedule=pd.DataFrame(
+                {
+                    "ex_date": [
+                        pd.Timestamp("2025-01-15 00:00:00"),
+                        pd.Timestamp("2025-02-15 00:00:00"),
+                    ],
+                    "amount": [1.0, 1.5],
+                }
+            ),
+        )
+
+        vc = VolCurve(pricing_engine="bs").fit(single_expiry_chain, market_schedule)
+        greek_frame = vc.greeks([90, 100, 110])
+
+        assert isinstance(greek_frame, pd.DataFrame)
+        assert np.all(
+            np.isfinite(
+                greek_frame[["delta", "gamma", "vega", "theta", "rho"]].to_numpy()
+            )
+        )
+
 
 class TestGreeksVsFiniteDifference:
     """Verify analytical Greeks match numerical (bump & revalue) approximations."""

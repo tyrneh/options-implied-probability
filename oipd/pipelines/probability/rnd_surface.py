@@ -8,6 +8,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from oipd.core.maturity import (
+    SECONDS_PER_DAY,
+    build_maturity_metadata,
+    normalize_datetime_like,
+    resolve_maturity,
+)
 from oipd.pipelines.probability.rnd_curve import build_density_results_frame
 from oipd.pipelines.utils.surface_export import (
     resolve_surface_export_expiries,
@@ -17,9 +23,29 @@ from oipd.core.probability_density_conversion import (
     normalized_cdf_from_call_curve,
     pdf_and_cdf_from_normalized_cdf,
 )
-from oipd.core.utils import calculate_time_to_expiry, resolve_risk_free_rate
+from oipd.core.utils import resolve_risk_free_rate
 from oipd.market_inputs import Provenance, ResolvedMarket
 from oipd.pricing import black76_call_price
+
+
+def _expiry_from_year_fraction(
+    valuation_timestamp: pd.Timestamp,
+    t_years: float,
+    *,
+    days_per_year: float = 365.0,
+) -> pd.Timestamp:
+    """Convert a year-fraction maturity into an expiry timestamp.
+
+    Args:
+        valuation_timestamp: Canonical valuation timestamp.
+        t_years: Time to expiry in years.
+        days_per_year: Day-count denominator.
+
+    Returns:
+        pd.Timestamp: Expiry timestamp preserving intraday precision.
+    """
+    seconds_to_expiry = float(t_years) * days_per_year * SECONDS_PER_DAY
+    return valuation_timestamp + pd.to_timedelta(seconds_to_expiry, unit="s")
 
 
 def build_global_log_moneyness_grid(vol_surface: Any, *, points: int) -> np.ndarray:
@@ -85,15 +111,22 @@ def resolve_surface_query_time(
         ValueError: If maturity is non-positive or beyond the calibrated horizon.
     """
     market = vol_surface._market
-    valuation_timestamp = pd.to_datetime(market.valuation_date)
+    valuation_timestamp = market.valuation_timestamp
     max_expiry = max(vol_surface.expiries)
-    max_supported_t = calculate_time_to_expiry(max_expiry, market.valuation_date)
+    max_supported_t = resolve_maturity(
+        max_expiry,
+        valuation_timestamp,
+        floor_at_zero=False,
+    ).time_to_expiry_years
 
     if isinstance(t, (str, date, pd.Timestamp)):
-        expiry_timestamp = pd.to_datetime(t).tz_localize(None)
-        t_years = float(
-            calculate_time_to_expiry(expiry_timestamp, market.valuation_date)
+        expiry_timestamp = normalize_datetime_like(t)
+        resolved_maturity = resolve_maturity(
+            expiry_timestamp,
+            valuation_timestamp,
+            floor_at_zero=False,
         )
+        t_years = float(resolved_maturity.time_to_expiry_years)
         if t_years <= 0:
             raise ValueError(
                 "Requested maturity must be strictly after valuation date."
@@ -103,20 +136,27 @@ def resolve_surface_query_time(
                 f"Expiry {expiry_timestamp.date()} is beyond the last fitted pillar "
                 f"({max_expiry.date()}). Long-end extrapolation is not supported."
             )
-        return expiry_timestamp, t_years
+        return resolved_maturity.expiry, t_years
 
     t_years = float(t)
     if t_years <= 0.0:
         raise ValueError("Requested maturity t must be strictly positive.")
-    if t_years > max_supported_t:
+    tolerance_years = 1e-12
+    if t_years > max_supported_t + tolerance_years:
         raise ValueError(
             "Requested maturity exceeds the last fitted pillar. "
             "Long-end extrapolation is not supported."
         )
 
-    days_to_expiry = int(round(t_years * 365.0))
-    expiry_timestamp = valuation_timestamp + pd.Timedelta(days=days_to_expiry)
-    return expiry_timestamp, t_years
+    expiry_timestamp = _expiry_from_year_fraction(valuation_timestamp, t_years)
+    if expiry_timestamp > max_expiry:
+        expiry_timestamp = max_expiry
+    resolved_maturity = resolve_maturity(
+        expiry_timestamp,
+        valuation_timestamp,
+        floor_at_zero=False,
+    )
+    return resolved_maturity.expiry, float(resolved_maturity.time_to_expiry_years)
 
 
 def derive_surface_distribution_at_t(
@@ -175,6 +215,8 @@ def derive_surface_distribution_at_t(
 def build_interpolated_resolved_market(
     vol_surface: Any,
     t_years: float,
+    *,
+    expiry_timestamp: pd.Timestamp | None = None,
 ) -> ResolvedMarket:
     """Build a synthetic resolved market snapshot for maturity ``t_years``.
 
@@ -186,21 +228,29 @@ def build_interpolated_resolved_market(
         ResolvedMarket: Synthetic market snapshot aligned with ``t_years``.
     """
     market = vol_surface._market
-    valuation_timestamp = pd.to_datetime(market.valuation_date)
-    expiry_timestamp = valuation_timestamp + pd.Timedelta(
-        days=int(round(t_years * 365.0))
+    valuation_timestamp = market.valuation_timestamp
+    if expiry_timestamp is None:
+        expiry_timestamp = _expiry_from_year_fraction(valuation_timestamp, t_years)
+    else:
+        expiry_timestamp = normalize_datetime_like(expiry_timestamp)
+    resolved_maturity = resolve_maturity(
+        expiry_timestamp,
+        valuation_timestamp,
+        floor_at_zero=False,
     )
+    canonical_t_years = float(resolved_maturity.time_to_expiry_years)
 
     return ResolvedMarket(
         risk_free_rate=market.risk_free_rate,
-        underlying_price=float(vol_surface.forward_price(t_years)),
-        valuation_date=market.valuation_date,
+        underlying_price=float(vol_surface.forward_price(canonical_t_years)),
+        valuation_date=valuation_timestamp,
         dividend_yield=market.dividend_yield,
         dividend_schedule=None,
         provenance=Provenance(price="user", dividends="none"),
         source_meta={
             "interpolated": True,
-            "expiry": expiry_timestamp,
+            "expiry": resolved_maturity.expiry,
+            "time_to_expiry_years": canonical_t_years,
             "risk_free_rate_mode": market.risk_free_rate_mode,
         },
     )
@@ -221,16 +271,21 @@ def build_probcurve_metadata(
     Returns:
         dict[str, Any]: Metadata dictionary for ``ProbCurve.from_arrays``.
     """
-    is_pillar = expiry_timestamp in vol_surface.expiries
+    market = vol_surface._market
+    valuation_timestamp = market.valuation_timestamp
+    resolved_maturity = resolve_maturity(
+        expiry_timestamp,
+        valuation_timestamp,
+        floor_at_zero=False,
+    )
+    canonical_t_years = float(resolved_maturity.time_to_expiry_years)
+    is_pillar = resolved_maturity.expiry in vol_surface.expiries
     return {
         "interpolated": not is_pillar,
         "method": "unified_surface_probability",
-        "expiry": expiry_timestamp,
-        "expiry_date": expiry_timestamp.date(),
-        "time_to_expiry_years": t_years,
-        "days_to_expiry": int(round(t_years * 365.0)),
-        "forward_price": float(vol_surface.forward_price(t_years)),
-        "at_money_vol": float(vol_surface.atm_vol(t_years)),
+        **build_maturity_metadata(resolved_maturity),
+        "forward_price": float(vol_surface.forward_price(canonical_t_years)),
+        "at_money_vol": float(vol_surface.atm_vol(canonical_t_years)),
     }
 
 
@@ -241,7 +296,7 @@ def build_daily_fan_density_frame(prob_surface: Any) -> pd.DataFrame:
         prob_surface: Probability surface interface object.
 
     Returns:
-        Long DataFrame with columns ``expiry_date``, ``strike``, and ``cdf``.
+        Long DataFrame with columns ``expiry``, ``strike``, and ``cdf``.
 
     Raises:
         ValueError: If no slices are generated.
@@ -250,8 +305,8 @@ def build_daily_fan_density_frame(prob_surface: Any) -> pd.DataFrame:
     if density_results.empty:
         raise ValueError("No probability slices available for plotting")
 
-    return density_results.rename(columns={"expiry": "expiry_date", "price": "strike"})[
-        ["expiry_date", "strike", "cdf"]
+    return density_results.rename(columns={"price": "strike"})[
+        ["expiry", "strike", "cdf"]
     ]
 
 
@@ -297,7 +352,8 @@ def build_surface_density_results_frame(
     for expiry_timestamp in export_expiries:
         _, t_years = prob_surface._resolve_query_time(expiry_timestamp)
         prices, pdf_values, cdf_values = prob_surface._distribution_arrays_for_t_years(
-            t_years
+            t_years,
+            expiry_timestamp=expiry_timestamp,
         )
         frame = build_density_results_frame(
             prices,

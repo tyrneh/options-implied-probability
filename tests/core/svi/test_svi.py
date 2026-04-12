@@ -250,7 +250,7 @@ def test_objective_gradient_matches_numeric():
         except ValueError:
             return 1e9, np.zeros(5, dtype=float)
 
-        (_, w, dw, _, _, _, _) = _svi_total_variance_with_derivatives(k, trial)
+        _, w, dw, _, _, _, _ = _svi_total_variance_with_derivatives(k, trial)
 
         residual = w - total_var
         abs_residual = np.abs(residual)

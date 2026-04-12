@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from datetime import date
 
+from oipd.core.maturity import resolve_maturity
 
 # =============================================================================
 # Fixtures
@@ -56,6 +57,52 @@ def market_inputs():
         risk_free_rate=0.05,
         dividend_yield=0.0,
     )
+
+
+@pytest.fixture
+def same_day_intraday_chain():
+    """Single-expiry chain with an expiry later on the valuation day."""
+    strikes = [80, 85, 90, 95, 100, 105, 110, 115, 120]
+    expiry = pd.Timestamp("2025-01-01 16:00:00")
+
+    calls = pd.DataFrame(
+        {
+            "strike": strikes,
+            "last_price": [20.75, 16.0, 11.25, 6.75, 3.0, 1.05, 0.4, 0.15, 0.08],
+            "bid": [20.5, 15.8, 11.0, 6.5, 2.8, 0.9, 0.3, 0.1, 0.05],
+            "ask": [21.0, 16.2, 11.5, 7.0, 3.2, 1.2, 0.5, 0.2, 0.1],
+            "option_type": ["call"] * len(strikes),
+            "expiry": [expiry] * len(strikes),
+        }
+    )
+
+    spot = 100.0
+    rate = 0.05
+    time_to_expiry_years = 6.5 / (24.0 * 365.0)
+    discount_factor = np.exp(-rate * time_to_expiry_years)
+
+    puts = calls.copy()
+    puts["option_type"] = "put"
+    puts["last_price"] = (
+        calls["last_price"] - spot + calls["strike"] * discount_factor
+    ).abs()
+    puts["bid"] = (calls["bid"] - spot + calls["strike"] * discount_factor).abs()
+    puts["ask"] = (calls["ask"] - spot + calls["strike"] * discount_factor).abs()
+
+    return pd.concat([calls, puts], ignore_index=True)
+
+
+@pytest.fixture
+def timestamp_dividend_schedules():
+    """Same-day dividend schedules straddling the valuation timestamp."""
+    return {
+        "before": pd.DataFrame(
+            {"ex_date": [pd.Timestamp("2025-01-01 08:00:00")], "amount": [1.0]}
+        ),
+        "after": pd.DataFrame(
+            {"ex_date": [pd.Timestamp("2025-01-01 12:00:00")], "amount": [1.0]}
+        ),
+    }
 
 
 @pytest.fixture
@@ -152,16 +199,192 @@ class TestProbCurveProperties:
         """metadata exposes core calibration fields."""
         metadata = prob_curve.metadata
         assert isinstance(metadata, dict)
-        assert "expiry_date" in metadata
-        assert "forward_price" in metadata
-        assert "at_money_vol" in metadata
+        for key in (
+            "expiry",
+            "time_to_expiry_years",
+            "time_to_expiry_days",
+            "forward_price",
+            "at_money_vol",
+        ):
+            assert key in metadata
         assert np.isfinite(metadata["at_money_vol"])
+
+        resolved = resolve_maturity(
+            metadata["expiry"],
+            prob_curve.resolved_market.valuation_timestamp,
+        )
+        assert metadata["time_to_expiry_years"] == pytest.approx(
+            resolved.time_to_expiry_years
+        )
+        assert metadata["time_to_expiry_days"] == pytest.approx(
+            resolved.time_to_expiry_days
+        )
+
+        assert metadata["expiry"] == resolved.expiry
+        assert metadata["calendar_days_to_expiry"] == resolved.calendar_days_to_expiry
 
     def test_resolved_market_available(self, prob_curve):
         """resolved_market is available on ProbCurve."""
         resolved_market = prob_curve.resolved_market
         assert resolved_market is not None
         assert hasattr(resolved_market, "valuation_date")
+
+    def test_metadata_keeps_same_day_intraday_expiry(self, same_day_intraday_chain):
+        """Derived probability metadata should preserve sub-day maturity inputs."""
+        from oipd import MarketInputs, VolCurve
+
+        market_intraday = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_yield=0.0,
+        )
+
+        curve = VolCurve(pricing_engine="bs")
+        curve.fit(same_day_intraday_chain, market_intraday)
+        prob_curve = curve.implied_distribution()
+
+        assert prob_curve.metadata["expiry"] == pd.Timestamp("2025-01-01 16:00:00")
+        assert prob_curve.metadata["time_to_expiry_days"] == pytest.approx(6.5 / 24.0)
+        assert prob_curve.metadata["calendar_days_to_expiry"] == 0
+        assert prob_curve.metadata["time_to_expiry_years"] == pytest.approx(
+            6.5 / (24.0 * 365.0)
+        )
+
+    def test_same_day_intraday_distribution_queries_are_finite(
+        self, same_day_intraday_chain
+    ):
+        """Same-day intraday probability curves should produce stable numeric outputs."""
+        from oipd import MarketInputs, VolCurve
+
+        market_intraday = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_yield=0.0,
+        )
+
+        curve = VolCurve(pricing_engine="bs")
+        curve.fit(same_day_intraday_chain, market_intraday)
+        prob_curve = curve.implied_distribution()
+
+        pdf_value = prob_curve.pdf(100.0)
+        cdf_value = prob_curve.prob_below(100.0)
+        median = prob_curve.quantile(0.5)
+        export = prob_curve.density_results()
+
+        assert np.isfinite(pdf_value)
+        assert np.isfinite(cdf_value)
+        assert np.isfinite(median)
+        assert 0.0 <= cdf_value <= 1.0
+        assert np.all(np.diff(export["price"].to_numpy(dtype=float)) > 0.0)
+        assert np.all(np.isfinite(export["pdf"].to_numpy(dtype=float)))
+        assert np.all(np.isfinite(export["cdf"].to_numpy(dtype=float)))
+
+    def test_bs_distribution_accepts_timestamp_dividend_schedule(
+        self, same_day_intraday_chain, timestamp_dividend_schedules
+    ):
+        """BS probability curves should support timestamped dividend schedules."""
+        from oipd import MarketInputs, VolCurve
+
+        market_intraday = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_schedule=timestamp_dividend_schedules["after"],
+        )
+
+        prob_curve = (
+            VolCurve(pricing_engine="bs")
+            .fit(same_day_intraday_chain, market_intraday)
+            .implied_distribution()
+        )
+
+        assert np.isfinite(prob_curve.pdf(100.0))
+        assert np.isfinite(prob_curve.prob_below(100.0))
+
+    def test_bs_distribution_distinguishes_same_day_dividend_timing(
+        self, same_day_intraday_chain, timestamp_dividend_schedules
+    ):
+        """BS distributions should change when dividend timing crosses valuation."""
+        from oipd import MarketInputs, VolCurve
+
+        market_before = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_schedule=timestamp_dividend_schedules["before"],
+        )
+        market_after = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_schedule=timestamp_dividend_schedules["after"],
+        )
+
+        prob_before = (
+            VolCurve(pricing_engine="bs")
+            .fit(same_day_intraday_chain, market_before)
+            .implied_distribution()
+        )
+        prob_after = (
+            VolCurve(pricing_engine="bs")
+            .fit(same_day_intraday_chain, market_after)
+            .implied_distribution()
+        )
+
+        assert prob_before.pdf(100.0) != pytest.approx(prob_after.pdf(100.0))
+
+    def test_bs_distribution_ignores_post_expiry_dividends(self, single_expiry_chain):
+        """BS distributions should ignore discrete dividends after the curve expiry."""
+        from oipd import MarketInputs, VolCurve
+
+        full_schedule = pd.DataFrame(
+            {
+                "ex_date": [
+                    pd.Timestamp("2025-02-15 00:00:00"),
+                    pd.Timestamp("2025-04-15 00:00:00"),
+                ],
+                "amount": [1.0, 1.5],
+            }
+        )
+        early_only_schedule = pd.DataFrame(
+            {
+                "ex_date": [pd.Timestamp("2025-02-15 00:00:00")],
+                "amount": [1.0],
+            }
+        )
+
+        market_full = MarketInputs(
+            valuation_date=date(2025, 1, 1),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_schedule=full_schedule,
+        )
+        market_early_only = MarketInputs(
+            valuation_date=date(2025, 1, 1),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_schedule=early_only_schedule,
+        )
+
+        prob_full = (
+            VolCurve(pricing_engine="bs")
+            .fit(single_expiry_chain, market_full)
+            .implied_distribution()
+        )
+        prob_early_only = (
+            VolCurve(pricing_engine="bs")
+            .fit(single_expiry_chain, market_early_only)
+            .implied_distribution()
+        )
+
+        np.testing.assert_allclose(
+            prob_full.density_results()["pdf"].to_numpy(dtype=float),
+            prob_early_only.density_results()["pdf"].to_numpy(dtype=float),
+            rtol=1e-8,
+            atol=1e-10,
+        )
 
 
 # =============================================================================

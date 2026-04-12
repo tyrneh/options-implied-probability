@@ -121,7 +121,7 @@ def pdf_and_cdf_from_normalized_cdf(
     dcdf_dk = finite_diff_first_derivative(cdf_values, log_moneyness_grid)
     pdf_values = np.maximum(np.asarray(dcdf_dk, dtype=float) / strike_grid, 0.0)
 
-    area = float(np.trapz(pdf_values, strike_grid))
+    area = float(np.trapezoid(pdf_values, strike_grid))
     if area <= 0.0:
         raise CalculationError("Failed to derive a positive probability density.")
     pdf_values = pdf_values / area

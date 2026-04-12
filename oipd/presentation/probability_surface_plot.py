@@ -54,7 +54,7 @@ def plot_probability_summary(
     """Plot distribution quantiles over time.
 
     Args:
-        density_data: DataFrame from ``RNDSurface.density_surface(..., as_dataframe=True)``.
+        density_data: DataFrame containing ``expiry``, ``strike``, and ``cdf``.
         lower_percentile: Lower bound percentile for the shaded confidence band.
         upper_percentile: Upper bound percentile for the shaded confidence band.
         figsize: Matplotlib figure size in inches ``(width, height)``.
@@ -70,6 +70,7 @@ def plot_probability_summary(
 
     try:
         import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise ImportError(
             "Matplotlib is required for surface plotting. Install with: pip install matplotlib"
@@ -83,7 +84,7 @@ def plot_probability_summary(
             "lower_percentile must be strictly less than upper_percentile"
         )
 
-    required_cols = {"expiry_date", "strike", "cdf"}
+    required_cols = {"expiry", "strike", "cdf"}
     missing = required_cols.difference(density_data.columns)
     if missing:
         raise InvalidInputError(
@@ -91,7 +92,7 @@ def plot_probability_summary(
             + ", ".join(sorted(missing))
         )
 
-    grouped = density_data.groupby("expiry_date", sort=True)
+    grouped = density_data.groupby("expiry", sort=True)
 
     dates: list[pd.Timestamp] = []
     lower: list[float] = []
@@ -147,7 +148,7 @@ def plot_probability_summary(
         label="Implied median",
     )
 
-    ax.set_xlabel("Expiry date")
+    ax.set_xlabel("Expiry")
     ax.set_ylabel("Price")
     ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.4)
     ax.margins(x=0.02)
@@ -160,6 +161,17 @@ def plot_probability_summary(
     if legend is not None:
         for text in legend.get_texts():
             text.set_color("black")
+
+    has_intraday_precision = any(
+        expiry_ts.time() != pd.Timestamp(expiry_ts).normalize().time()
+        for expiry_ts in dates
+    )
+    if has_intraday_precision:
+        locator = mdates.AutoDateLocator()
+        formatter = mdates.ConciseDateFormatter(locator)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
+
     fig.autofmt_xdate()
 
     return fig

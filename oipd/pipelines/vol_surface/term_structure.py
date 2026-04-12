@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import date
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 
-from oipd.core.utils import calculate_days_to_expiry, convert_days_to_years
+from oipd.core.maturity import calculate_time_to_expiry_days, convert_days_to_years
 
 
 def build_atm_term_structure(
     expiries: Sequence[pd.Timestamp],
-    valuation_date: date,
+    valuation_date: date | pd.Timestamp,
     implied_vol: Callable[[float, float], float],
     forward_price: Callable[[float], float],
     spot_price: float,
@@ -35,7 +34,7 @@ def build_atm_term_structure(
 
     Returns:
         DataFrame with columns:
-            - days_to_expiry
+            - time_to_expiry_days
             - time_to_expiry_years
             - atm_strike
             - atm_iv
@@ -51,10 +50,9 @@ def build_atm_term_structure(
         raise ValueError("at_money must be 'forward' or 'spot'.")
 
     expiries_sorted = sorted(pd.to_datetime(expiries).tz_localize(None))
-    t_min_days = calculate_days_to_expiry(expiries_sorted[0], valuation_date)
-    t_max_days = calculate_days_to_expiry(expiries_sorted[-1], valuation_date)
+    t_min_days = calculate_time_to_expiry_days(expiries_sorted[0], valuation_date)
+    t_max_days = calculate_time_to_expiry_days(expiries_sorted[-1], valuation_date)
 
-    t_min_days = max(t_min_days, 1)
     t_max_days = max(t_max_days, t_min_days)
 
     t_grid_days = np.linspace(t_min_days, t_max_days, num_points)
@@ -88,7 +86,7 @@ def build_atm_term_structure(
 
     return pd.DataFrame(
         {
-            "days_to_expiry": np.array(days_list, dtype=float),
+            "time_to_expiry_days": np.array(days_list, dtype=float),
             "time_to_expiry_years": np.array(t_years_list, dtype=float),
             "atm_strike": np.array(strikes_list, dtype=float),
             "atm_iv": np.array(ivs_list, dtype=float),

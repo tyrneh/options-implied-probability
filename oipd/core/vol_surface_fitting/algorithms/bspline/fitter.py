@@ -9,7 +9,6 @@ from scipy import interpolate
 
 from oipd.core.errors import CalculationError
 
-
 DEFAULT_BSPLINE_OPTIONS: dict[str, float | int] = {
     "smoothing_factor": 10.0,
     "degree": 3,

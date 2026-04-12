@@ -9,7 +9,6 @@ import pandas as pd
 from scipy.optimize import brentq
 
 from oipd.core.errors import CalculationError
-from oipd.core.utils import convert_days_to_years
 from oipd.core.vol_surface_fitting import VolCurve, fit_surface
 from oipd.pricing.black76 import black76_call_price as _b76_price
 from oipd.pricing.black_scholes import (
@@ -18,11 +17,37 @@ from oipd.pricing.black_scholes import (
 )
 
 
+def _resolve_time_to_expiry_years(
+    *,
+    time_to_expiry_years: Optional[float],
+) -> float:
+    """Validate one explicit year-fraction maturity value.
+
+    Args:
+        time_to_expiry_years: Canonical year-fraction maturity.
+
+    Returns:
+        float: Finite maturity in year fractions.
+
+    Raises:
+        ValueError: If no maturity is provided or the resolved value is non-finite.
+    """
+    if time_to_expiry_years is None:
+        raise ValueError("compute_iv requires time_to_expiry_years.")
+
+    years_to_expiry = float(time_to_expiry_years)
+
+    if not np.isfinite(years_to_expiry):
+        raise ValueError("time_to_expiry_years must be finite for IV extraction.")
+
+    return years_to_expiry
+
+
 def compute_iv(
     options_data: pd.DataFrame,
     underlying_price: float,
     *,
-    days_to_expiry: int,
+    time_to_expiry_years: Optional[float] = None,
     risk_free_rate: float,
     solver_method: Literal["newton", "brent"],
     pricing_engine: Literal["black76", "bs"],
@@ -32,6 +57,15 @@ def compute_iv(
 
     Returns a copy of ``options_data`` with an added ``iv`` column and rows where
     IV could not be solved (NaN) removed.
+
+    Args:
+        options_data: Option rows with ``price`` and ``strike``.
+        underlying_price: Spot or forward input used by the pricing engine.
+        time_to_expiry_years: Exact year-fraction maturity input.
+        risk_free_rate: Continuously compounded risk-free rate for pricing.
+        solver_method: BS solver choice when ``pricing_engine == "bs"``.
+        pricing_engine: ``"black76"`` or ``"bs"``.
+        dividend_yield: Continuous dividend yield for BS pricing.
     """
 
     if underlying_price is None:
@@ -39,7 +73,10 @@ def compute_iv(
             "Effective underlying/forward price is required for IV extraction"
         )
 
-    years_to_expiry = convert_days_to_years(days_to_expiry)
+    years_to_expiry = _resolve_time_to_expiry_years(
+        time_to_expiry_years=time_to_expiry_years,
+    )
+
     prices_arr = options_data["price"].to_numpy(dtype=float)
     strikes_arr = options_data["strike"].to_numpy(dtype=float)
 

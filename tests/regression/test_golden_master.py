@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 from datetime import date
 
-
 # =============================================================================
 # Golden Master Fixture
 # =============================================================================
@@ -59,7 +58,7 @@ class TestSviParametersRegression:
         # Setup market inputs from golden master
         gm = golden_master
         val_date = pd.Timestamp(gm["metadata"]["valuation_date"]).tz_localize(None)
-        exp_date = pd.Timestamp(gm["metadata"]["expiry_date"]).tz_localize(None)
+        exp_date = pd.Timestamp(gm["metadata"]["expiry"]).tz_localize(None)
 
         market = MarketInputs(
             valuation_date=val_date,
@@ -106,7 +105,7 @@ class TestImpliedVolRegression:
 
         gm = golden_master
         val_date = pd.Timestamp(gm["metadata"]["valuation_date"]).tz_localize(None)
-        exp_date = pd.Timestamp(gm["metadata"]["expiry_date"]).tz_localize(None)
+        exp_date = pd.Timestamp(gm["metadata"]["expiry"]).tz_localize(None)
 
         market = MarketInputs(
             valuation_date=val_date,
@@ -150,7 +149,7 @@ class TestDistributionRegression:
 
         gm = golden_master
         val_date = pd.Timestamp(gm["metadata"]["valuation_date"]).tz_localize(None)
-        exp_date = pd.Timestamp(gm["metadata"]["expiry_date"]).tz_localize(None)
+        exp_date = pd.Timestamp(gm["metadata"]["expiry"]).tz_localize(None)
 
         market = MarketInputs(
             valuation_date=val_date,
