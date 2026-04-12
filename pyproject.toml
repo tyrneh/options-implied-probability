@@ -55,7 +55,7 @@ minimal = [
 
 # Developer tools (formatting, linting, testing, build)
 dev = [
-    "black>=24.3.0",
+    "black>=26.3.1",
     "isort>=5.13.0",
     "pytest>=8.0.0",
     "mypy>=1.8.0",
