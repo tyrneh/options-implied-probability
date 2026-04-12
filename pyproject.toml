@@ -31,7 +31,7 @@ classifiers = [
 
 # Default dependencies - includes data vendor integrations
 dependencies = [
-    "numpy>=1.26.0",
+    "numpy>=2.0.0",
     "pandas>=2.1.0",
     "scipy>=1.11.0",
     "matplotlib>=3.8.0",
@@ -44,7 +44,7 @@ dependencies = [
 [project.optional-dependencies]
 # Minimal installation - no external data vendors (for internal/corporate use)
 minimal = [
-    "numpy>=1.26.0",
+    "numpy>=2.0.0",
     "pandas>=2.1.0",
     "scipy>=1.11.0",
     "matplotlib>=3.8.0",
