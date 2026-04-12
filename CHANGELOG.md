@@ -5,7 +5,7 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.3]
 ### Changed
 - Finalized the maturity contract around three explicit fields:
     - `time_to_expiry_years` for pricing and calibration
@@ -14,13 +14,6 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Removed
 - Removed the old `days_to_expiry` compatibility path from active APIs.
-
-### Migration
-- Replace old `days_to_expiry` inputs with `time_to_expiry_years` for pricing
-  or `time_to_expiry_days` for reporting.
-- Replace old `days_to_expiry` metadata reads with
-  `calendar_days_to_expiry` when integer calendar-bucket semantics were
-  intended.
 
 ## [2.0.2] - 2026-03-06
 ### Added
