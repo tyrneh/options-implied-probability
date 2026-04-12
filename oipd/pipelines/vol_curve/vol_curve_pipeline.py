@@ -8,6 +8,7 @@ from typing import Any, Dict, Literal, Optional, Tuple, Mapping
 import numpy as np
 import pandas as pd
 
+from oipd.core.maturity import build_maturity_metadata, resolve_maturity
 from oipd.core.errors import CalculationError
 from oipd.core.data_processing import (
     apply_put_call_parity,
@@ -21,8 +22,6 @@ from oipd.data_access.readers import DataFrameReader
 from oipd.pricing.utils import prepare_dividends
 from oipd.market_inputs import ResolvedMarket
 from oipd.core.utils import (
-    calculate_days_to_expiry,
-    convert_days_to_years,
     resolve_risk_free_rate,
 )
 
@@ -64,7 +63,7 @@ def fit_vol_curve_internal(
         - The fitted volatility curve object (callable).
         - A dictionary of metadata (residuals, parameters, etc.).
     """
-    valuation_date = resolved_market.valuation_date
+    valuation_timestamp = resolved_market.valuation_timestamp
 
     # 1. Clean and normalize input
     reader = DataFrameReader()
@@ -75,13 +74,16 @@ def fit_vol_curve_internal(
         raise CalculationError("Options data missing 'expiry' column.")
 
     expiry_val = cleaned_options["expiry"].iloc[0]
-    expiry_date = (
-        expiry_val.date()
-        if isinstance(expiry_val, pd.Timestamp)
-        else pd.to_datetime(expiry_val).date()
+    resolved_maturity = resolve_maturity(
+        expiry_val,
+        valuation_timestamp,
+        floor_at_zero=False,
     )
-    days_to_expiry_slice = calculate_days_to_expiry(expiry_date, valuation_date)
-    years_to_expiry = convert_days_to_years(days_to_expiry_slice)
+    years_to_expiry = resolved_maturity.time_to_expiry_years
+    if years_to_expiry <= 0:
+        raise CalculationError(
+            "Expiry must be strictly after valuation_date for volatility calibration."
+        )
 
     rate_mode = resolved_market.source_meta["risk_free_rate_mode"]
     effective_r = resolve_risk_free_rate(
@@ -95,7 +97,8 @@ def fit_vol_curve_internal(
             dividend_schedule=resolved_market.dividend_schedule,
             dividend_yield=resolved_market.dividend_yield,
             r=effective_r,
-            valuation_date=valuation_date,
+            valuation_date=valuation_timestamp,
+            expiry=resolved_maturity.expiry,
         )
     else:
         effective_spot = resolved_market.underlying_price
@@ -120,7 +123,7 @@ def fit_vol_curve_internal(
     # 4. Filter stale quotes
     filtered_options, staleness_stats = filter_stale_options(
         parity_adjusted,
-        valuation_date,
+        valuation_timestamp,
         max_staleness_days,
         emit_warning=not suppress_staleness_warning,
     )
@@ -136,7 +139,7 @@ def fit_vol_curve_internal(
     options_with_iv = compute_iv(
         priced_options,
         underlying_for_iv,
-        days_to_expiry=days_to_expiry_slice,
+        time_to_expiry_years=years_to_expiry,
         risk_free_rate=effective_r,
         solver_method=solver,
         pricing_engine=pricing_engine,
@@ -163,7 +166,7 @@ def fit_vol_curve_internal(
         solver,
         pricing_engine,
         effective_dividend,
-        days_to_expiry=days_to_expiry_slice,
+        time_to_expiry_years=years_to_expiry,
     )
     observed_ask_iv = _compute_observed_iv(
         priced_options,
@@ -173,7 +176,7 @@ def fit_vol_curve_internal(
         solver,
         pricing_engine,
         effective_dividend,
-        days_to_expiry=days_to_expiry_slice,
+        time_to_expiry_years=years_to_expiry,
     )
     observed_last_iv = _compute_observed_iv(
         priced_options,
@@ -183,7 +186,7 @@ def fit_vol_curve_internal(
         solver,
         pricing_engine,
         effective_dividend,
-        days_to_expiry=days_to_expiry_slice,
+        time_to_expiry_years=years_to_expiry,
     )
 
     # Align bid/ask IVs with the strike array for SVI calibration
@@ -241,7 +244,7 @@ def fit_vol_curve_internal(
         "observed_iv_last": observed_last_iv,
         "mid_price_filled": mid_price_filled,
         "staleness_report": staleness_stats,
-        "expiry_date": expiry_date,
+        **build_maturity_metadata(resolved_maturity),
         "risk_free_rate_continuous": effective_r,
         **fit_metadata,
     }
@@ -257,7 +260,7 @@ def _compute_observed_iv(
     solver: str,
     pricing_engine: str,
     dividend_yield: Optional[float],
-    days_to_expiry: int,
+    time_to_expiry_years: float,
 ) -> Optional[pd.DataFrame]:
     """Compute implied volatility for an alternate observed price column."""
 
@@ -275,7 +278,7 @@ def _compute_observed_iv(
         iv_df = compute_iv(
             priced,
             underlying_price,
-            days_to_expiry=days_to_expiry,
+            time_to_expiry_years=time_to_expiry_years,
             risk_free_rate=risk_free_rate,
             solver_method=solver,
             pricing_engine=pricing_engine,

@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, date, timedelta
 
+from oipd.core.maturity import DateTimeLike, normalize_datetime_like
+
 
 @dataclass(frozen=True)
 class MarketInputs:
@@ -22,21 +24,38 @@ class MarketInputs:
 
     # Required fields first
     risk_free_rate: float
-    valuation_date: date
+    valuation_date: DateTimeLike
     # How the provided risk-free rate is quoted
     # 'annualized' means simple annualized nominal rate on ACT/365 for the horizon
     # 'continuous' means continuously compounded rate
     risk_free_rate_mode: Literal["annualized", "continuous"] = "annualized"
 
-    def __post_init__(self):
-        # Allow string input for convenience, normalize to date
-        if isinstance(self.valuation_date, str):
-            # Bypass frozen dataclass constraint using object.__setattr__
-            object.__setattr__(
-                self, "valuation_date", date.fromisoformat(self.valuation_date)
-            )
-        elif isinstance(self.valuation_date, datetime):
-            object.__setattr__(self, "valuation_date", self.valuation_date.date())
+    def __post_init__(self) -> None:
+        """Normalize and persist valuation timestamp with intraday precision.
+
+        Args:
+            None.
+        """
+        valuation_timestamp = normalize_datetime_like(self.valuation_date)
+        object.__setattr__(self, "valuation_date", valuation_timestamp)
+
+    @property
+    def valuation_timestamp(self) -> pd.Timestamp:
+        """Return canonical valuation timestamp used internally.
+
+        Returns:
+            pd.Timestamp: Canonical timestamp stored on ``valuation_date``.
+        """
+        return self.valuation_date
+
+    @property
+    def valuation_calendar_date(self) -> date:
+        """Return the date-only valuation view for calendar arithmetic.
+
+        Returns:
+            date: Calendar date associated with ``valuation_date``.
+        """
+        return self.valuation_date.date()
 
     # Optional fields second
     underlying_price: Optional[float] = None
@@ -106,11 +125,20 @@ class ResolvedMarket:
 
     risk_free_rate: float
     underlying_price: float
-    valuation_date: date  # Valuation date for dividend calculations
+    valuation_date: DateTimeLike
     dividend_yield: Optional[float]
     dividend_schedule: Optional[pd.DataFrame]
     provenance: Provenance
     source_meta: Dict[str, Any]  # e.g. {"vendor":"yfinance","asof": "..."} etc.
+
+    def __post_init__(self) -> None:
+        """Normalize and persist valuation timestamp with intraday precision.
+
+        Args:
+            None.
+        """
+        valuation_timestamp = normalize_datetime_like(self.valuation_date)
+        object.__setattr__(self, "valuation_date", valuation_timestamp)
 
     def summary(self) -> str:
         """Return a one-line summary of resolved parameters and their sources."""
@@ -126,6 +154,68 @@ class ResolvedMarket:
     @property
     def current_price(self) -> float:  # pragma: no cover - trivial alias
         return self.underlying_price
+
+    @property
+    def valuation_timestamp(self) -> pd.Timestamp:
+        """Return canonical valuation timestamp used in calculations.
+
+        Returns:
+            pd.Timestamp: Canonical timestamp stored on ``valuation_date``.
+        """
+        return self.valuation_date
+
+    @property
+    def valuation_calendar_date(self) -> date:
+        """Return the date-only valuation view for calendar arithmetic.
+
+        Returns:
+            date: Calendar date associated with ``valuation_date``.
+        """
+        return self.valuation_date.date()
+
+
+def _normalize_dividend_schedule(dividend_schedule: pd.DataFrame) -> pd.DataFrame:
+    """Normalize a user-supplied dividend schedule to canonical types.
+
+    Args:
+        dividend_schedule: DataFrame expected to contain ``ex_date`` and
+            ``amount`` columns.
+
+    Returns:
+        pd.DataFrame: Copy of ``dividend_schedule`` with canonical timestamped
+        ``ex_date`` values and numeric ``amount`` values.
+
+    Raises:
+        TypeError: If ``dividend_schedule`` is not a DataFrame.
+        ValueError: If required columns are missing or values cannot be parsed.
+    """
+    if not isinstance(dividend_schedule, pd.DataFrame):
+        raise TypeError("dividend_schedule must be a pandas DataFrame.")
+
+    required_columns = {"ex_date", "amount"}
+    if not required_columns.issubset(dividend_schedule.columns):
+        raise ValueError("dividend_schedule must contain 'ex_date' and 'amount'.")
+
+    normalized_schedule = dividend_schedule.copy()
+    try:
+        normalized_schedule["ex_date"] = normalized_schedule["ex_date"].map(
+            normalize_datetime_like
+        )
+    except Exception as exc:
+        raise ValueError("Could not parse dividend_schedule ex_date values.") from exc
+
+    try:
+        normalized_schedule["amount"] = pd.to_numeric(
+            normalized_schedule["amount"],
+            errors="raise",
+        ).astype(float)
+    except Exception as exc:
+        raise ValueError("Could not parse dividend_schedule amount values.") from exc
+
+    if not np.isfinite(normalized_schedule["amount"]).all():
+        raise ValueError("dividend_schedule amount values must be finite.")
+
+    return normalized_schedule
 
 
 def resolve_market(
@@ -150,12 +240,8 @@ def resolve_market(
     ValueError
         If required parameters (like underlying_price) are missing.
     """
-    # 1) Resolve valuation_date
-    valuation_date = inputs.valuation_date
-    if isinstance(valuation_date, datetime):
-        valuation_date = valuation_date.date()
-    if valuation_date is None:
-        raise ValueError("Valuation date must be provided explicitly.")
+    # 1) Resolve valuation timestamp
+    valuation_timestamp = inputs.valuation_timestamp
 
     # 2) Resolve underlying price
     if inputs.underlying_price is None:
@@ -174,7 +260,7 @@ def resolve_market(
     ] = "none"
 
     if inputs.dividend_schedule is not None:
-        sched = inputs.dividend_schedule
+        sched = _normalize_dividend_schedule(inputs.dividend_schedule)
         div_source = "user_schedule"
     elif inputs.dividend_yield is not None:
         yld = inputs.dividend_yield
@@ -186,7 +272,7 @@ def resolve_market(
     return ResolvedMarket(
         risk_free_rate=float(inputs.risk_free_rate),
         underlying_price=price,
-        valuation_date=valuation_date,
+        valuation_date=valuation_timestamp,
         dividend_yield=yld,
         dividend_schedule=sched,
         provenance=prov,

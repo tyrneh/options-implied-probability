@@ -8,10 +8,9 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from oipd.core.maturity import resolve_maturity
 from oipd.market_inputs import ResolvedMarket
 from oipd.core.utils import (
-    calculate_days_to_expiry,
-    convert_days_to_years,
     resolve_risk_free_rate,
 )
 
@@ -356,19 +355,24 @@ def apply_put_call_parity(
         ValueError: Propagated from :func:`preprocess_with_parity` when the provided
             data cannot support parity adjustments.
     """
-    # Calculate time to expiry from the DataFrame's expiry column
-    # We assume the DataFrame contains data for a single expiry (standard for parity checks)
+    # Calculate time to expiry from the DataFrame's expiry column.
+    # We assume the DataFrame contains data for a single expiry (standard for parity checks).
     if "expiry" not in options_data.columns:
         raise ValueError(
             "Options data must contain an 'expiry' column for parity adjustments."
         )
 
     expiry_val = options_data["expiry"].iloc[0]
-    days_to_expiry = calculate_days_to_expiry(
-        expiry_val, resolved_market.valuation_date
+    resolved_maturity = resolve_maturity(
+        expiry_val,
+        resolved_market.valuation_timestamp,
+        floor_at_zero=False,
     )
-
-    years_to_expiry = convert_days_to_years(days_to_expiry)
+    years_to_expiry = resolved_maturity.time_to_expiry_years
+    if years_to_expiry <= 0:
+        raise ValueError(
+            "Expiry must be strictly after valuation_date for parity adjustments."
+        )
     rate_mode = resolved_market.source_meta["risk_free_rate_mode"]
     effective_r = resolve_risk_free_rate(
         resolved_market.risk_free_rate, rate_mode, years_to_expiry

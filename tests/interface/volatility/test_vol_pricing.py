@@ -120,6 +120,31 @@ def multi_expiry_chain():
     return pd.concat([df1, df1_puts, df2, df2_puts], ignore_index=True)
 
 
+@pytest.fixture
+def bs_dividend_schedule_curve():
+    """Discrete schedule with one live and one post-expiry cash dividend."""
+    return pd.DataFrame(
+        {
+            "ex_date": [
+                pd.Timestamp("2025-01-15 00:00:00"),
+                pd.Timestamp("2025-02-15 00:00:00"),
+            ],
+            "amount": [1.0, 1.5],
+        }
+    )
+
+
+@pytest.fixture
+def bs_dividend_schedule_early_only():
+    """Early-expiry schedule retaining only the first dividend."""
+    return pd.DataFrame(
+        {
+            "ex_date": [pd.Timestamp("2025-01-15 00:00:00")],
+            "amount": [1.0],
+        }
+    )
+
+
 def test_vol_curve_price_black76(sample_market, single_expiry_chain):
     """Test VolCurve.price() using default Black76 engine."""
     vc = VolCurve(pricing_engine="black76", method="svi")
@@ -134,7 +159,7 @@ def test_vol_curve_price_black76(sample_market, single_expiry_chain):
     # Recover state
     F = vc.forward_price
     expiry_date = single_expiry_chain["expiry"].iloc[0].date()
-    t = (expiry_date - sample_market.valuation_date).days / 365.0
+    t = (expiry_date - sample_market.valuation_calendar_date).days / 365.0
     r = resolve_risk_free_rate(
         sample_market.risk_free_rate,
         sample_market.risk_free_rate_mode,
@@ -161,7 +186,7 @@ def test_vol_curve_price_bs(sample_market, single_expiry_chain):
     S = sample_market.underlying_price
     q = 0.0
     expiry_date = single_expiry_chain["expiry"].iloc[0].date()
-    t = (expiry_date - sample_market.valuation_date).days / 365.0
+    t = (expiry_date - sample_market.valuation_calendar_date).days / 365.0
     r = resolve_risk_free_rate(
         sample_market.risk_free_rate,
         sample_market.risk_free_rate_mode,
@@ -272,3 +297,85 @@ def test_pricing_bs_missing_dividend_error(single_expiry_chain, multi_expiry_cha
 
     with pytest.raises(ValueError, match="Dividend yield.*required"):
         vs.price([100], t=0.1)
+
+
+def test_vol_curve_price_bs_with_dividend_schedule_matches_adjusted_spot(
+    single_expiry_chain, bs_dividend_schedule_curve
+):
+    """BS curve pricing should use schedule-adjusted spot instead of requiring q."""
+    market_schedule = MarketInputs(
+        valuation_date=date(2025, 1, 1),
+        risk_free_rate=0.05,
+        underlying_price=100.0,
+        dividend_schedule=bs_dividend_schedule_curve,
+    )
+    vc = VolCurve(pricing_engine="bs", method="svi")
+    vc.fit(single_expiry_chain, market_schedule)
+
+    strike = np.array([100.0])
+    price_method = vc.price(strike)
+
+    expiry_timestamp = pd.Timestamp(single_expiry_chain["expiry"].iloc[0])
+    valuation_timestamp = pd.Timestamp(market_schedule.valuation_date)
+    t = (expiry_timestamp - valuation_timestamp).total_seconds() / (
+        365.0 * 24.0 * 60.0 * 60.0
+    )
+    r = resolve_risk_free_rate(
+        market_schedule.risk_free_rate,
+        market_schedule.risk_free_rate_mode,
+        t,
+    )
+    tau_div = (
+        pd.Timestamp("2025-01-15 00:00:00") - valuation_timestamp
+    ).total_seconds() / (365.0 * 24.0 * 60.0 * 60.0)
+    adjusted_spot = 100.0 - np.exp(-r * tau_div)
+    expected = black_scholes_call_price(
+        adjusted_spot,
+        strike,
+        vc(strike),
+        t,
+        r,
+        0.0,
+    )
+
+    np.testing.assert_allclose(price_method, expected, rtol=1e-6)
+
+
+def test_vol_surface_price_bs_with_dividend_schedule_respects_early_vs_late_window(
+    multi_expiry_chain,
+    bs_dividend_schedule_curve,
+    bs_dividend_schedule_early_only,
+):
+    """Early expiry should ignore the later dividend while later expiry includes it."""
+    market_full = MarketInputs(
+        valuation_date=date(2025, 1, 1),
+        risk_free_rate=0.05,
+        underlying_price=100.0,
+        dividend_schedule=bs_dividend_schedule_curve,
+    )
+    market_early_only = MarketInputs(
+        valuation_date=date(2025, 1, 1),
+        risk_free_rate=0.05,
+        underlying_price=100.0,
+        dividend_schedule=bs_dividend_schedule_early_only,
+    )
+
+    surface_full = VolSurface(pricing_engine="bs").fit(multi_expiry_chain, market_full)
+    surface_early_only = VolSurface(pricing_engine="bs").fit(
+        multi_expiry_chain, market_early_only
+    )
+
+    early_expiry = pd.Timestamp("2025-01-31 00:00:00")
+    late_expiry = pd.Timestamp("2025-03-02 00:00:00")
+    early_t = 30 / 365.0
+    late_t = 60 / 365.0
+
+    price_early_date = surface_full.price([100.0], t=early_expiry)
+    price_early_float = surface_full.price([100.0], t=early_t)
+    price_early_only = surface_early_only.price([100.0], t=early_t)
+    price_late_full = surface_full.price([100.0], t=late_expiry)
+    price_late_early_only = surface_early_only.price([100.0], t=late_t)
+
+    np.testing.assert_allclose(price_early_date, price_early_float, rtol=1e-8)
+    np.testing.assert_allclose(price_early_float, price_early_only, rtol=1e-8)
+    assert price_late_full[0] != pytest.approx(price_late_early_only[0])

@@ -1,8 +1,7 @@
-"""Data preprocessing scaffolding package.
+"""Convenience namespace for data-processing helpers.
 
-This namespace will eventually host the refactored preprocessing helpers.
-While the migration is in flight, it simply re-exports the legacy functions
-so early adopters can rely on the new module paths without breaking.
+This package primarily re-exports the preprocessing functions implemented in
+its submodules so callers can import them from one stable package path.
 """
 
 from . import dividends, iv, moneyness, parity, selection, validation  # noqa: F401

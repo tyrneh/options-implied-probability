@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from typing import Any, Dict, Literal, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Literal, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -13,13 +13,17 @@ import matplotlib.ticker as ticker
 import warnings
 
 from oipd.core.errors import CalculationError
-from oipd.core.utils import (
-    calculate_days_to_expiry,
-    resolve_horizon,
-    calculate_time_to_expiry,
+from oipd.core.maturity import (
+    build_maturity_metadata,
+    calculate_time_to_expiry_days,
     convert_days_to_years,
-    resolve_risk_free_rate,
+    format_time_to_expiry_days_label,
+    format_timestamp_for_display,
+    normalize_datetime_like,
+    resolve_horizon,
+    resolve_maturity,
 )
+from oipd.core.utils import resolve_risk_free_rate
 from oipd.core.vol_surface_fitting import fit_slice
 
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
@@ -38,7 +42,9 @@ from oipd.pricing.black76 import (
     black76_rho,
     ArrayLike,
 )
+from oipd.pricing.utils import prepare_dividends
 from oipd.pricing.black_scholes import (
+    black_scholes_call_price,
     black_scholes_delta,
     black_scholes_gamma,
     black_scholes_vega,
@@ -64,6 +70,24 @@ from oipd.pipelines.vol_surface.interpolator import (
     build_interpolator_from_fitted_surface,
 )
 from oipd.presentation.iv_plotting import ForwardPriceAnnotation, plot_iv_smile
+
+
+def _normalize_expiry_series(expiry_values: pd.Series) -> pd.Series:
+    """Normalize expiry inputs using canonical timestamp policy.
+
+    Args:
+        expiry_values: Raw expiry column values.
+
+    Returns:
+        pd.Series: Timezone-naive expiry timestamps normalized via
+            ``normalize_datetime_like`` (aware inputs converted to UTC first).
+    """
+    normalized = [normalize_datetime_like(value) for value in expiry_values]
+    return pd.Series(
+        pd.to_datetime(normalized),
+        index=expiry_values.index,
+        dtype="datetime64[ns]",
+    )
 
 
 class VolCurve:
@@ -142,10 +166,12 @@ class VolCurve:
                 "Use column_mapping={'your_col': 'expiry'} if needed."
             )
 
-        expiry_series = pd.to_datetime(chain_input["expiry"], errors="coerce")
+        try:
+            expiry_series = _normalize_expiry_series(chain_input["expiry"])
+        except (TypeError, ValueError):
+            raise ValueError("Invalid expiry values encountered during parsing.")
         if expiry_series.isna().any():
             raise ValueError("Invalid expiry values encountered during parsing.")
-        expiry_series = expiry_series.dt.tz_localize(None)
         chain_input["expiry"] = expiry_series
 
         unique_expiries = expiry_series.unique()
@@ -156,10 +182,13 @@ class VolCurve:
                 "Use VolSurface.fit for multiple expiries."
             )
 
-        expiry_date = pd.to_datetime(unique_expiries[0]).date()
-        # NOTE: If we ever move to intraday time-to-expiry (minutes/seconds),
-        # this guard should be revisited to allow same-day expiries.
-        if expiry_date <= market.valuation_date:
+        expiry_timestamp = normalize_datetime_like(unique_expiries[0])
+        resolved_maturity = resolve_maturity(
+            expiry_timestamp,
+            market.valuation_timestamp,
+            floor_at_zero=False,
+        )
+        if resolved_maturity.time_to_expiry_years <= 0:
             raise CalculationError(
                 "Expiry must be strictly after valuation_date. "
                 "Choose a later expiry to fit a volatility curve."
@@ -242,6 +271,72 @@ class VolCurve:
         """Alias for :meth:`implied_vol`."""
         return self.implied_vol(strikes)
 
+    def _metadata_expiry(self) -> pd.Timestamp | None:
+        """Return canonical expiry timestamp from metadata."""
+        if self._metadata is None:
+            return None
+        raw_expiry = self._metadata.get("expiry")
+        if raw_expiry is None:
+            return None
+        return normalize_datetime_like(raw_expiry)
+
+    def _time_to_expiry_years(self) -> float:
+        """Return maturity in years for pricing and Greeks calculations."""
+        if self._metadata and "time_to_expiry_years" in self._metadata:
+            return float(self._metadata["time_to_expiry_years"])
+        if self._resolved_market is None:
+            raise ValueError("Model not fitted. Cannot calculate time to expiry.")
+        expiry_timestamp = self._metadata_expiry()
+        if expiry_timestamp is None:
+            raise ValueError("Expiry not found in metadata.")
+        return resolve_maturity(
+            expiry_timestamp,
+            self._resolved_market.valuation_timestamp,
+            floor_at_zero=True,
+        ).time_to_expiry_years
+
+    def _get_bs_pricing_inputs(
+        self,
+    ) -> tuple[float, float, float, float | None, pd.Timestamp]:
+        """Resolve Black-Scholes pricing inputs for post-fit queries.
+
+        Returns:
+            tuple[float, float, float, float | None, pd.Timestamp]:
+                Time to expiry in years, resolved risk-free rate, effective spot,
+                effective dividend yield, and the curve expiry timestamp.
+
+        Raises:
+            ValueError: If the curve is not fitted or the expiry is unavailable.
+        """
+        if self._resolved_market is None:
+            raise ValueError("Call fit before pricing options")
+
+        curve_expiry = self._metadata_expiry()
+        if curve_expiry is None:
+            raise ValueError("Expiry not found in metadata.")
+
+        t_years = self._time_to_expiry_years()
+        rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
+        r = resolve_risk_free_rate(
+            self._resolved_market.risk_free_rate, rate_mode, t_years
+        )
+
+        effective_spot, effective_q = prepare_dividends(
+            self._resolved_market.underlying_price,
+            dividend_schedule=self._resolved_market.dividend_schedule,
+            dividend_yield=self._resolved_market.dividend_yield,
+            r=r,
+            valuation_date=self._resolved_market.valuation_date,
+            expiry=curve_expiry,
+        )
+        if (
+            self._resolved_market.dividend_schedule is None
+            and self._resolved_market.dividend_yield is None
+        ):
+            effective_q = None
+
+        return t_years, r, effective_spot, effective_q, curve_expiry
+
     def total_variance(
         self, strikes: float | Sequence[float] | np.ndarray
     ) -> np.ndarray:
@@ -259,13 +354,7 @@ class VolCurve:
         if self._resolved_market is None or self._metadata is None:
             raise ValueError("Model not fitted. Cannot calculate T.")
 
-        expiry = self._metadata.get("expiry_date")
-        if expiry is None:
-            # Should not happen for standard fitted curves
-            raise ValueError("Expiry date not found in metadata.")
-
-        T = calculate_time_to_expiry(expiry, self._resolved_market.valuation_date)
-        # Ensure non-negative T logic is handled in calculate_days_to_expiry (returns 0 if expired)
+        T = self._time_to_expiry_years()
         return (sigma**2) * T
 
     @property
@@ -299,7 +388,10 @@ class VolCurve:
         """
         if self._metadata is None:
             return ()
-        return (self._metadata.get("expiry_date"),)
+        expiry_timestamp = self._metadata_expiry()
+        if expiry_timestamp is not None:
+            return (expiry_timestamp,)
+        return ()
 
     def iv_results(
         self,
@@ -383,16 +475,13 @@ class VolCurve:
                     "Positive forward price required for log-moneyness axis, but not found in fit metadata."
                 )
 
-        # Extract expiry date for default title generation
-        # expiry_date is stored in metadata from the vol_curve_pipeline
-        expiry_date = self._metadata.get("expiry_date")
+        # Extract expiry timestamp for default title generation.
+        expiry_timestamp = self._metadata_expiry()
 
         # Calculate time to expiry for total variance conversion if needed
         t_to_expiry = None
-        if self._resolved_market is not None and expiry_date is not None:
-            t_to_expiry = calculate_time_to_expiry(
-                expiry_date, self._resolved_market.valuation_date
-            )
+        if self._resolved_market is not None:
+            t_to_expiry = self._time_to_expiry_years()
 
         return plot_iv_smile(
             plot_df,
@@ -403,7 +492,7 @@ class VolCurve:
             y_axis=y_axis,
             figsize=figsize,
             title=title,
-            expiry_date=expiry_date,
+            expiry_date=expiry_timestamp,
             xlim=xlim,
             ylim=ylim,
             t_to_expiry=t_to_expiry,
@@ -531,22 +620,8 @@ class VolCurve:
         K = np.asarray(strikes, dtype=float)
         sigma = self(K)
 
-        # Determine time to expiry
-        # If this is a synthetic curve, 'time_to_expiry_years' is in metadata
-        if self._metadata and "time_to_expiry_years" in self._metadata:
-            t = float(self._metadata["time_to_expiry_years"])
-        else:
-            # Otherwise derive from dates
-            expiry_date = self._metadata.get("expiry_date") if self._metadata else None
-            if expiry_date is None:
-                raise ValueError("Expiry date not found in metadata")
-
-            t = calculate_time_to_expiry(
-                expiry_date, self._resolved_market.valuation_date
-            )
-
-        # Safety clamp for t
-        t = max(t, 1e-6)
+        # Determine time to expiry.
+        t = self._time_to_expiry_years()
 
         rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
         r = resolve_risk_free_rate(self._resolved_market.risk_free_rate, rate_mode, t)
@@ -577,8 +652,7 @@ class VolCurve:
 
         elif engine_name == "bs":
             # Black-Scholes requires Spot (S) and Div Yield (q)
-            S = self._resolved_market.underlying_price
-            q = self._resolved_market.dividend_yield
+            t, r, S, q, _curve_expiry = self._get_bs_pricing_inputs()
             if q is None:
                 raise ValueError(
                     "Dividend yield (q) is required for Black-Scholes pricing but was not provided."
@@ -602,7 +676,7 @@ class VolCurve:
 
     def _get_greeks_inputs(
         self, strikes: ArrayLike
-    ) -> tuple[np.ndarray, np.ndarray, float, float, float | None]:
+    ) -> tuple[np.ndarray, np.ndarray, float, float, float | None, float | None]:
         """Internal helper to gather common inputs for Greeks calculations."""
         if self._resolved_market is None:
             raise ValueError("Call fit before computing Greeks")
@@ -610,22 +684,19 @@ class VolCurve:
         K = np.asarray(strikes, dtype=float)
         sigma = self(K)
 
-        # Time to expiry
-        if self._metadata and "time_to_expiry_years" in self._metadata:
-            t = float(self._metadata["time_to_expiry_years"])
-        else:
-            expiry_date = self._metadata.get("expiry_date") if self._metadata else None
-            if expiry_date is None:
-                raise ValueError("Expiry date not found in metadata")
-            t = calculate_time_to_expiry(
-                expiry_date, self._resolved_market.valuation_date
+        if self.pricing_engine == "bs":
+            t, r, effective_spot, effective_q, _curve_expiry = (
+                self._get_bs_pricing_inputs()
             )
-        t = max(t, 1e-6)
+            return K, sigma, t, r, effective_q, effective_spot
+
+        # Time to expiry
+        t = self._time_to_expiry_years()
 
         q = self._resolved_market.dividend_yield
         rate_mode = self._resolved_market.source_meta["risk_free_rate_mode"]
         r = resolve_risk_free_rate(self._resolved_market.risk_free_rate, rate_mode, t)
-        return K, sigma, t, r, q
+        return K, sigma, t, r, q, None
 
     def _dispatch_greek(
         self,
@@ -635,7 +706,7 @@ class VolCurve:
         **kwargs,
     ) -> np.ndarray:
         """Dispatch controller: routes the calculation to the appropriate pricing kernel (Black-76 or Black-Scholes)."""
-        K, sigma, t, r, q = self._get_greeks_inputs(strikes)
+        K, sigma, t, r, q, effective_spot = self._get_greeks_inputs(strikes)
 
         if self.pricing_engine == "black76":
             F = self.forward_price
@@ -643,7 +714,11 @@ class VolCurve:
                 raise ValueError(f"Forward price required for Black-76 Greeks")
             return func_black76(F, K, sigma, t, r, **kwargs)
         else:  # bs
-            S = self._resolved_market.underlying_price
+            S = (
+                effective_spot
+                if effective_spot is not None
+                else self._resolved_market.underlying_price
+            )
             if q is None:
                 raise ValueError(f"Dividend yield required for BS Greeks")
             return func_bs(S, K, sigma, t, r, q, **kwargs)
@@ -844,16 +919,18 @@ class VolSurface:
                 "Use column_mapping to map your expiry column to 'expiry'."
             )
 
-        expiry_series = pd.to_datetime(chain_input["expiry"], errors="coerce")
+        try:
+            expiry_series = _normalize_expiry_series(chain_input["expiry"])
+        except (TypeError, ValueError):
+            raise CalculationError("Invalid expiry values encountered during parsing.")
         if expiry_series.isna().any():
             raise CalculationError("Invalid expiry values encountered during parsing.")
-        expiry_series = expiry_series.dt.tz_localize(None)
         chain_input["expiry"] = expiry_series
 
         # Apply horizon filtering
         if horizon is not None:
             # Resolve cutoff date
-            cutoff = resolve_horizon(horizon, market.valuation_date)
+            cutoff = resolve_horizon(horizon, market.valuation_timestamp)
 
             # Filter chain
             chain_input = chain_input[chain_input["expiry"] <= cutoff]
@@ -864,11 +941,12 @@ class VolSurface:
                 )
 
         drop_same_day_expiries = True
-        # NOTE: If we ever move to intraday time-to-expiry (minutes/seconds),
-        # this should be disabled so we can fit same-day slices.
         if drop_same_day_expiries:
-            valuation_date = market.valuation_date
-            chain_input = chain_input[chain_input["expiry"].dt.date > valuation_date]
+            valuation_timestamp = market.valuation_timestamp
+            time_to_expiry_seconds = (
+                chain_input["expiry"] - valuation_timestamp
+            ).dt.total_seconds()
+            chain_input = chain_input[time_to_expiry_seconds > 0.0]
             if chain_input.empty:
                 raise CalculationError(
                     "All expiries are on or before valuation_date. "
@@ -972,25 +1050,29 @@ class VolSurface:
 
         # Enforce strict maturity domain shared across all surface methods.
         resolved_expiry_timestamp, t = self._resolve_query_time(expiry_timestamp)
-        days = calculate_days_to_expiry(
-            resolved_expiry_timestamp, self._market.valuation_date
+        resolved_maturity = resolve_maturity(
+            resolved_expiry_timestamp,
+            self._market.valuation_timestamp,
+            floor_at_zero=False,
         )
+        t = float(resolved_maturity.time_to_expiry_years)
 
         # Get interpolated forward price
         interpolator = self._interpolator
-        forward_price = interpolator._forward_interp(t)
+        forward_price = float(interpolator._forward_interp(t))
+        at_money_vol = float(interpolator.implied_vol(forward_price, t))
 
         # Construct synthetic ResolvedMarket for this expiry
         synthetic_market = ResolvedMarket(
             risk_free_rate=self._market.risk_free_rate,
             underlying_price=forward_price,  # Use forward as "underlying" for Black-76
-            valuation_date=self._market.valuation_date,
+            valuation_date=self._market.valuation_timestamp,
             dividend_yield=self._market.dividend_yield,
             dividend_schedule=None,
             provenance=Provenance(price="user", dividends="none"),
             source_meta={
                 "interpolated": True,
-                "expiry": resolved_expiry_timestamp,
+                "expiry": resolved_maturity.expiry,
                 "risk_free_rate_mode": self._market.risk_free_rate_mode,
             },
         )
@@ -1033,10 +1115,9 @@ class VolSurface:
         vol_curve._vol_curve = interpolated_vol_curve  # type: ignore[attr-defined]
         vol_curve._metadata = {  # type: ignore[attr-defined]
             "interpolated": True,
-            "expiry": resolved_expiry_timestamp,
-            "expiry_date": resolved_expiry_timestamp.date(),  # Required for probability derivation
-            "time_to_expiry_years": t,
-            "days_to_expiry": days,
+            **build_maturity_metadata(resolved_maturity),
+            "forward_price": forward_price,
+            "at_money_vol": at_money_vol,
             "method": "total_variance_interpolation",
             "default_domain": default_domain,
         }
@@ -1074,6 +1155,48 @@ class VolSurface:
         if self._interpolator is None or self._market is None or self._model is None:
             raise ValueError("Surface not fitted. Call fit() first.")
         return resolve_surface_query_time(self, t)
+
+    def _get_surface_bs_pricing_inputs(
+        self,
+        t: float | str | date | pd.Timestamp,
+    ) -> tuple[pd.Timestamp, float, float, float, float | None]:
+        """Resolve Black-Scholes pricing inputs for a queried surface maturity.
+
+        Args:
+            t: Time to maturity as a year fraction or date-like expiry.
+
+        Returns:
+            tuple[pd.Timestamp, float, float, float, float | None]:
+                Canonical expiry timestamp, year fraction, resolved risk-free
+                rate, effective spot, and effective dividend yield.
+
+        Raises:
+            ValueError: If the surface is not fitted.
+        """
+        if self._market is None:
+            raise ValueError("Call fit before pricing options")
+
+        resolved_expiry_timestamp, t_years = self._resolve_query_time(t)
+        r = resolve_risk_free_rate(
+            self._market.risk_free_rate,
+            self._market.risk_free_rate_mode,
+            t_years,
+        )
+        effective_spot, effective_q = prepare_dividends(
+            self._market.underlying_price,
+            dividend_schedule=self._market.dividend_schedule,
+            dividend_yield=self._market.dividend_yield,
+            r=r,
+            valuation_date=self._market.valuation_date,
+            expiry=resolved_expiry_timestamp,
+        )
+        if (
+            self._market.dividend_schedule is None
+            and self._market.dividend_yield is None
+        ):
+            effective_q = None
+
+        return resolved_expiry_timestamp, t_years, r, effective_spot, effective_q
 
     def total_variance(self, K: float, t: float | str | date | pd.Timestamp) -> float:
         """Return total variance at strike K and time t (years).
@@ -1168,9 +1291,7 @@ class VolSurface:
 
         elif engine_name == "bs":
             # If using BS, we need Spot S and Yield q
-
-            S = self._market.underlying_price
-            q = self._market.dividend_yield
+            _, t_years, r, S, q = self._get_surface_bs_pricing_inputs(t)
             if q is None:
                 raise ValueError(
                     "Dividend yield (q) is required for Black-Scholes pricing but was not provided."
@@ -1295,17 +1416,16 @@ class VolSurface:
         # 2. Resolve Inputs from Interpolator
         K = np.asarray(strikes, dtype=float)
         sigma = self._interpolator.implied_vol(K, t_years)
-        r = resolve_risk_free_rate(
-            self._market.risk_free_rate, self._market.risk_free_rate_mode, t_years
-        )
-        q = self._market.dividend_yield
 
         # 3. Dispatch to Match Pricing Engine
         if self.pricing_engine == "black76":
+            r = resolve_risk_free_rate(
+                self._market.risk_free_rate, self._market.risk_free_rate_mode, t_years
+            )
             F = self._interpolator._forward_interp(t_years)
             return func_black76(F, K, sigma, t_years, r, **kwargs)
         else:  # bs
-            S = self._market.underlying_price
+            _, t_years, r, S, q = self._get_surface_bs_pricing_inputs(t)
             if q is None:
                 raise ValueError("Dividend yield required for BS Greeks")
             return func_bs(S, K, sigma, t_years, r, q, **kwargs)
@@ -1504,14 +1624,14 @@ class VolSurface:
             if label_format == "days":
                 resolved_market = vol_curve._resolved_market
                 if resolved_market is not None:
-                    days = calculate_days_to_expiry(
-                        expiry_timestamp, resolved_market.valuation_date
+                    time_to_expiry_days = calculate_time_to_expiry_days(
+                        expiry_timestamp, resolved_market.valuation_timestamp
                     )
-                    label = f"{days}d"
+                    label = format_time_to_expiry_days_label(time_to_expiry_days)
                 else:
-                    label = expiry_timestamp.strftime("%b %d, %Y")
+                    label = format_timestamp_for_display(expiry_timestamp)
             else:
-                label = expiry_timestamp.strftime("%b %d, %Y")
+                label = format_timestamp_for_display(expiry_timestamp)
 
             # Determine color: use kwargs if provided, else cycle
             current_line_kwargs = {"label": label, **kwargs}
@@ -1596,7 +1716,10 @@ class VolSurface:
 
         Args:
             strike_range: Optional (min, max) tuple for strike axis. Auto-determined if None.
-            expiry_range: Optional (min, max) tuple for expiry axis (in days). Auto-determined if None.
+            expiry_range: Optional (min, max) tuple for expiry axis bounds as
+                date-like values. Bounds are converted to continuous
+                ``time_to_expiry_days`` from the stored valuation timestamp.
+                Auto-determined from fitted expiries if omitted.
             n_strikes: Number of grid points for strike axis.
             n_expiries: Number of grid points for expiry axis.
             view_angle: (elevation, azimuth) for 3D camera.
@@ -1623,20 +1746,20 @@ class VolSurface:
         # 1. Determine Time (Y-Axis) Domain
         # -------------------------------------------------------------------------
         all_expiries = sorted(self.expiries)
-        valuation_date = self._market.valuation_date
+        valuation_date = self._market.valuation_timestamp
 
         if expiry_range is not None:
-            t_min = calculate_days_to_expiry(
+            t_min = calculate_time_to_expiry_days(
                 pd.to_datetime(expiry_range[0]), valuation_date
             )
-            t_max = calculate_days_to_expiry(
+            t_max = calculate_time_to_expiry_days(
                 pd.to_datetime(expiry_range[1]), valuation_date
             )
         else:
-            t_min = calculate_days_to_expiry(all_expiries[0], valuation_date)
-            t_max = calculate_days_to_expiry(all_expiries[-1], valuation_date)
+            t_min = calculate_time_to_expiry_days(all_expiries[0], valuation_date)
+            t_max = calculate_time_to_expiry_days(all_expiries[-1], valuation_date)
 
-        t_min = max(t_min, 1)  # At least 1 day
+        t_max = max(t_max, t_min)
         t_grid_days = np.linspace(t_min, t_max, n_expiries)
         t_grid_years = convert_days_to_years(t_grid_days)
 
@@ -1713,7 +1836,7 @@ class VolSurface:
             Y,
             Z,
             xlabel="Strike Price",
-            ylabel="Expiration (days)",
+            ylabel="Time to Expiry (days)",
             zlabel="Implied Vol (%)",
             title=resolved_title,
             cmap=cmap,
@@ -1761,7 +1884,7 @@ class VolSurface:
         from oipd.presentation.term_structure import plot_term_structure
         from oipd.pipelines.vol_surface.term_structure import build_atm_term_structure
 
-        valuation_date = self._market.valuation_date
+        valuation_date = self._market.valuation_timestamp
 
         term_structure = build_atm_term_structure(
             expiries=self.expiries,
@@ -1774,7 +1897,7 @@ class VolSurface:
         )
 
         return plot_term_structure(
-            days_to_expiry=term_structure["days_to_expiry"].to_numpy(),
+            time_to_expiry_days=term_structure["time_to_expiry_days"].to_numpy(),
             atm_ivs=term_structure["atm_iv"].to_numpy() * 100.0,
             title=title or f"ATM ({at_money.capitalize()}) Term Structure",
             figsize=figsize,

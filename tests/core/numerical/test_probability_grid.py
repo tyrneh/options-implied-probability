@@ -28,13 +28,13 @@ def _make_resolved_market() -> "ResolvedMarket":
 def test_build_strike_grid_uses_explicit_domain():
     """Builds a uniform grid that honors an explicit domain."""
     resolved_market = _make_resolved_market()
-    vol_meta = {"expiry_date": date(2026, 3, 4), "at_money_vol": 0.2}
+    vol_meta = {"expiry": date(2026, 3, 4), "at_money_vol": 0.2}
 
     grid = _build_strike_grid(
         resolved_market,
         vol_meta,
         pricing_underlying=100.0,
-        days_to_expiry=28,
+        time_to_expiry_years=28 / 365.0,
         domain=(90.0, 110.0),
         points=11,
     )
@@ -50,7 +50,7 @@ def test_build_strike_grid_uses_default_domain():
     resolved_market = _make_resolved_market()
     vol_meta = {
         "default_domain": (80.0, 120.0),
-        "expiry_date": date(2026, 3, 4),
+        "expiry": date(2026, 3, 4),
         "at_money_vol": 0.2,
     }
 
@@ -58,7 +58,7 @@ def test_build_strike_grid_uses_default_domain():
         resolved_market,
         vol_meta,
         pricing_underlying=100.0,
-        days_to_expiry=28,
+        time_to_expiry_years=28 / 365.0,
         domain=None,
         points=11,
     )
@@ -74,7 +74,7 @@ def test_build_strike_grid_uses_observed_strikes_for_bounds():
     observed_iv = pd.DataFrame({"strike": [95.0, 105.0]})
     vol_meta = {
         "observed_iv": observed_iv,
-        "expiry_date": date(2026, 3, 4),
+        "expiry": date(2026, 3, 4),
         "at_money_vol": 0.2,
     }
 
@@ -82,7 +82,7 @@ def test_build_strike_grid_uses_observed_strikes_for_bounds():
         resolved_market,
         vol_meta,
         pricing_underlying=100.0,
-        days_to_expiry=28,
+        time_to_expiry_years=28 / 365.0,
         domain=None,
         points=11,
     )
@@ -95,13 +95,13 @@ def test_build_strike_grid_uses_observed_strikes_for_bounds():
 def test_build_strike_grid_falls_back_to_atm_based_bounds():
     """Falls back to ATM-vol-based bounds when no domain or observed strikes."""
     resolved_market = _make_resolved_market()
-    vol_meta = {"expiry_date": date(2026, 3, 4), "at_money_vol": 0.25}
+    vol_meta = {"expiry": date(2026, 3, 4), "at_money_vol": 0.25}
 
     grid = _build_strike_grid(
         resolved_market,
         vol_meta,
         pricing_underlying=100.0,
-        days_to_expiry=28,
+        time_to_expiry_years=28 / 365.0,
         domain=None,
         points=11,
     )

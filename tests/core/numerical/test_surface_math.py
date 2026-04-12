@@ -123,7 +123,7 @@ def test_pdf_and_cdf_from_normalized_cdf_matches_legacy_block() -> None:
 
     dcdf_dk = finite_diff_first_derivative(cdf_values, k_grid)
     expected_pdf = np.maximum(np.asarray(dcdf_dk, dtype=float) / strike_grid, 0.0)
-    expected_pdf = expected_pdf / float(np.trapz(expected_pdf, strike_grid))
+    expected_pdf = expected_pdf / float(np.trapezoid(expected_pdf, strike_grid))
     increments = (
         0.5
         * (expected_pdf[1:] + expected_pdf[:-1])

@@ -97,13 +97,56 @@ from oipd import MarketInputs
 
 market = MarketInputs(
     risk_free_rate=0.04,
-    valuation_date=snapshot.date,              # or a fixed date
+    valuation_date=snapshot.asof,              # recommended for intraday precision
     underlying_price=snapshot.underlying_price, # set explicitly if snapshot is unavailable
     # optional:
     # risk_free_rate_mode="annualized",  # default
     # dividend_yield=0.01,
 )
 ```
+
+`valuation_date` accepts both plain dates and full datetimes. Date-only values
+remain fully supported, and full datetimes (for example `snapshot.asof`) should
+be preferred when intraday precision matters.
+
+Market-object contract:
+
+- `valuation_date` remains the public field name and stores the canonical
+  normalized timestamp.
+- `valuation_calendar_date` is the explicit date-only convenience view.
+- `valuation_timestamp` remains as a temporary compatibility alias to the same
+  canonical timestamp value.
+
+The option maturity field remains `expiry`. OIPD keeps `valuation_date` as the
+public input name for backwards compatibility, but internally it resolves both
+`valuation_date` and `expiry` to full timestamps before computing maturity.
+That means exact `time_to_expiry_years` is now the source-of-truth input for
+pricing, calibration, and probability calculations. Reporting in day units now
+uses explicit `time_to_expiry_days`, while `calendar_days_to_expiry` is the
+explicit integer calendar bucket.
+
+Maturity contract:
+
+- `oipd.core.maturity` is the canonical home of maturity logic.
+- `time_to_expiry_years` is the pricing truth.
+- `time_to_expiry_days` is the continuous reporting truth.
+- `calendar_days_to_expiry` is the integer calendar bucket.
+
+Migration note:
+
+- replace old `days_to_expiry` inputs with `time_to_expiry_years` for pricing
+  or `time_to_expiry_days` for reporting
+- replace old `days_to_expiry` metadata reads with
+  `calendar_days_to_expiry` if you intended integer calendar-bucket semantics
+
+If you use explicit dividends in the Black-Scholes path, `dividend_schedule`
+supports both date-only and timestamp-style `ex_date` values. Same-day timing
+matters: an ex-dividend timestamp after `valuation_date` is included in pricing,
+while one before `valuation_date` is excluded. Date-only dividend rows keep the
+current midnight semantics for backwards compatibility.
+
+Timezone display redesign is still out of scope for this cycle. Intraday
+arithmetic is supported, but timezone-aware display semantics are unchanged.
 
 ### 2.3 Fit single-expiry (`VolCurve`) or multi-expiry (`VolSurface`)
 
@@ -143,6 +186,12 @@ Both surface objects support *slicing*:
 
 After slicing, you can use the same methods you would use on regular curve objects (`implied_vol`, `price`, `greeks`, `iv_results` for volatility curves; `pdf`, `prob_below`, `quantile`, `density_results`, `plot` for probability curves).
 
+When `expiry` or `valuation_date` includes a non-midnight timestamp, OIPD
+preserves that intraday precision through surface queries and will show the
+time-of-day in labels/plots where relevant. Midnight timestamps continue to
+render as date-only labels, so older date-based workflows remain visually
+stable.
+
 ```python
 # volatility surface -> volatility curve snapshot
 vol_curve_slice = vol_surface.slice("2026-01-16")
@@ -173,7 +222,7 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Expiries** | `expiries` (1-tuple) | Single expiry date. | `expiries` (list) | List of fitted expiry dates. |
 | **Distributions** | `implied_distribution()` | Get `ProbCurve` (RND). | `implied_distribution()` | Get `ProbSurface` (RND Surface). |
 | **Visualization (2D curve)** | `plot()` | Plot fitted smile vs market. | `plot()` | Overlayed IV smiles. |
-| **Visualization (3D surface)** | | | `plot_3d()` | Isometric 3D volatility surface. |
+| **Visualization (3D surface)** | | | `plot_3d()` | Isometric 3D volatility surface. `expiry_range` accepts date-like bounds and is converted to continuous `time_to_expiry_days` internally. |
 | **Term Structure** | | | `plot_term_structure()` | Interpolated ATM-forward IV term structure vs days to expiry. |
 
 ### Probability API Methods Comparison

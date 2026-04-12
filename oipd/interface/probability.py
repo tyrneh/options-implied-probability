@@ -8,11 +8,11 @@ from typing import Any, Literal, Mapping, Optional, TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from oipd.core.maturity import format_timestamp_for_display
 from oipd.market_inputs import ResolvedMarket
 from oipd.presentation.plot_rnd import plot_rnd
 from oipd.presentation.probability_surface_plot import plot_probability_summary
 
-from oipd.core.utils import calculate_time_to_expiry
 from oipd.pipelines.probability import (
     build_daily_fan_density_frame,
     build_density_results_frame,
@@ -262,7 +262,7 @@ class ProbCurve:
         # Moments require integration over a grid
         self._ensure_grid_generated()
         return float(
-            np.trapz(self._cached_prices * self._cached_pdf, self._cached_prices)
+            np.trapezoid(self._cached_prices * self._cached_pdf, self._cached_prices)
         )
 
     def variance(self) -> float:
@@ -275,7 +275,7 @@ class ProbCurve:
         self._ensure_grid_generated()
         mean = self.mean()
         return float(
-            np.trapz(
+            np.trapezoid(
                 ((self._cached_prices - mean) ** 2) * self._cached_pdf,
                 self._cached_prices,
             )
@@ -294,7 +294,7 @@ class ProbCurve:
         var = self.variance()
         std = np.sqrt(var)
 
-        moment3 = np.trapz(
+        moment3 = np.trapezoid(
             ((self._cached_prices - mean) ** 3) * self._cached_pdf, self._cached_prices
         )
 
@@ -313,7 +313,7 @@ class ProbCurve:
         var = self.variance()
         std = np.sqrt(var)
 
-        moment4 = np.trapz(
+        moment4 = np.trapezoid(
             ((self._cached_prices - mean) ** 4) * self._cached_pdf, self._cached_prices
         )
 
@@ -443,11 +443,14 @@ class ProbCurve:
             matplotlib.figure.Figure: The plot figure.
         """
         underlying_price = self._resolved_market.underlying_price
-        valuation_date = self._resolved_market.valuation_date.strftime("%b %d, %Y")
+        valuation_date = format_timestamp_for_display(
+            self._resolved_market.valuation_timestamp
+        )
 
-        # Get expiry_date from metadata (stored by vol_curve_pipeline)
-        expiry_date_raw = self._metadata.get("expiry_date")
-        expiry_date = expiry_date_raw.strftime("%b %d, %Y") if expiry_date_raw else None
+        expiry_raw = self._metadata.get("expiry")
+        expiry_date = (
+            format_timestamp_for_display(expiry_raw) if expiry_raw is not None else None
+        )
 
         # Determine grid
         if xlim is not None:
@@ -511,17 +514,14 @@ class ProbSurface:
 
         self._vol_surface = vol_surface
         self._market = vol_surface._market
-        self._valuation_timestamp = pd.to_datetime(self._market.valuation_date)
-        self._max_supported_t = calculate_time_to_expiry(
-            max(vol_surface.expiries), self._market.valuation_date
-        )
+        self._valuation_timestamp = self._market.valuation_timestamp
         self._k_grid = self._build_k_grid(points=grid_points)
 
         self._distribution_cache: dict[
-            float, tuple[np.ndarray, np.ndarray, np.ndarray]
+            int, tuple[np.ndarray, np.ndarray, np.ndarray]
         ] = {}
-        self._curve_cache: dict[float, ProbCurve] = {}
-        self._resolved_market_cache: dict[float, ResolvedMarket] = {}
+        self._curve_cache: dict[int, ProbCurve] = {}
+        self._resolved_market_cache: dict[int, ResolvedMarket] = {}
 
     def _build_k_grid(self, *, points: int) -> np.ndarray:
         """Build a unified log-moneyness grid shared across all maturities.
@@ -551,7 +551,10 @@ class ProbSurface:
         return resolve_surface_query_time(self._vol_surface, t)
 
     def _distribution_arrays_for_t_years(
-        self, t_years: float
+        self,
+        t_years: float,
+        *,
+        expiry_timestamp: pd.Timestamp | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Compute and cache a distribution slice for maturity ``t_years``.
 
@@ -561,7 +564,9 @@ class ProbSurface:
         Returns:
             tuple[np.ndarray, np.ndarray, np.ndarray]: Price grid, PDF, CDF.
         """
-        cache_key = round(float(t_years), 12)
+        if expiry_timestamp is None:
+            expiry_timestamp, t_years = self._resolve_query_time(float(t_years))
+        cache_key = int(pd.Timestamp(expiry_timestamp).value)
         if cache_key in self._distribution_cache:
             return self._distribution_cache[cache_key]
 
@@ -573,7 +578,12 @@ class ProbSurface:
         self._distribution_cache[cache_key] = result
         return result
 
-    def _resolved_market_for_t_years(self, t_years: float) -> ResolvedMarket:
+    def _resolved_market_for_t_years(
+        self,
+        t_years: float,
+        *,
+        expiry_timestamp: pd.Timestamp | None = None,
+    ) -> ResolvedMarket:
         """Build and cache a synthetic resolved market snapshot for maturity ``t``.
 
         Args:
@@ -582,10 +592,16 @@ class ProbSurface:
         Returns:
             ResolvedMarket: Synthetic market snapshot aligned with maturity ``t``.
         """
-        cache_key = round(float(t_years), 12)
+        if expiry_timestamp is None:
+            expiry_timestamp, t_years = self._resolve_query_time(float(t_years))
+        cache_key = int(pd.Timestamp(expiry_timestamp).value)
         if cache_key in self._resolved_market_cache:
             return self._resolved_market_cache[cache_key]
-        resolved_market = build_interpolated_resolved_market(self._vol_surface, t_years)
+        resolved_market = build_interpolated_resolved_market(
+            self._vol_surface,
+            t_years,
+            expiry_timestamp=expiry_timestamp,
+        )
         self._resolved_market_cache[cache_key] = resolved_market
         return resolved_market
 
@@ -601,18 +617,24 @@ class ProbSurface:
         Returns:
             ProbCurve: Probability curve built from unified surface engine.
         """
-        cache_key = round(float(t_years), 12)
+        cache_key = int(pd.Timestamp(expiry_timestamp).value)
         if cache_key in self._curve_cache:
             return self._curve_cache[cache_key]
 
-        prices, pdf_values, cdf_values = self._distribution_arrays_for_t_years(t_years)
+        prices, pdf_values, cdf_values = self._distribution_arrays_for_t_years(
+            t_years,
+            expiry_timestamp=expiry_timestamp,
+        )
         metadata = build_probcurve_metadata(
             self._vol_surface,
             expiry_timestamp,
             t_years,
         )
         curve = ProbCurve.from_arrays(
-            resolved_market=self._resolved_market_for_t_years(t_years),
+            resolved_market=self._resolved_market_for_t_years(
+                t_years,
+                expiry_timestamp=expiry_timestamp,
+            ),
             metadata=metadata,
             prices=prices,
             pdf_values=pdf_values,
@@ -712,8 +734,11 @@ class ProbSurface:
         Returns:
             np.ndarray: Interpolated PDF values at ``price``.
         """
-        _, t_years = self._resolve_query_time(t)
-        prices_grid, pdf_values, _ = self._distribution_arrays_for_t_years(t_years)
+        expiry_timestamp, t_years = self._resolve_query_time(t)
+        prices_grid, pdf_values, _ = self._distribution_arrays_for_t_years(
+            t_years,
+            expiry_timestamp=expiry_timestamp,
+        )
         query_prices = np.asarray(price, dtype=float)
         interpolated = np.interp(
             query_prices, prices_grid, pdf_values, left=0.0, right=0.0
@@ -742,8 +767,11 @@ class ProbSurface:
         Returns:
             np.ndarray: Interpolated CDF values at ``price``.
         """
-        _, t_years = self._resolve_query_time(t)
-        prices_grid, _, cdf_values = self._distribution_arrays_for_t_years(t_years)
+        expiry_timestamp, t_years = self._resolve_query_time(t)
+        prices_grid, _, cdf_values = self._distribution_arrays_for_t_years(
+            t_years,
+            expiry_timestamp=expiry_timestamp,
+        )
         cdf_monotone = np.maximum.accumulate(np.asarray(cdf_values, dtype=float))
         query_prices = np.asarray(price, dtype=float)
         interpolated = np.interp(
@@ -771,8 +799,11 @@ class ProbSurface:
         if not (0 < q < 1):
             raise ValueError("Quantile q must be between 0 and 1.")
 
-        _, t_years = self._resolve_query_time(t)
-        prices_grid, _, cdf_values = self._distribution_arrays_for_t_years(t_years)
+        expiry_timestamp, t_years = self._resolve_query_time(t)
+        prices_grid, _, cdf_values = self._distribution_arrays_for_t_years(
+            t_years,
+            expiry_timestamp=expiry_timestamp,
+        )
         cdf_monotone = np.maximum.accumulate(np.asarray(cdf_values, dtype=float))
         cdf_min = float(np.nanmin(cdf_monotone))
         cdf_max = float(np.nanmax(cdf_monotone))

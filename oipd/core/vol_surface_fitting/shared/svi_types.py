@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace, asdict
-from typing import Any, Iterable, Mapping, Tuple
+from typing import Any, Mapping, Tuple
 
 
 @dataclass(frozen=True)
@@ -182,16 +182,6 @@ class SVICalibrationDiagnostics:
             for record in self.trial_records
         ]
         return base
-
-    def __getitem__(self, key: str) -> Any:
-        """Allow read-only dict-style access for compatibility."""
-
-        return getattr(self, key)
-
-    def keys(self) -> Iterable[str]:
-        """Return iterable access to field names."""
-
-        return self.__dict__.keys()
 
 
 __all__ = [

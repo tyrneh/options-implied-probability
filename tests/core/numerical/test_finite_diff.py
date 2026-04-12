@@ -21,7 +21,7 @@ def _compute_pdf_pipeline(
     options_data,
     *,
     underlying_price: float,
-    days_to_expiry: int,
+    time_to_expiry_years: float,
     risk_free_rate: float,
     price_method: str = "last",
     pricing_engine: str = "bs",
@@ -31,7 +31,7 @@ def _compute_pdf_pipeline(
     iv_df = compute_iv(
         priced,
         underlying_price,
-        days_to_expiry=days_to_expiry,
+        time_to_expiry_years=time_to_expiry_years,
         risk_free_rate=risk_free_rate,
         solver_method="brent",
         pricing_engine=pricing_engine,
@@ -45,7 +45,7 @@ def _compute_pdf_pipeline(
     strikes_grid, call_prices = price_curve_from_iv(
         vol_curve,
         underlying_price,
-        days_to_expiry=days_to_expiry,
+        time_to_expiry_years=time_to_expiry_years,
         risk_free_rate=risk_free_rate,
         pricing_engine=pricing_engine,
         dividend_yield=dividend_yield,
@@ -54,7 +54,7 @@ def _compute_pdf_pipeline(
         strikes_grid,
         call_prices,
         risk_free_rate=risk_free_rate,
-        days_to_expiry=days_to_expiry,
+        time_to_expiry_years=time_to_expiry_years,
         min_strike=float(priced["strike"].min()),
         max_strike=float(priced["strike"].max()),
     )
@@ -300,7 +300,7 @@ class TestIntegrationWithPDFCalculation:
             pdf_x, pdf_y = _compute_pdf_pipeline(
                 options_data,
                 underlying_price=spot,
-                days_to_expiry=30,
+                time_to_expiry_years=30 / 365.0,
                 risk_free_rate=0.05,
                 price_method="last",
                 pricing_engine="bs",
@@ -316,7 +316,7 @@ class TestIntegrationWithPDFCalculation:
             assert np.all(pdf_y >= 0), "PDF values should be non-negative"
 
             # PDF should roughly integrate to 1 (allowing for cropping/normalization)
-            area = np.trapz(pdf_y, pdf_x)
+            area = np.trapezoid(pdf_y, pdf_x)
             assert 0.1 < area < 10, f"PDF area should be reasonable, got {area}"
 
         except Exception as e:
@@ -358,7 +358,7 @@ class TestIntegrationWithPDFCalculation:
             pdf_x, pdf_y = _compute_pdf_pipeline(
                 options_data,
                 underlying_price=spot,
-                days_to_expiry=45,
+                time_to_expiry_years=45 / 365.0,
                 risk_free_rate=0.04,
                 price_method="last",
                 pricing_engine="bs",

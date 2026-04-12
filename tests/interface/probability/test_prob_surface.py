@@ -271,7 +271,7 @@ class TestProbSurfaceSlice:
         curve = prob_surface.slice(prob_surface.expiries[0])
         metadata = curve.metadata
         assert isinstance(metadata, dict)
-        assert "expiry_date" in metadata
+        assert "expiry" in metadata
         assert "forward_price" in metadata
         assert "at_money_vol" in metadata
         assert np.isfinite(metadata["at_money_vol"])

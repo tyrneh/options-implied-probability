@@ -1,7 +1,7 @@
 {
     "metadata": {
         "valuation_date": "2025-01-15",
-        "expiry_date": "2026-01-16",
+        "expiry": "2026-01-16",
         "r": 0.045,
         "underlying": 220.0,
         "generated_by": "VolCurve"

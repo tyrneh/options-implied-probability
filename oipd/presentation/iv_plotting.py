@@ -23,6 +23,10 @@ import numpy as np
 import pandas as pd
 
 from oipd.core.errors import CalculationError
+from oipd.core.maturity import (
+    format_time_to_expiry_days_label,
+    format_timestamp_for_display,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from matplotlib.axes import Axes
@@ -90,7 +94,7 @@ def plot_iv_smile(
     observed_last: pd.DataFrame | None = None,
     figsize: tuple[float, float] = (10.0, 5.0),
     title: Optional[str] = None,
-    expiry_date: Optional[date] = None,
+    expiry_date: Optional[date | pd.Timestamp] = None,
     style: Literal["publication", "default"] = "publication",
     source: Optional[str] = None,
     show_forward: bool = False,
@@ -511,9 +515,7 @@ def plot_iv_smile(
     if title is not None:
         resolved_title = title
     elif expiry_date is not None:
-        resolved_title = (
-            f"Implied Volatility Smile (Expiry {expiry_date.strftime('%b %d, %Y')})"
-        )
+        resolved_title = f"Implied Volatility Smile (Expiry {format_timestamp_for_display(expiry_date)})"
     else:
         resolved_title = "Implied Volatility Smile"
 
@@ -668,8 +670,7 @@ def plot_iv_surface(
             forward = infer_forward(maturity)
             total_var = total_variance(k_grid, maturity)
             iv_curve = np.sqrt(np.maximum(total_var / max(maturity, 1e-8), 1e-12))
-            label_days = int(round(maturity * 365))
-            label = f"{label_days}d"
+            label = format_time_to_expiry_days_label(maturity * 365.0)
             ax.plot(_axis_values(k_grid, forward), iv_curve, label=label)
 
         ax.set_xlabel("Log Moneyness" if axis_choice == "log_moneyness" else "Strike")
@@ -736,13 +737,23 @@ def plot_iv_surface(
                     observed_payload = payload
                     break
         if market is not None and getattr(market, "valuation_date", None) is not None:
-            valuation_text = market.valuation_date.strftime("%b %d, %Y")
+            valuation_timestamp = getattr(market, "valuation_timestamp", None)
+            valuation_source = (
+                valuation_timestamp
+                if valuation_timestamp is not None
+                else market.valuation_date
+            )
+            valuation_text = format_timestamp_for_display(valuation_source)
         else:
             valuation_text = None
-        if market is not None and getattr(market, "expiry_date", None) is not None:
-            expiry_obj = market.expiry_date
+        expiry_obj = None
+        if market is not None and getattr(market, "source_meta", None) is not None:
+            expiry_obj = market.source_meta.get("expiry")
+        if expiry_obj is not None:
             expiry_text = (
-                expiry_obj.strftime("%b %d, %Y") if expiry_obj is not None else None
+                format_timestamp_for_display(expiry_obj)
+                if expiry_obj is not None
+                else None
             )
         else:
             expiry_text = None
@@ -754,7 +765,7 @@ def plot_iv_surface(
         )
         forward_price = ForwardPriceAnnotation(value=forward, label=reference_label)
 
-        days_label = f"{int(round(maturity * 365))}d"
+        days_label = format_time_to_expiry_days_label(maturity * 365.0)
         if expiry_text is not None:
             slice_title = f"{expiry_text} ({days_label})"
         else:

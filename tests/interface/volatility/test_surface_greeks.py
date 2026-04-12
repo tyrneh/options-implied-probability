@@ -121,3 +121,32 @@ class TestVolSurfaceGreeks:
         # Should work without error
         delta = vs.delta([100], t=0.2)
         assert np.isfinite(delta[0])
+
+    def test_surface_greeks_with_dividend_schedule_do_not_raise(
+        self, multi_expiry_chain
+    ):
+        """BS surface Greeks should work when discrete dividends are supplied."""
+        market_schedule = MarketInputs(
+            valuation_date=date(2025, 1, 1),
+            risk_free_rate=0.05,
+            underlying_price=100.0,
+            dividend_schedule=pd.DataFrame(
+                {
+                    "ex_date": [
+                        pd.Timestamp("2025-01-15 00:00:00"),
+                        pd.Timestamp("2025-02-15 00:00:00"),
+                    ],
+                    "amount": [1.0, 1.5],
+                }
+            ),
+        )
+
+        vs = VolSurface(pricing_engine="bs").fit(multi_expiry_chain, market_schedule)
+        greek_frame = vs.greeks([100], t=pd.Timestamp("2025-03-02 00:00:00"))
+
+        assert isinstance(greek_frame, pd.DataFrame)
+        assert np.all(
+            np.isfinite(
+                greek_frame[["delta", "gamma", "vega", "theta", "rho"]].to_numpy()
+            )
+        )

@@ -7,9 +7,35 @@ from typing import Iterable, Literal, Optional, Tuple
 import numpy as np
 
 from oipd.core.errors import InvalidInputError
-from oipd.core.utils import convert_days_to_years
 from oipd.core.vol_surface_fitting import VolCurve
 from oipd.pricing import get_pricer
+
+
+def _resolve_time_to_expiry_years(
+    *,
+    time_to_expiry_years: Optional[float],
+) -> float:
+    """Validate one explicit year-fraction maturity value.
+
+    Args:
+        time_to_expiry_years: Canonical year-fraction maturity input.
+
+    Returns:
+        float: Finite maturity in year fractions.
+
+    Raises:
+        InvalidInputError: If no maturity is provided or the resolved value is
+            not finite.
+    """
+    if time_to_expiry_years is None:
+        raise InvalidInputError("time_to_expiry_years is required.")
+
+    years = float(time_to_expiry_years)
+
+    if not np.isfinite(years):
+        raise InvalidInputError("time_to_expiry_years must be finite.")
+
+    return years
 
 
 def price_curve_from_iv(
@@ -17,7 +43,6 @@ def price_curve_from_iv(
     underlying_price: float,
     *,
     strike_grid: np.ndarray | None = None,
-    days_to_expiry: Optional[int] = None,
     time_to_expiry_years: Optional[float] = None,
     risk_free_rate: float,
     pricing_engine: Literal["black76", "bs"],
@@ -30,10 +55,7 @@ def price_curve_from_iv(
         underlying_price: Forward/spot input for the selected pricing engine.
         strike_grid: Optional strike grid. If omitted, attempts to use
             ``vol_curve.grid`` when available.
-        days_to_expiry: Optional days-to-expiry input. Used when
-            ``time_to_expiry_years`` is not provided.
-        time_to_expiry_years: Optional explicit maturity in year fractions.
-            Takes precedence over ``days_to_expiry`` when provided.
+        time_to_expiry_years: Explicit maturity in year fractions.
         risk_free_rate: Continuously compounded risk-free rate.
         pricing_engine: Pricing engine identifier (``"black76"`` or ``"bs"``).
         dividend_yield: Continuous dividend yield used by Black-Scholes.
@@ -59,14 +81,9 @@ def price_curve_from_iv(
         raise InvalidInputError("strike_grid must be one-dimensional")
 
     sigma = vol_curve(strikes)
-    if time_to_expiry_years is not None:
-        years = float(time_to_expiry_years)
-    elif days_to_expiry is not None:
-        years = float(convert_days_to_years(days_to_expiry))
-    else:
-        raise InvalidInputError(
-            "Either days_to_expiry or time_to_expiry_years must be provided."
-        )
+    years = _resolve_time_to_expiry_years(
+        time_to_expiry_years=time_to_expiry_years,
+    )
 
     pricer = get_pricer(pricing_engine)
     q = dividend_yield or 0.0

@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 from datetime import date
 
+from oipd.core.maturity import resolve_maturity
+
 
 # =============================================================================
 # Fixtures
@@ -241,6 +243,103 @@ class TestVolSurfaceFit:
                 failure_policy="bad",  # type: ignore[arg-type]
             )
 
+    def test_fit_normalizes_timezone_aware_expiry_inputs(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Timezone-aware expiry inputs should be accepted and normalized safely."""
+        from oipd import VolSurface
+
+        chain_tz = multi_expiry_chain.copy()
+        chain_tz["expiry"] = (
+            pd.to_datetime(chain_tz["expiry"])
+            .dt.strftime("%Y-%m-%dT00:00:00-05:00")
+            .astype(str)
+        )
+
+        vs = VolSurface()
+        vs.fit(chain_tz, market_inputs)
+
+        expected_expiries = {
+            pd.Timestamp("2025-02-21 05:00:00"),
+            pd.Timestamp("2025-05-21 05:00:00"),
+        }
+        assert set(vs.expiries) == expected_expiries
+
+    def test_fit_keeps_same_day_positive_intraday_expiry(self, multi_expiry_chain):
+        """Same-day expiries later than valuation timestamp should survive fitting."""
+        from oipd import MarketInputs, VolSurface
+
+        chain_intraday = multi_expiry_chain.copy()
+        original_expiries = sorted(pd.to_datetime(chain_intraday["expiry"]).unique())
+        same_day_expiry = pd.Timestamp("2025-01-01 16:00:00")
+        next_day_expiry = pd.Timestamp("2025-01-02 16:00:00")
+        expiry_map = {
+            pd.Timestamp(original_expiries[0]): same_day_expiry,
+            pd.Timestamp(original_expiries[1]): next_day_expiry,
+        }
+        chain_intraday["expiry"] = pd.to_datetime(chain_intraday["expiry"]).map(
+            expiry_map
+        )
+
+        market_intraday = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+        )
+
+        vs = VolSurface()
+        vs.fit(chain_intraday, market_intraday)
+
+        assert same_day_expiry in vs.expiries
+        same_day_curve = vs.slice(same_day_expiry)
+        assert same_day_curve.atm_vol > 0.0
+
+    def test_horizon_preserves_timestamp_anchor_time(self, multi_expiry_chain):
+        """Relative horizons should use the valuation timestamp, not midnight."""
+        from oipd import MarketInputs, VolSurface
+
+        original_expiries = sorted(
+            pd.to_datetime(multi_expiry_chain["expiry"]).unique()
+        )
+        first_slice = multi_expiry_chain[
+            pd.to_datetime(multi_expiry_chain["expiry"])
+            == pd.Timestamp(original_expiries[0])
+        ].copy()
+        second_slice = multi_expiry_chain[
+            pd.to_datetime(multi_expiry_chain["expiry"])
+            == pd.Timestamp(original_expiries[1])
+        ].copy()
+
+        same_day_expiry = pd.Timestamp("2025-01-01 16:00:00")
+        just_before_cutoff = pd.Timestamp("2025-01-02 09:29:59")
+        just_after_cutoff = pd.Timestamp("2025-01-02 09:30:01")
+
+        same_day_slice = first_slice.copy()
+        same_day_slice["expiry"] = same_day_expiry
+
+        before_cutoff_slice = first_slice.copy()
+        before_cutoff_slice["expiry"] = just_before_cutoff
+
+        after_cutoff_slice = second_slice.copy()
+        after_cutoff_slice["expiry"] = just_after_cutoff
+
+        boundary_chain = pd.concat(
+            [same_day_slice, before_cutoff_slice, after_cutoff_slice],
+            ignore_index=True,
+        )
+
+        market_intraday = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+        )
+
+        vs = VolSurface()
+        vs.fit(boundary_chain, market_intraday, horizon="1d")
+
+        assert set(vs.expiries) == {same_day_expiry, just_before_cutoff}
+        assert just_after_cutoff not in vs.expiries
+
 
 # =============================================================================
 # VolSurface.slice() Tests
@@ -337,6 +436,43 @@ class TestVolSurfaceInterpolation:
         w = vs.total_variance(100.0, 60 / 365.0)
         assert w > 0
 
+    def test_interpolated_slice_metadata_matches_fitted_conventions(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Interpolated slices should expose fitted-style metadata fields."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        interpolated_curve = vs.slice("2025-03-21")
+        metadata = interpolated_curve._metadata
+
+        assert metadata is not None
+        for key in (
+            "expiry",
+            "time_to_expiry_years",
+            "time_to_expiry_days",
+            "forward_price",
+            "at_money_vol",
+        ):
+            assert key in metadata
+
+        resolved = resolve_maturity(
+            metadata["expiry"], interpolated_curve.resolved_market.valuation_timestamp
+        )
+        assert metadata["expiry"] == resolved.expiry
+        assert metadata["time_to_expiry_days"] == pytest.approx(
+            resolved.time_to_expiry_days
+        )
+        assert metadata["time_to_expiry_years"] == pytest.approx(
+            resolved.time_to_expiry_years
+        )
+        assert (
+            metadata["calendar_days_to_expiry"] == resolved.calendar_days_to_expiry
+        )
+        assert float(metadata["forward_price"]) > 0.0
+        assert float(metadata["at_money_vol"]) > 0.0
+
 
 # =============================================================================
 # VolSurface Maturity Domain Tests
@@ -358,6 +494,57 @@ class TestVolSurfaceMaturityDomain:
         iv_date = vs.implied_vol(100.0, "2025-02-15")
         iv_float = vs.implied_vol(100.0, 45 / 365.0)
         np.testing.assert_allclose(iv_date, iv_float, rtol=1e-8)
+
+    def test_intraday_date_and_float_are_consistent(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Intraday datetime and equivalent float maturities should agree."""
+        from oipd import MarketInputs, VolSurface
+
+        intraday_market = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=market_inputs.underlying_price,
+            risk_free_rate=market_inputs.risk_free_rate,
+        )
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, intraday_market)
+
+        query_expiry = pd.Timestamp("2025-02-15 12:00:00")
+        t_years = resolve_maturity(
+            query_expiry,
+            intraday_market.valuation_timestamp,
+        ).time_to_expiry_years
+
+        iv_date = vs.implied_vol(100.0, query_expiry)
+        iv_float = vs.implied_vol(100.0, t_years)
+        np.testing.assert_allclose(iv_date, iv_float, rtol=1e-8)
+
+    def test_intraday_slice_from_float_preserves_query_expiry_metadata(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Interpolated float queries should reconstruct the same intraday expiry."""
+        from oipd import MarketInputs, VolSurface
+
+        intraday_market = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=market_inputs.underlying_price,
+            risk_free_rate=market_inputs.risk_free_rate,
+        )
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, intraday_market)
+
+        query_expiry = pd.Timestamp("2025-02-15 12:00:00")
+        t_years = resolve_maturity(
+            query_expiry,
+            intraday_market.valuation_timestamp,
+        ).time_to_expiry_years
+
+        interpolated_curve = vs._create_interpolated_slice(query_expiry)
+        float_curve = vs._create_interpolated_slice(vs._resolve_query_time(t_years)[0])
+
+        assert interpolated_curve._metadata["expiry"] == query_expiry
+        assert float_curve._metadata["expiry"] == query_expiry
+        assert float_curve._metadata["time_to_expiry_years"] == pytest.approx(t_years)
 
     def test_non_positive_t_raises_across_surface_queries(
         self, multi_expiry_chain, market_inputs

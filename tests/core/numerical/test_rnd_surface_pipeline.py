@@ -12,7 +12,8 @@ from oipd import MarketInputs, VolSurface
 from oipd.core.probability_density_conversion.finite_diff import (
     finite_diff_first_derivative,
 )
-from oipd.core.utils import calculate_time_to_expiry, resolve_risk_free_rate
+from oipd.core.maturity import calculate_time_to_expiry
+from oipd.core.utils import resolve_risk_free_rate
 from oipd.pipelines.probability.rnd_surface import (
     build_daily_fan_density_frame,
     build_global_log_moneyness_grid,
@@ -200,7 +201,7 @@ def test_derive_surface_distribution_at_t_matches_legacy_block(
 
     dcdf_dk = finite_diff_first_derivative(expected_cdf, k_grid)
     expected_pdf = np.maximum(np.asarray(dcdf_dk, dtype=float) / expected_strikes, 0.0)
-    expected_pdf = expected_pdf / float(np.trapz(expected_pdf, expected_strikes))
+    expected_pdf = expected_pdf / float(np.trapezoid(expected_pdf, expected_strikes))
 
     increments = (
         0.5
@@ -219,14 +220,14 @@ def test_derive_surface_distribution_at_t_matches_legacy_block(
 def test_build_daily_fan_density_frame_uses_daily_sampling(
     fitted_surface: VolSurface,
 ) -> None:
-    """Daily fan dataframe includes one maturity per calendar day."""
+    """Daily fan dataframe uses canonical expiry timestamps on a daily grid."""
     prob_surface = fitted_surface.implied_distribution()
     frame = build_daily_fan_density_frame(prob_surface)
 
     first_expiry = min(fitted_surface.expiries)
     last_expiry = max(fitted_surface.expiries)
     expected_days = (last_expiry - first_expiry).days + 1
-    unique_days = frame["expiry_date"].nunique()
+    unique_days = pd.to_datetime(frame["expiry"]).dt.normalize().nunique()
 
-    assert set(frame.columns) == {"expiry_date", "strike", "cdf"}
+    assert set(frame.columns) == {"expiry", "strike", "cdf"}
     assert unique_days == expected_days

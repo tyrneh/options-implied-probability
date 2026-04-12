@@ -8,7 +8,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 from scipy import interpolate
-from oipd.core.utils import convert_days_to_years
+from oipd.core.maturity import convert_days_to_years
 
 from oipd.core.probability_density_conversion import (
     calculate_cdf_from_pdf,
@@ -25,6 +25,8 @@ from oipd.core.vol_surface_fitting.shared.ssvi import (
     SSVISurfaceParams,
     ssvi_total_variance,
 )
+
+REMOVED_DAY_COUNT_COLUMN = "days" "_to_expiry"
 
 
 @dataclass(frozen=True)
@@ -48,24 +50,25 @@ class RebuiltSurface:
     forward_map: dict[float, float]
     strike_grids: dict[float, np.ndarray]
     days_map: dict[float, int]
+    time_days_map: dict[float, float]
     _cache: dict[float, RebuiltSlice]
 
-    def available_days(self) -> tuple[int, ...]:
-        """Return calendar days to expiry available in the snapshot."""
-
-        return tuple(sorted(set(self.days_map.values())))
+    def available_time_to_expiry_days(self) -> tuple[float, ...]:
+        """Return continuous day-equivalent maturities available in the snapshot."""
+        return tuple(sorted(set(self.time_days_map.values())))
 
     def slice(
         self,
         *,
-        days_to_expiry: int,
+        time_to_expiry_days: float | None = None,
+        time_to_expiry_years: float | None = None,
         strike_grid: Sequence[float] | None = None,
     ) -> RebuiltSlice:
         """Return a reconstructed slice at an arbitrary maturity.
 
         Args:
-            days_to_expiry: int
-                Calendar days to expiry for the requested slice.
+            time_to_expiry_days: Continuous day-equivalent maturity.
+            time_to_expiry_years: Continuous year-fraction maturity.
             strike_grid: optional sequence of strikes. When omitted the helper
                 reuses the stored grid for matching maturities or falls back to
                 a symmetric 50–150% moneyness grid.
@@ -74,9 +77,11 @@ class RebuiltSurface:
             RebuiltSlice: Reconstructed smile and density for the requested
             maturity.
         """
-
-        maturity = max(convert_days_to_years(days_to_expiry), 1e-8)
-        days_override = int(days_to_expiry)
+        maturity, time_days, calendar_days = _resolve_rebuild_maturity(
+            time_to_expiry_days=time_to_expiry_days,
+            time_to_expiry_years=time_to_expiry_years,
+        )
+        days_override = calendar_days
 
         if strike_grid is None and maturity in self._cache:
             return self._cache[maturity]
@@ -120,17 +125,18 @@ class RebuiltSurface:
         implied_vol = vol_curve(strikes)
         vol_curve.grid = (strikes.copy(), implied_vol.copy())  # type: ignore[attr-defined]
 
-        days_to_expiry = (
+        calendar_days_to_expiry = (
             days_override
             if days_override is not None
             else self._days_from_maturity(maturity)
         )
+        time_to_expiry_days = float(maturity * 365.0)
 
         strike_pricing, call_prices = price_curve_from_iv(
             vol_curve,
             forward,
             strike_grid=strikes,
-            days_to_expiry=days_to_expiry,
+            time_to_expiry_years=maturity,
             risk_free_rate=self.risk_free_rate,
             pricing_engine="black76",
         )
@@ -139,7 +145,7 @@ class RebuiltSurface:
             strike_pricing,
             call_prices,
             risk_free_rate=self.risk_free_rate,
-            days_to_expiry=days_to_expiry,
+            time_to_expiry_years=maturity,
         )
         _, cdf = calculate_cdf_from_pdf(prices, pdf)
 
@@ -150,8 +156,9 @@ class RebuiltSurface:
                 "call_price": np.interp(prices, strike_pricing, call_prices),
                 "pdf": pdf,
                 "cdf": cdf,
-                "maturity": maturity,
-                "days_to_expiry": days_to_expiry,
+                "time_to_expiry_years": maturity,
+                "time_to_expiry_days": time_to_expiry_days,
+                "calendar_days_to_expiry": calendar_days_to_expiry,
             }
         )
 
@@ -198,15 +205,102 @@ class RebuiltSurface:
 
     @staticmethod
     def _days_from_maturity(maturity: float) -> int:
-        days = int(round(float(maturity) * 365.0))
-        return max(days, 1)
+        return _calendar_days_from_time_days(float(maturity) * 365.0)
+
+
+def _calendar_days_from_time_days(time_days: float) -> int:
+    """Convert continuous day-equivalent maturity into deprecated day buckets.
+
+    Args:
+        time_days: Continuous ACT/365 day-equivalent maturity.
+
+    Returns:
+        int: Non-negative deprecated calendar-day-style bucket.
+    """
+    return max(int(np.floor(float(time_days) + 1e-12)), 0)
+
+
+def _resolve_snapshot_maturity_years(df: pd.DataFrame) -> pd.Series:
+    """Resolve the year-fraction maturity column from a reconstruction snapshot.
+
+    Args:
+        df: Snapshot DataFrame for SSVI reconstruction.
+
+    Returns:
+        pd.Series: Year-fraction maturities.
+
+    Raises:
+        ValueError: If the canonical year-fraction column is missing or if the
+            removed legacy alias is still present.
+    """
+    if "time_to_expiry_years" not in df.columns:
+        if "maturity" in df.columns:
+            raise ValueError(
+                "SSVI params no longer accept 'maturity'; rename it to "
+                "'time_to_expiry_years'."
+            )
+        raise ValueError(
+            "SSVI params must include canonical 'time_to_expiry_years'."
+        )
+    if "maturity" in df.columns:
+        raise ValueError(
+            "SSVI params no longer accept 'maturity'; rename it to "
+            "'time_to_expiry_years'."
+        )
+    return df["time_to_expiry_years"].astype(float)
+
+
+def _resolve_rebuild_maturity(
+    *,
+    time_to_expiry_days: float | None = None,
+    time_to_expiry_years: float | None = None,
+) -> tuple[float, float, int]:
+    """Resolve one public rebuild maturity input into canonical quantities.
+
+    Args:
+        time_to_expiry_days: Continuous day-equivalent maturity.
+        time_to_expiry_years: Continuous year-fraction maturity.
+
+    Returns:
+        tuple[float, float, int]: Year fraction, continuous day-equivalent
+        maturity, and integer calendar-day bucket.
+
+    Raises:
+        ValueError: If zero or multiple maturity inputs are provided, or if the
+            resolved year fraction is non-positive.
+    """
+    canonical_inputs = [
+        value is not None for value in (time_to_expiry_days, time_to_expiry_years)
+    ]
+    if sum(canonical_inputs) > 1:
+        raise ValueError(
+            "Provide at most one of time_to_expiry_days or time_to_expiry_years."
+        )
+
+    if time_to_expiry_years is not None:
+        maturity_years = float(time_to_expiry_years)
+        time_days = maturity_years * 365.0
+    elif time_to_expiry_days is not None:
+        time_days = float(time_to_expiry_days)
+        maturity_years = convert_days_to_years(time_days)
+    else:
+        raise ValueError(
+            "Provide exactly one of time_to_expiry_years or time_to_expiry_days."
+        )
+
+    if maturity_years <= 0.0:
+        raise ValueError("time_to_expiry_years must be positive")
+
+    calendar_days = _calendar_days_from_time_days(time_days)
+    return float(maturity_years), float(time_days), calendar_days
 
 
 def rebuild_slice_from_svi(
     svi_params: Mapping[str, float],
     *,
     forward_price: float,
-    days_to_expiry: int,
+    time_to_expiry_days: float | None = None,
+    time_to_expiry_years: float | None = None,
     risk_free_rate: float,
     strike_grid: Sequence[float] | None = None,
 ) -> RebuiltSlice:
@@ -218,8 +312,8 @@ def rebuild_slice_from_svi(
             ``sigma`` as returned by :meth:`oipd.pipelines.rnd_slice.RND.svi_params`.
         forward_price: float
             Forward level used during calibration.
-        days_to_expiry: int
-            Number of days to expiry for the slice.
+        time_to_expiry_days: Continuous day-equivalent maturity.
+        time_to_expiry_years: Continuous year-fraction maturity.
         risk_free_rate: float
             Continuous risk-free interest rate used for pricing.
         strike_grid: Sequence[float], optional
@@ -240,9 +334,10 @@ def rebuild_slice_from_svi(
     if missing:
         raise ValueError(f"SVI parameters missing required keys: {sorted(missing)}")
 
-    maturity_years = convert_days_to_years(days_to_expiry)
-    if maturity_years <= 0.0:
-        raise ValueError("days_to_expiry must be positive")
+    maturity_years, time_days, calendar_days = _resolve_rebuild_maturity(
+        time_to_expiry_days=time_to_expiry_days,
+        time_to_expiry_years=time_to_expiry_years,
+    )
     if forward_price <= 0.0:
         raise ValueError("forward_price must be positive")
 
@@ -286,7 +381,7 @@ def rebuild_slice_from_svi(
         vol_curve,
         forward_price,
         strike_grid=strike_array,
-        days_to_expiry=int(days_to_expiry),
+        time_to_expiry_years=maturity_years,
         risk_free_rate=float(risk_free_rate),
         pricing_engine="black76",
     )
@@ -298,7 +393,7 @@ def rebuild_slice_from_svi(
         strike_pricing,
         call_prices,
         risk_free_rate=float(risk_free_rate),
-        days_to_expiry=int(days_to_expiry),
+        time_to_expiry_years=maturity_years,
         min_strike=min_strike,
         max_strike=max_strike,
     )
@@ -311,6 +406,9 @@ def rebuild_slice_from_svi(
             "call_price": np.interp(prices, strike_pricing, call_prices),
             "pdf": pdf,
             "cdf": cdf,
+            "time_to_expiry_years": maturity_years,
+            "time_to_expiry_days": time_days,
+            "calendar_days_to_expiry": calendar_days,
         }
     )
 
@@ -329,8 +427,9 @@ def rebuild_surface_from_ssvi(
     Args:
         ssvi_params: pandas.DataFrame | Mapping[str, Sequence[float]]
             Table produced by :meth:`RNDSurface.ssvi_params` or an equivalent
-            mapping containing the columns ``maturity``, ``theta``,
-            ``days_to_expiry``, ``rho``, ``eta``, ``gamma``, and ``alpha``.
+            mapping containing canonical ``time_to_expiry_years``, plus
+            ``theta``, optional ``time_to_expiry_days``, and the SSVI
+            parameters ``rho``, ``eta``, ``gamma``, and ``alpha``.
         forward_prices: Mapping[float, float]
             Dictionary mapping maturity (years) to the forward level used for
             pricing each slice during calibration.
@@ -349,27 +448,27 @@ def rebuild_surface_from_ssvi(
     else:
         df = pd.DataFrame(ssvi_params)
 
-    required_columns = {
-        "maturity",
-        "theta",
-        "days_to_expiry",
-        "rho",
-        "eta",
-        "gamma",
-        "alpha",
-    }
+    required_columns = {"theta", "rho", "eta", "gamma", "alpha"}
     missing_cols = required_columns.difference(df.columns)
     if missing_cols:
         raise ValueError(
             f"SSVI params missing required columns: {sorted(missing_cols)}"
         )
 
+    maturity_years_series = _resolve_snapshot_maturity_years(df)
+
     rho = float(df.iloc[0]["rho"])
     eta = float(df.iloc[0]["eta"])
     gamma = float(df.iloc[0]["gamma"])
     alpha = float(df.iloc[0]["alpha"])
 
-    maturities = df["maturity"].astype(float).to_numpy()
+    if REMOVED_DAY_COUNT_COLUMN in df.columns:
+        raise ValueError(
+            f"SSVI params no longer accept '{REMOVED_DAY_COUNT_COLUMN}'; rename it to "
+            "'time_to_expiry_days'."
+        )
+
+    maturities = maturity_years_series.to_numpy(dtype=float)
     theta_values = df["theta"].astype(float).to_numpy()
 
     params = SSVISurfaceParams(
@@ -386,12 +485,26 @@ def rebuild_surface_from_ssvi(
     strike_lookup = {
         float(k): np.asarray(v, dtype=float) for k, v in (strike_grids or {}).items()
     }
-    days_lookup = {
-        float(row_maturity): int(row_days)
-        for row_maturity, row_days in zip(
-            df["maturity"].astype(float), df["days_to_expiry"].astype(int)
-        )
-    }
+    if "time_to_expiry_days" in df.columns:
+        time_days_lookup = {
+            float(row_maturity): float(row_days)
+            for row_maturity, row_days in zip(
+                maturity_years_series, df["time_to_expiry_days"].astype(float)
+            )
+        }
+        days_lookup = {
+            maturity: _calendar_days_from_time_days(time_days)
+            for maturity, time_days in time_days_lookup.items()
+        }
+    else:
+        time_days_lookup = {
+            float(row_maturity): float(row_maturity) * 365.0
+            for row_maturity in maturity_years_series
+        }
+        days_lookup = {
+            maturity: _calendar_days_from_time_days(time_days)
+            for maturity, time_days in time_days_lookup.items()
+        }
 
     surface = RebuiltSurface(
         theta_interpolator=theta_interp,
@@ -403,6 +516,7 @@ def rebuild_surface_from_ssvi(
         forward_map=forward_lookup,
         strike_grids=strike_lookup,
         days_map=days_lookup,
+        time_days_map=time_days_lookup,
         _cache={},
     )
 
@@ -411,7 +525,7 @@ def rebuild_surface_from_ssvi(
         maturity_float = float(maturity)
         override_days = days_lookup.get(maturity_float)
         if override_days is None:
-            override_days = max(int(round(maturity_float * 365.0)), 1)
+            override_days = _calendar_days_from_time_days(maturity_float * 365.0)
         surface._cache[maturity_float] = surface._build_slice(
             maturity_float,
             strike_grid=default_grid,

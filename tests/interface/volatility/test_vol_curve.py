@@ -58,6 +58,52 @@ def market_inputs():
     )
 
 
+@pytest.fixture
+def same_day_intraday_chain():
+    """Single-expiry chain whose expiry is later on the valuation day."""
+    strikes = [80, 85, 90, 95, 100, 105, 110, 115, 120]
+    expiry = pd.Timestamp("2025-01-01 16:00:00")
+
+    calls = pd.DataFrame(
+        {
+            "expiry": [expiry] * len(strikes),
+            "strike": strikes,
+            "bid": [20.5, 15.8, 11.0, 6.5, 2.8, 0.9, 0.3, 0.1, 0.05],
+            "ask": [21.0, 16.2, 11.5, 7.0, 3.2, 1.2, 0.5, 0.2, 0.1],
+            "last_price": [20.75, 16.0, 11.25, 6.75, 3.0, 1.05, 0.4, 0.15, 0.08],
+            "option_type": ["call"] * len(strikes),
+        }
+    )
+
+    spot = 100.0
+    rate = 0.05
+    time_to_expiry_years = 6.5 / (24.0 * 365.0)
+    discount_factor = np.exp(-rate * time_to_expiry_years)
+
+    puts = calls.copy()
+    puts["option_type"] = "put"
+    puts["last_price"] = (
+        calls["last_price"] - spot + calls["strike"] * discount_factor
+    ).abs()
+    puts["bid"] = (calls["bid"] - spot + calls["strike"] * discount_factor).abs()
+    puts["ask"] = (calls["ask"] - spot + calls["strike"] * discount_factor).abs()
+
+    return pd.concat([calls, puts], ignore_index=True)
+
+
+@pytest.fixture
+def timestamp_dividend_schedules():
+    """Same-day dividend schedules straddling the valuation timestamp."""
+    return {
+        "before": pd.DataFrame(
+            {"ex_date": [pd.Timestamp("2025-01-01 08:00:00")], "amount": [1.0]}
+        ),
+        "after": pd.DataFrame(
+            {"ex_date": [pd.Timestamp("2025-01-01 12:00:00")], "amount": [1.0]}
+        ),
+    }
+
+
 # =============================================================================
 # VolCurve.__init__() Tests
 # =============================================================================
@@ -172,6 +218,75 @@ class TestVolCurveFit:
         bad_chain.loc[bad_chain.index[:5], "expiry"] = pd.Timestamp("2025-04-21")
         with pytest.raises(ValueError, match="single expiry"):
             vc.fit(bad_chain, market_inputs)
+
+    def test_fit_keeps_same_day_positive_intraday_expiry(self, same_day_intraday_chain):
+        """fit() accepts an expiry later on the same calendar day."""
+        from oipd import MarketInputs, VolCurve
+
+        market_intraday = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+        )
+
+        vc = VolCurve()
+        vc.fit(same_day_intraday_chain, market_intraday)
+
+        assert vc.expiries == (pd.Timestamp("2025-01-01 16:00:00"),)
+        assert vc._metadata["expiry"] == pd.Timestamp("2025-01-01 16:00:00")
+        assert vc._metadata["time_to_expiry_days"] == pytest.approx(6.5 / 24.0)
+        assert vc._metadata["calendar_days_to_expiry"] == 0
+        assert vc._metadata["time_to_expiry_years"] == pytest.approx(
+            6.5 / (24.0 * 365.0)
+        )
+        assert vc.atm_vol > 0.0
+
+    def test_bs_fit_accepts_timestamp_dividend_schedule(
+        self, same_day_intraday_chain, timestamp_dividend_schedules
+    ):
+        """BS fits should accept timestamped dividend schedules without crashing."""
+        from oipd import MarketInputs, VolCurve
+
+        market_intraday = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_schedule=timestamp_dividend_schedules["after"],
+        )
+
+        vc = VolCurve(pricing_engine="bs")
+        vc.fit(same_day_intraday_chain, market_intraday)
+
+        assert vc.forward_price is not None
+        assert vc.atm_vol > 0.0
+
+    def test_bs_fit_distinguishes_same_day_dividend_timing(
+        self, same_day_intraday_chain, timestamp_dividend_schedules
+    ):
+        """BS fits should change when the dividend is before vs after valuation."""
+        from oipd import MarketInputs, VolCurve
+
+        market_before = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_schedule=timestamp_dividend_schedules["before"],
+        )
+        market_after = MarketInputs(
+            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+            underlying_price=100.0,
+            risk_free_rate=0.05,
+            dividend_schedule=timestamp_dividend_schedules["after"],
+        )
+
+        curve_before = VolCurve(pricing_engine="bs").fit(
+            same_day_intraday_chain, market_before
+        )
+        curve_after = VolCurve(pricing_engine="bs").fit(
+            same_day_intraday_chain, market_after
+        )
+
+        assert curve_before.forward_price != pytest.approx(curve_after.forward_price)
 
 
 # =============================================================================
