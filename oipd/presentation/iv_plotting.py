@@ -19,6 +19,8 @@ from typing import (
     Mapping,
 )
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 
@@ -64,14 +66,6 @@ def _resolve_plot_style(
     Raises:
         ImportError: If Matplotlib is unavailable.
     """
-    try:
-        import matplotlib.pyplot as plt  # type: ignore
-        import matplotlib.ticker as ticker  # type: ignore
-    except ImportError as exc:  # pragma: no cover - import guard
-        raise ImportError(
-            "Matplotlib is required for plotting. Install with: pip install matplotlib"
-        ) from exc
-
     style_axes: Optional[Callable[[Any], None]] = None
     if style == "publication":
         from oipd.presentation.publication import (

@@ -239,6 +239,6 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Moments** | `mean()`, `variance()`, `skew()`, `kurtosis()` | Distribution moments. | `slice(expiry).mean()` etc. | Moments for a selected expiry. |
 | **Grid Access** | `prices`, `pdf_values`, `cdf_values` | Cached evaluation grid for plots and queries. | `slice(expiry).prices` etc. | Grid for a selected expiry. |
 | **Data Export** | `density_results(domain=None, points=200)` | DataFrame with `price`, `pdf`, and `cdf`; uses the native fitted grid by default or resamples to an explicit export grid. | `density_results(domain=None, points=200, start=None, end=None, step_days=1)` | Long-format export on a daily grid by default; omitted `start`/`end` use the first/last fitted pillar and fitted pillars are always preserved. |
-| **Visualization (2D)** | `plot(kind=...)` | PDF/CDF plot for one expiry. | `plot_fan()` | Fan chart of quantile bands over expiries. |
+| **Visualization (2D)** | `plot(kind=...)` | PDF/CDF plot for one expiry. | `plot_fan()` | Fixed multi-band fan chart over expiries with four shaded bands, a dashed median, and dots at fitted expiry pillars. |
 | **Metadata / Expiries** | `resolved_market`, `metadata` | Market snapshot + fit metadata. | `expiries` | Available expiry dates. |
 | **Slicing** | | | `slice(expiry)` | Extract a `ProbCurve` snapshot. |

@@ -488,16 +488,33 @@ class TestProbSurfacePlotFan:
     """Tests for ProbSurface.plot_fan() visualization."""
 
     def test_plot_fan_uses_daily_sampling(self, prob_surface):
-        """plot_fan() should sample one maturity point per calendar day."""
+        """plot_fan() should draw the fixed fan on a daily maturity grid."""
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from matplotlib.collections import PathCollection, PolyCollection
 
         fig = prob_surface.plot_fan()
         ax = fig.axes[0]
-        assert ax.lines, "Expected an implied-median line on the fan chart."
-        xdata = ax.lines[0].get_xdata()
+
+        band_collections = [
+            artist for artist in ax.collections if isinstance(artist, PolyCollection)
+        ]
+        pillar_collections = [
+            artist for artist in ax.collections if isinstance(artist, PathCollection)
+        ]
+        median_lines = [
+            line for line in ax.lines if "median" in line.get_label().lower()
+        ]
+
+        assert len(band_collections) == 4
+        assert len(pillar_collections) == 1
+        assert len(median_lines) == 1
+        assert median_lines[0].get_linestyle() == "--"
+
+        xdata = median_lines[0].get_xdata()
 
         first_expiry = min(prob_surface.expiries)
         last_expiry = max(prob_surface.expiries)
@@ -506,33 +523,143 @@ class TestProbSurfacePlotFan:
 
         assert len(xdata) == expected_points
         assert len(xdata) == export_points
+
+        pillar_offsets = pillar_collections[0].get_offsets()
+        assert pillar_offsets.shape[0] == len(prob_surface.expiries)
+
+        expected_pillar_expiries = pd.DatetimeIndex(
+            pd.to_datetime(prob_surface.expiries)
+        )
+        expected_pillar_x = mdates.date2num(expected_pillar_expiries.to_pydatetime())
+        np.testing.assert_allclose(
+            np.asarray(pillar_offsets[:, 0], dtype=float),
+            np.asarray(expected_pillar_x, dtype=float),
+            atol=1e-8,
+        )
+
+        expected_medians = np.asarray(
+            [
+                prob_surface.quantile(0.5, t=expiry)
+                for expiry in expected_pillar_expiries
+            ],
+            dtype=float,
+        )
+        np.testing.assert_allclose(
+            np.asarray(pillar_offsets[:, 1], dtype=float), expected_medians
+        )
         plt.close(fig)
 
-    def test_plot_fan_has_no_pillar_regime_jump(self, prob_surface, market_inputs):
-        """Daily medians should not show a large discontinuity at pillar dates."""
+    def test_plot_fan_skips_invalid_interpolated_slice_and_warns(
+        self,
+        prob_surface,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """plot_fan() should still render when one non-pillar slice is invalid."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        original_distribution_arrays = prob_surface._distribution_arrays_for_t_years
+        invalid_expiry = min(prob_surface.expiries) + pd.Timedelta(days=1)
+
+        def _distribution_with_invalid_slice(
+            t_years: float,
+            *,
+            expiry_timestamp: pd.Timestamp | None = None,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            """Return a malformed CDF for one sampled non-pillar expiry."""
+            prices, pdf_values, cdf_values = original_distribution_arrays(
+                t_years,
+                expiry_timestamp=expiry_timestamp,
+            )
+            if pd.Timestamp(expiry_timestamp) == invalid_expiry:
+                invalid_cdf = np.full_like(cdf_values, np.nan, dtype=float)
+                return prices, pdf_values, invalid_cdf
+            return prices, pdf_values, cdf_values
+
+        monkeypatch.setattr(
+            prob_surface,
+            "_distribution_arrays_for_t_years",
+            _distribution_with_invalid_slice,
+        )
+
+        with pytest.warns(UserWarning, match="Skipped 1 sampled expiry"):
+            fig = prob_surface.plot_fan()
+
+        ax = fig.axes[0]
+        median_lines = [
+            line for line in ax.lines if "median" in line.get_label().lower()
+        ]
+        assert len(median_lines) == 1
+
+        first_expiry = min(prob_surface.expiries)
+        last_expiry = max(prob_surface.expiries)
+        expected_points = (last_expiry - first_expiry).days + 1
+        assert len(median_lines[0].get_xdata()) == expected_points - 1
+
+        plt.close(fig)
+
+    def test_plot_fan_raises_when_all_sampled_slices_invalid(
+        self,
+        prob_surface,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """plot_fan() should still fail when every sampled slice is invalid."""
+        original_distribution_arrays = prob_surface._distribution_arrays_for_t_years
+
+        def _distribution_with_invalid_slices(
+            t_years: float,
+            *,
+            expiry_timestamp: pd.Timestamp | None = None,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            """Return a malformed CDF for every sampled expiry."""
+            prices, pdf_values, cdf_values = original_distribution_arrays(
+                t_years,
+                expiry_timestamp=expiry_timestamp,
+            )
+            invalid_cdf = np.full_like(cdf_values, np.nan, dtype=float)
+            return prices, pdf_values, invalid_cdf
+
+        monkeypatch.setattr(
+            prob_surface,
+            "_distribution_arrays_for_t_years",
+            _distribution_with_invalid_slices,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="No valid probability slices available for fan summary generation",
+        ):
+            prob_surface.plot_fan()
+
+    def test_plot_fan_has_no_pillar_regime_jump(self, prob_surface):
+        """Daily fan quantiles should not jump sharply at fitted pillar dates."""
         first_expiry = min(prob_surface.expiries)
         last_expiry = max(prob_surface.expiries)
         sample_expiries = pd.date_range(first_expiry, last_expiry, freq="D")
-        valuation_timestamp = pd.Timestamp(market_inputs.valuation_date)
 
-        medians = []
-        for expiry_timestamp in sample_expiries:
-            t_years = (expiry_timestamp - valuation_timestamp).days / 365.0
-            medians.append(prob_surface.quantile(0.5, t=t_years))
-        medians = np.asarray(medians, dtype=float)
-        jumps = np.abs(np.diff(medians))
-
-        if len(jumps) < 10:
+        if len(sample_expiries) < 11:
             pytest.skip("Insufficient daily points for jump-statistic check.")
 
         pillar_jump_indices = []
+        pillar_expiries = set(prob_surface.expiries)
         for jump_index, right_day in enumerate(sample_expiries[1:]):
-            if right_day in set(prob_surface.expiries):
+            if right_day in pillar_expiries:
                 pillar_jump_indices.append(jump_index)
 
         if not pillar_jump_indices:
             pytest.skip("No pillar transitions found in sampled horizon.")
 
-        threshold = float(np.percentile(jumps, 95))
-        for jump_index in pillar_jump_indices:
-            assert jumps[jump_index] <= threshold + 1e-8
+        for quantile_level in (0.10, 0.50, 0.90):
+            quantile_path = np.asarray(
+                [
+                    prob_surface.quantile(quantile_level, t=expiry_timestamp)
+                    for expiry_timestamp in sample_expiries
+                ],
+                dtype=float,
+            )
+            jumps = np.abs(np.diff(quantile_path))
+            threshold = float(np.percentile(jumps, 95))
+            for jump_index in pillar_jump_indices:
+                assert jumps[jump_index] <= threshold + 1e-8
