@@ -12,6 +12,10 @@ from typing import Optional, Tuple, Dict
 
 import pandas as pd
 import numpy as np
+try:
+    import yfinance as yf
+except ImportError:  # pragma: no cover - depends on install profile
+    yf = None
 
 from oipd.data_access.readers.base import AbstractReader
 
@@ -92,17 +96,12 @@ class Reader(AbstractReader):
         self._cache = (
             _YFinanceCache(ttl_minutes=cache_ttl_minutes) if cache_enabled else None
         )
-        self._yf = None
 
     # ---------- helper -------------------------------------------------------
     def _yf_mod(self):
-        if self._yf is None:
-            try:
-                import yfinance as yf
-            except ImportError as exc:
-                raise ImportError("Install with: pip install oipd[yfinance]") from exc
-            self._yf = yf
-        return self._yf
+        if yf is None:
+            raise ImportError("Install with: pip install oipd[yfinance]")
+        return yf
 
     # ---------- public -------------------------------------------------------
     def load(

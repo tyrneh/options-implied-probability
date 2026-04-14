@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal, Optional, Tuple, Any
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import numpy as np
 
 from oipd.presentation.publication import (
@@ -59,18 +61,7 @@ def plot_rnd(
 
     Returns:
         matplotlib.figure.Figure: Figure containing the requested plot.
-
-    Raises:
-        ImportError: If Matplotlib is unavailable.
     """
-    try:
-        import matplotlib.pyplot as plt
-        import matplotlib.ticker as ticker
-    except ImportError as exc:  # pragma: no cover - import guard
-        raise ImportError(
-            "Matplotlib is required for plotting. Install with: pip install matplotlib"
-        ) from exc
-
     if style == "publication":
         _apply_publication_style(plt)
 

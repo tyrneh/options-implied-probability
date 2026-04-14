@@ -225,8 +225,13 @@ class TestProbSurfaceVisualization:
         assert isinstance(fig, Figure)
         plt.close(fig)
 
-    def test_plot_fan_with_quantiles(self, prob_surface):
-        """plot_fan() should accept custom percentile bounds."""
-        fig = prob_surface.plot_fan(lower_percentile=10.0, upper_percentile=90.0)
-        assert isinstance(fig, Figure)
-        plt.close(fig)
+    @pytest.mark.parametrize(
+        ("removed_kwarg", "value"),
+        [("lower_percentile", 10.0), ("upper_percentile", 90.0)],
+    )
+    def test_plot_fan_rejects_removed_percentile_kwargs(
+        self, prob_surface, removed_kwarg, value
+    ):
+        """plot_fan() should reject each removed percentile-bound kwarg."""
+        with pytest.raises(TypeError, match=removed_kwarg):
+            prob_surface.plot_fan(**{removed_kwarg: value})

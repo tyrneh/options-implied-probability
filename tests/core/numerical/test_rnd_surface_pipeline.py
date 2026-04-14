@@ -15,7 +15,7 @@ from oipd.core.probability_density_conversion.finite_diff import (
 from oipd.core.maturity import calculate_time_to_expiry
 from oipd.core.utils import resolve_risk_free_rate
 from oipd.pipelines.probability.rnd_surface import (
-    build_daily_fan_density_frame,
+    build_fan_quantile_summary_frame,
     build_global_log_moneyness_grid,
     derive_surface_distribution_at_t,
     resolve_surface_query_time,
@@ -217,17 +217,122 @@ def test_derive_surface_distribution_at_t_matches_legacy_block(
     np.testing.assert_allclose(actual_cdf, expected_cdf, rtol=0.0, atol=0.0)
 
 
-def test_build_daily_fan_density_frame_uses_daily_sampling(
+def test_build_fan_quantile_summary_frame_uses_daily_sampling(
     fitted_surface: VolSurface,
 ) -> None:
-    """Daily fan dataframe uses canonical expiry timestamps on a daily grid."""
+    """Fan summary frame preserves the daily sampling and quantile contract."""
     prob_surface = fitted_surface.implied_distribution()
-    frame = build_daily_fan_density_frame(prob_surface)
+    frame = build_fan_quantile_summary_frame(prob_surface)
 
     first_expiry = min(fitted_surface.expiries)
     last_expiry = max(fitted_surface.expiries)
     expected_days = (last_expiry - first_expiry).days + 1
-    unique_days = pd.to_datetime(frame["expiry"]).dt.normalize().nunique()
+    unique_expiries = pd.to_datetime(frame["expiry"])
 
-    assert set(frame.columns) == {"expiry", "strike", "cdf"}
-    assert unique_days == expected_days
+    assert list(frame.columns) == [
+        "expiry",
+        "is_pillar",
+        "p10",
+        "p20",
+        "p30",
+        "p40",
+        "p50",
+        "p60",
+        "p70",
+        "p80",
+        "p90",
+    ]
+    assert len(frame) == expected_days
+    assert unique_expiries.nunique() == expected_days
+    assert unique_expiries.min() == first_expiry
+    assert unique_expiries.max() == last_expiry
+    assert frame["is_pillar"].sum() == len(fitted_surface.expiries)
+    pd.testing.assert_index_equal(
+        pd.Index(unique_expiries[frame["is_pillar"]].tolist()),
+        pd.Index(list(fitted_surface.expiries)),
+    )
+
+    quantile_columns = ["p10", "p20", "p30", "p40", "p50", "p60", "p70", "p80", "p90"]
+    quantile_matrix = frame[quantile_columns].to_numpy(dtype=float)
+    assert np.all(np.diff(quantile_matrix, axis=1) >= -1e-8)
+
+
+def test_build_fan_quantile_summary_frame_skips_invalid_slice_and_warns(
+    fitted_surface: VolSurface,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid sampled slices are skipped with one aggregate warning."""
+    prob_surface = fitted_surface.implied_distribution()
+    original_distribution_arrays = prob_surface._distribution_arrays_for_t_years
+    invalid_expiry = min(prob_surface.expiries) + pd.Timedelta(days=1)
+
+    def _distribution_with_invalid_slice(
+        t_years: float,
+        *,
+        expiry_timestamp: pd.Timestamp | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return a malformed CDF for one sampled non-pillar expiry."""
+        prices, pdf_values, cdf_values = original_distribution_arrays(
+            t_years,
+            expiry_timestamp=expiry_timestamp,
+        )
+        if pd.Timestamp(expiry_timestamp) == invalid_expiry:
+            invalid_cdf = np.full_like(cdf_values, np.nan, dtype=float)
+            return prices, pdf_values, invalid_cdf
+        return prices, pdf_values, cdf_values
+
+    monkeypatch.setattr(
+        prob_surface,
+        "_distribution_arrays_for_t_years",
+        _distribution_with_invalid_slice,
+    )
+
+    with pytest.warns(UserWarning, match="Skipped 1 sampled expiry"):
+        frame = build_fan_quantile_summary_frame(prob_surface)
+
+    unique_expiries = pd.to_datetime(frame["expiry"])
+    first_expiry = min(fitted_surface.expiries)
+    last_expiry = max(fitted_surface.expiries)
+    expected_days = (last_expiry - first_expiry).days + 1
+
+    assert len(frame) == expected_days - 1
+    assert invalid_expiry not in set(unique_expiries)
+    assert frame["is_pillar"].sum() == len(fitted_surface.expiries)
+
+    quantile_columns = ["p10", "p20", "p30", "p40", "p50", "p60", "p70", "p80", "p90"]
+    quantile_matrix = frame[quantile_columns].to_numpy(dtype=float)
+    assert np.all(np.diff(quantile_matrix, axis=1) >= -1e-8)
+
+
+def test_build_fan_quantile_summary_frame_raises_when_all_slices_invalid(
+    fitted_surface: VolSurface,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Summary generation still fails when every sampled slice is unusable."""
+    prob_surface = fitted_surface.implied_distribution()
+    original_distribution_arrays = prob_surface._distribution_arrays_for_t_years
+
+    def _distribution_with_invalid_slices(
+        t_years: float,
+        *,
+        expiry_timestamp: pd.Timestamp | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return a malformed CDF for every sampled expiry."""
+        prices, pdf_values, cdf_values = original_distribution_arrays(
+            t_years,
+            expiry_timestamp=expiry_timestamp,
+        )
+        invalid_cdf = np.full_like(cdf_values, np.nan, dtype=float)
+        return prices, pdf_values, invalid_cdf
+
+    monkeypatch.setattr(
+        prob_surface,
+        "_distribution_arrays_for_t_years",
+        _distribution_with_invalid_slices,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="No valid probability slices available for fan summary generation",
+    ):
+        build_fan_quantile_summary_frame(prob_surface)

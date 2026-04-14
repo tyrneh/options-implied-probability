@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
 
+from oipd.core.errors import InvalidInputError
 from oipd.core.maturity import (
     SECONDS_PER_DAY,
     build_maturity_metadata,
@@ -26,6 +28,45 @@ from oipd.core.probability_density_conversion import (
 from oipd.core.utils import resolve_risk_free_rate
 from oipd.market_inputs import Provenance, ResolvedMarket
 from oipd.pricing import black76_call_price
+
+
+def quantile_from_cdf(
+    prices: np.ndarray,
+    cdf_values: np.ndarray,
+    q: float,
+) -> float:
+    """Interpolate the price level corresponding to a CDF quantile.
+
+    Args:
+        prices: Price grid aligned with ``cdf_values``.
+        cdf_values: Cumulative probabilities aligned with ``prices``.
+        q: Target quantile in ``[0, 1]``.
+
+    Returns:
+        float: Price level associated with the requested quantile.
+
+    Raises:
+        InvalidInputError: If no finite grid values are available.
+    """
+    finite_mask = np.isfinite(prices) & np.isfinite(cdf_values)
+    if not finite_mask.any():
+        raise InvalidInputError("CDF contains no finite values for quantile extraction")
+
+    prices_clean = np.asarray(prices[finite_mask], dtype=float)
+    cdf_clean = np.asarray(cdf_values[finite_mask], dtype=float)
+
+    order = np.argsort(prices_clean)
+    prices_sorted = prices_clean[order]
+    cdf_sorted = cdf_clean[order]
+    cdf_sorted = np.maximum.accumulate(cdf_sorted)
+
+    cdf_min = float(cdf_sorted[0])
+    cdf_max = float(cdf_sorted[-1])
+    if cdf_max - cdf_min < 1e-6:
+        return float(prices_sorted[-1])
+
+    q_clamped = float(np.clip(q, cdf_min, cdf_max))
+    return float(np.interp(q_clamped, cdf_sorted, prices_sorted))
 
 
 def _expiry_from_year_fraction(
@@ -289,25 +330,133 @@ def build_probcurve_metadata(
     }
 
 
-def build_daily_fan_density_frame(prob_surface: Any) -> pd.DataFrame:
-    """Build the daily density payload used by ``ProbSurface.plot_fan``.
+class _InvalidFanSliceError(ValueError):
+    """Internal error for sampled fan slices that should be skipped."""
+
+
+def _build_fan_quantile_record(
+    prob_surface: Any,
+    expiry_timestamp: pd.Timestamp,
+    *,
+    pillar_expiries: set[pd.Timestamp],
+    quantile_levels: tuple[float, ...],
+    quantile_columns: list[str],
+) -> dict[str, Any]:
+    """Build one fan-summary record for a sampled expiry.
+
+    Args:
+        prob_surface: Probability surface interface object.
+        expiry_timestamp: Expiry being summarized.
+        pillar_expiries: Set of fitted pillar expiries.
+        quantile_levels: Quantile levels to extract.
+        quantile_columns: Output column names aligned with ``quantile_levels``.
+
+    Returns:
+        dict[str, Any]: One summary row for the requested expiry.
+
+    Raises:
+        InvalidInputError: If quantile extraction cannot be performed.
+        _InvalidFanSliceError: If extracted quantiles are non-finite or unordered.
+    """
+    resolved_expiry = pd.Timestamp(expiry_timestamp)
+    _, t_years = prob_surface._resolve_query_time(resolved_expiry)
+    prices, _, cdf_values = prob_surface._distribution_arrays_for_t_years(
+        t_years,
+        expiry_timestamp=resolved_expiry,
+    )
+
+    quantile_values = np.asarray(
+        [
+            quantile_from_cdf(prices, cdf_values, level)
+            for level in quantile_levels
+        ],
+        dtype=float,
+    )
+    if not np.all(np.isfinite(quantile_values)):
+        raise _InvalidFanSliceError(
+            f"Fan quantiles must be finite for expiry {resolved_expiry}."
+        )
+    if np.any(np.diff(quantile_values) < -1e-8):
+        raise _InvalidFanSliceError(
+            f"Fan quantiles must be ordered for expiry {resolved_expiry}."
+        )
+
+    record: dict[str, Any] = {
+        "expiry": resolved_expiry,
+        "is_pillar": resolved_expiry in pillar_expiries,
+    }
+    record.update(dict(zip(quantile_columns, quantile_values, strict=True)))
+    return record
+
+
+def build_fan_quantile_summary_frame(prob_surface: Any) -> pd.DataFrame:
+    """Build a daily fan-summary frame of quantiles across expiries.
 
     Args:
         prob_surface: Probability surface interface object.
 
     Returns:
-        Long DataFrame with columns ``expiry``, ``strike``, and ``cdf``.
+        pd.DataFrame: Summary frame with columns ``expiry``, ``is_pillar``,
+        ``p10``, ``p20``, ``p30``, ``p40``, ``p50``, ``p60``, ``p70``,
+        ``p80``, and ``p90``.
 
     Raises:
-        ValueError: If no slices are generated.
+        ValueError: If no valid sampled expiries remain after invalid slices
+            are skipped.
     """
-    density_results = build_surface_density_results_frame(prob_surface, step_days=1)
-    if density_results.empty:
-        raise ValueError("No probability slices available for plotting")
-
-    return density_results.rename(columns={"price": "strike"})[
-        ["expiry", "strike", "cdf"]
+    export_expiries = resolve_surface_export_expiries(prob_surface, step_days=1)
+    summary_columns = [
+        "expiry",
+        "is_pillar",
+        "p10",
+        "p20",
+        "p30",
+        "p40",
+        "p50",
+        "p60",
+        "p70",
+        "p80",
+        "p90",
     ]
+    if not export_expiries:
+        return pd.DataFrame(columns=summary_columns)
+
+    pillar_expiries = {pd.Timestamp(expiry) for expiry in prob_surface.expiries}
+    quantile_levels = (0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90)
+    quantile_columns = [f"p{int(level * 100):02d}" for level in quantile_levels]
+
+    records: list[dict[str, Any]] = []
+    skipped_expiries: list[pd.Timestamp] = []
+    for expiry_timestamp in export_expiries:
+        try:
+            record = _build_fan_quantile_record(
+                prob_surface,
+                pd.Timestamp(expiry_timestamp),
+                pillar_expiries=pillar_expiries,
+                quantile_levels=quantile_levels,
+                quantile_columns=quantile_columns,
+            )
+        except (InvalidInputError, _InvalidFanSliceError):
+            skipped_expiries.append(pd.Timestamp(expiry_timestamp))
+            continue
+        records.append(record)
+
+    if not records:
+        raise ValueError("No valid probability slices available for fan summary generation")
+
+    if skipped_expiries:
+        skipped_count = len(skipped_expiries)
+        expiry_label = "expiry" if skipped_count == 1 else "expiries"
+        warnings.warn(
+            (
+                f"Skipped {skipped_count} sampled {expiry_label} during fan summary "
+                "generation due to invalid quantile data."
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return pd.DataFrame.from_records(records, columns=summary_columns)
 
 
 def build_surface_density_results_frame(
@@ -369,7 +518,7 @@ def build_surface_density_results_frame(
 
 
 __all__ = [
-    "build_daily_fan_density_frame",
+    "build_fan_quantile_summary_frame",
     "build_global_log_moneyness_grid",
     "build_interpolated_resolved_market",
     "build_surface_density_results_frame",

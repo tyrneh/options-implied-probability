@@ -150,7 +150,7 @@ surface_market = MarketInputs(
 surface = ProbSurface.from_chain(chain_surface, surface_market)
 
 # 4. query and visualize the surface
-surface.plot_fan() # Plot a fan chart of price probability over time
+surface.plot_fan() # Plot a fixed multi-band fan with a dashed median and expiry-pillar dots
 plt.show()
 
 # 5. query at arbitrary maturities directly from ProbSurface
@@ -164,10 +164,6 @@ curve = surface.slice(surface.expiries[0]) # get a slice on the first expiry
 curve.prob_below(100)                      # query probabilities and statistics 
 curve.kurtosis()                           
 ```
-
-<p align="center" style="margin-top: 20px;">
-  <img src=".meta/images/palantir_price_forecast.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:10px;" />
-</p>
 
 
 

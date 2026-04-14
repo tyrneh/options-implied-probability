@@ -14,14 +14,15 @@ from oipd.presentation.plot_rnd import plot_rnd
 from oipd.presentation.probability_surface_plot import plot_probability_summary
 
 from oipd.pipelines.probability import (
-    build_daily_fan_density_frame,
     build_density_results_frame,
+    build_fan_quantile_summary_frame,
     build_global_log_moneyness_grid,
     build_interpolated_resolved_market,
     build_probcurve_metadata,
     build_surface_density_results_frame,
     derive_distribution_from_curve,
     derive_surface_distribution_at_t,
+    quantile_from_cdf,
     resolve_surface_query_time,
 )
 
@@ -176,6 +177,26 @@ class ProbCurve:
         self._cached_pdf = pdf
         self._cached_cdf = cdf
 
+    def _require_cached_distribution_arrays(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return cached distribution arrays after enforcing lazy initialization.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, np.ndarray]: Cached price, PDF, and CDF arrays.
+
+        Raises:
+            ValueError: If the cached arrays remain unavailable after initialization.
+        """
+        self._ensure_grid_generated()
+        if (
+            self._cached_prices is None
+            or self._cached_pdf is None
+            or self._cached_cdf is None
+        ):
+            raise ValueError("Probability arrays are unavailable for this curve.")
+        return self._cached_prices, self._cached_pdf, self._cached_cdf
+
     def pdf(self, price: float | np.ndarray) -> float | np.ndarray:
         """Evaluate the Probability Density Function (PDF) at the given price level(s).
 
@@ -185,12 +206,12 @@ class ProbCurve:
         Returns:
             float | np.ndarray: PDF values.
         """
-        self._ensure_grid_generated()
+        prices, pdf_values, _ = self._require_cached_distribution_arrays()
         query_prices = np.asarray(price, dtype=float)
         interpolated = np.interp(
             query_prices,
-            self._cached_prices,
-            self._cached_pdf,
+            prices,
+            pdf_values,
             left=0.0,
             right=0.0,
         )
@@ -212,12 +233,12 @@ class ProbCurve:
            float: Probability P(S < price).
         """
 
-        self._ensure_grid_generated()
-        cdf_monotone = np.maximum.accumulate(np.asarray(self._cached_cdf, dtype=float))
+        prices, _, cdf_values = self._require_cached_distribution_arrays()
+        cdf_monotone = np.maximum.accumulate(np.asarray(cdf_values, dtype=float))
         return float(
             np.interp(
                 price,
-                np.asarray(self._cached_prices, dtype=float),
+                np.asarray(prices, dtype=float),
                 cdf_monotone,
                 left=0.0,
                 right=1.0,
@@ -258,11 +279,8 @@ class ProbCurve:
             float: Expected price E[S].
         """
 
-        # Moments require integration over a grid
-        self._ensure_grid_generated()
-        return float(
-            np.trapezoid(self._cached_prices * self._cached_pdf, self._cached_prices)
-        )
+        prices, pdf_values, _ = self._require_cached_distribution_arrays()
+        return float(np.trapezoid(prices * pdf_values, prices))
 
     def variance(self) -> float:
         """Return the variance under the fitted PDF.
@@ -271,12 +289,12 @@ class ProbCurve:
             float: Variance Var[S].
         """
 
-        self._ensure_grid_generated()
+        prices, pdf_values, _ = self._require_cached_distribution_arrays()
         mean = self.mean()
         return float(
             np.trapezoid(
-                ((self._cached_prices - mean) ** 2) * self._cached_pdf,
-                self._cached_prices,
+                ((prices - mean) ** 2) * pdf_values,
+                prices,
             )
         )
 
@@ -288,14 +306,12 @@ class ProbCurve:
         Returns:
             float: Skewness. (Positive = lean to right/fat right tail, but for prices usually negative/fat left tail).
         """
-        self._ensure_grid_generated()
+        prices, pdf_values, _ = self._require_cached_distribution_arrays()
         mean = self.mean()
         var = self.variance()
         std = np.sqrt(var)
 
-        moment3 = np.trapezoid(
-            ((self._cached_prices - mean) ** 3) * self._cached_pdf, self._cached_prices
-        )
+        moment3 = np.trapezoid(((prices - mean) ** 3) * pdf_values, prices)
 
         return float(moment3 / (std**3))
 
@@ -307,14 +323,12 @@ class ProbCurve:
         Returns:
             float: Excess Kurtosis (0 = Normal). Positive = Fat Tails.
         """
-        self._ensure_grid_generated()
+        prices, pdf_values, _ = self._require_cached_distribution_arrays()
         mean = self.mean()
         var = self.variance()
         std = np.sqrt(var)
 
-        moment4 = np.trapezoid(
-            ((self._cached_prices - mean) ** 4) * self._cached_pdf, self._cached_prices
-        )
+        moment4 = np.trapezoid(((prices - mean) ** 4) * pdf_values, prices)
 
         # Excess Kurtosis
         return float(moment4 / (std**4) - 3.0)
@@ -331,11 +345,8 @@ class ProbCurve:
         if not (0 < q < 1):
             raise ValueError("Quantile q must be between 0 and 1")
 
-        self._ensure_grid_generated()
-
-        # Use interpolation on the cached CDF
-        # cdf_values are y, prices are x. We want x for a given y.
-        return float(np.interp(q, self._cached_cdf, self._cached_prices))
+        prices, _, cdf_values = self._require_cached_distribution_arrays()
+        return quantile_from_cdf(prices, cdf_values, q)
 
     @property
     def prices(self) -> np.ndarray:
@@ -345,8 +356,8 @@ class ProbCurve:
             np.ndarray: Array of price levels.
         """
 
-        self._ensure_grid_generated()
-        return self._cached_prices
+        prices, _, _ = self._require_cached_distribution_arrays()
+        return prices
 
     @property
     def pdf_values(self) -> np.ndarray:
@@ -356,8 +367,8 @@ class ProbCurve:
             np.ndarray: Probability densities in decimals.
         """
 
-        self._ensure_grid_generated()
-        return self._cached_pdf
+        _, pdf_values, _ = self._require_cached_distribution_arrays()
+        return pdf_values
 
     @property
     def cdf_values(self) -> np.ndarray:
@@ -367,8 +378,8 @@ class ProbCurve:
             np.ndarray: Cumulative probabilities in decimals.
         """
 
-        self._ensure_grid_generated()
-        return self._cached_cdf
+        _, _, cdf_values = self._require_cached_distribution_arrays()
+        return cdf_values
 
     @property
     def resolved_market(self) -> ResolvedMarket:
@@ -407,11 +418,11 @@ class ProbCurve:
         Returns:
             DataFrame with columns ``price``, ``pdf``, and ``cdf``.
         """
-        self._ensure_grid_generated()
+        prices, pdf_values, cdf_values = self._require_cached_distribution_arrays()
         return build_density_results_frame(
-            self._cached_prices,
-            self._cached_pdf,
-            self._cached_cdf,
+            prices,
+            pdf_values,
+            cdf_values,
             domain=domain,
             points=points,
         )
@@ -803,11 +814,7 @@ class ProbSurface:
             t_years,
             expiry_timestamp=expiry_timestamp,
         )
-        cdf_monotone = np.maximum.accumulate(np.asarray(cdf_values, dtype=float))
-        cdf_min = float(np.nanmin(cdf_monotone))
-        cdf_max = float(np.nanmax(cdf_monotone))
-        q_clamped = float(np.clip(q, cdf_min, cdf_max))
-        return float(np.interp(q_clamped, cdf_monotone, prices_grid))
+        return quantile_from_cdf(prices_grid, cdf_values, q)
 
     def density_results(
         self,
@@ -847,16 +854,12 @@ class ProbSurface:
     def plot_fan(
         self,
         *,
-        lower_percentile: float = 25.0,
-        upper_percentile: float = 75.0,
         figsize: tuple[float, float] = (10.0, 6.0),
         title: Optional[str] = None,
     ) -> Any:
-        """Plot a fan chart of risk-neutral quantiles across expiries.
+        """Plot a fixed fan chart of risk-neutral quantiles across expiries.
 
         Args:
-            lower_percentile: Lower percentile bound for the shaded band (0-100).
-            upper_percentile: Upper percentile bound for the shaded band (0-100).
             figsize: Figure size as (width, height) in inches.
             title: Optional custom title for the plot.
 
@@ -864,16 +867,15 @@ class ProbSurface:
             matplotlib.figure.Figure: The plot figure.
 
         Raises:
-            ValueError: If the surface is empty or unavailable.
+            ValueError: If the surface is empty or if no valid sampled slices
+                remain after invalid fan slices are skipped.
         """
         if len(self.expiries) == 0:
             raise ValueError("Call fit before plotting the probability surface")
-        density_data = build_daily_fan_density_frame(self)
+        summary_frame = build_fan_quantile_summary_frame(self)
 
         return plot_probability_summary(
-            density_data,
-            lower_percentile=lower_percentile,
-            upper_percentile=upper_percentile,
+            summary_frame,
             figsize=figsize,
             title=title,
         )

@@ -1,151 +1,107 @@
-"""2D plotting utilities for risk-neutral density summaries."""
+"""2D plotting utilities for risk-neutral fan summaries."""
 
 from __future__ import annotations
 
 from typing import Optional
 
-import numpy as np
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.figure import Figure
 
 from oipd.core.errors import InvalidInputError
 
 
-def _quantile_from_cdf(strikes: np.ndarray, cdf: np.ndarray, q: float) -> float:
-    """Interpolate the strike level corresponding to a CDF quantile.
-
-    Args:
-        strikes: Strike grid sorted in ascending order.
-        cdf: Monotonic cumulative probabilities aligned with ``strikes``.
-        q: Target quantile in ``[0, 1]``.
-
-    Returns:
-        float: Strike level associated with the requested quantile.
-    """
-
-    finite_mask = np.isfinite(strikes) & np.isfinite(cdf)
-    if not finite_mask.any():
-        raise InvalidInputError("CDF contains no finite values for quantile extraction")
-
-    strikes_clean = np.asarray(strikes[finite_mask], dtype=float)
-    cdf_clean = np.asarray(cdf[finite_mask], dtype=float)
-
-    order = np.argsort(strikes_clean)
-    strikes_sorted = strikes_clean[order]
-    cdf_sorted = cdf_clean[order]
-    cdf_sorted = np.maximum.accumulate(cdf_sorted)
-
-    cdf_min = float(cdf_sorted[0])
-    cdf_max = float(cdf_sorted[-1])
-    if cdf_max - cdf_min < 1e-6:
-        return float(strikes_sorted[-1])
-
-    q_clamped = float(np.clip(q, cdf_min, cdf_max))
-    return float(np.interp(q_clamped, cdf_sorted, strikes_sorted))
-
-
 def plot_probability_summary(
-    density_data: pd.DataFrame,
+    summary_data: pd.DataFrame,
     *,
-    lower_percentile: float,
-    upper_percentile: float,
     figsize: tuple[float, float],
     title: Optional[str],
-) -> "matplotlib.figure.Figure":
-    """Plot distribution quantiles over time.
+) -> Figure:
+    """Plot a precomputed probability fan summary over time.
 
     Args:
-        density_data: DataFrame containing ``expiry``, ``strike``, and ``cdf``.
-        lower_percentile: Lower bound percentile for the shaded confidence band.
-        upper_percentile: Upper bound percentile for the shaded confidence band.
+        summary_data: DataFrame containing ``expiry``, ``is_pillar``,
+            ``p10``, ``p20``, ``p30``, ``p40``, ``p50``, ``p60``, ``p70``,
+            ``p80``, and ``p90``.
         figsize: Matplotlib figure size in inches ``(width, height)``.
         title: Optional chart title.
 
     Returns:
-        matplotlib.figure.Figure: Figure containing the summary plot.
+        Figure: Figure containing the summary plot.
 
     Raises:
         ImportError: If Matplotlib is unavailable.
-        InvalidInputError: For malformed density inputs or percentile configuration.
+        InvalidInputError: For malformed summary inputs.
     """
-
-    try:
-        import matplotlib.pyplot as plt
-        import matplotlib.dates as mdates
-    except ImportError as exc:  # pragma: no cover - optional dependency
-        raise ImportError(
-            "Matplotlib is required for surface plotting. Install with: pip install matplotlib"
-        ) from exc
-
-    for pct in (lower_percentile, upper_percentile):
-        if not (0.0 <= pct <= 100.0):
-            raise InvalidInputError("Percentile bounds must lie within [0, 100]")
-    if not lower_percentile < upper_percentile:
-        raise InvalidInputError(
-            "lower_percentile must be strictly less than upper_percentile"
-        )
-
-    required_cols = {"expiry", "strike", "cdf"}
-    missing = required_cols.difference(density_data.columns)
+    required_cols = {
+        "expiry",
+        "is_pillar",
+        "p10",
+        "p20",
+        "p30",
+        "p40",
+        "p50",
+        "p60",
+        "p70",
+        "p80",
+        "p90",
+    }
+    missing = required_cols.difference(summary_data.columns)
     if missing:
         raise InvalidInputError(
-            "Density DataFrame is missing required columns: "
+            "Summary DataFrame is missing required columns: "
             + ", ".join(sorted(missing))
         )
+    if summary_data.empty:
+        raise InvalidInputError(
+            "No valid probability summary rows available for plotting"
+        )
 
-    grouped = density_data.groupby("expiry", sort=True)
-
-    dates: list[pd.Timestamp] = []
-    lower: list[float] = []
-    upper: list[float] = []
-    median: list[float] = []
-
-    lower_q = lower_percentile / 100.0
-    upper_q = upper_percentile / 100.0
-
-    for expiry, frame in grouped:
-        expiry_ts = pd.to_datetime(expiry)
-        strikes = frame["strike"].to_numpy(dtype=float)
-        cdf_values = np.clip(frame["cdf"].to_numpy(dtype=float), 0.0, 1.0)
-
-        try:
-            q_low = _quantile_from_cdf(strikes, cdf_values, lower_q)
-            q_high = _quantile_from_cdf(strikes, cdf_values, upper_q)
-            q_med = _quantile_from_cdf(strikes, cdf_values, 0.5)
-        except InvalidInputError:
-            continue
-
-        dates.append(expiry_ts)
-        lower.append(q_low)
-        upper.append(q_high)
-        median.append(q_med)
-
-    if not dates:
-        raise InvalidInputError("No valid probability slices available for plotting")
-
-    order = np.argsort(dates)
-    dates_sorted = [dates[i].to_pydatetime() for i in order]
-    lower_sorted = np.asarray(lower)[order]
-    upper_sorted = np.asarray(upper)[order]
-    median_sorted = np.asarray(median)[order]
+    ordered_summary = summary_data.copy()
+    ordered_summary["expiry"] = pd.to_datetime(ordered_summary["expiry"])
+    ordered_summary = ordered_summary.sort_values("expiry").reset_index(drop=True)
+    dates_sorted = [expiry.to_pydatetime() for expiry in ordered_summary["expiry"]]
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    band_label = f"{lower_percentile:.0f}–{upper_percentile:.0f} percentile band"
-    ax.fill_between(
-        dates_sorted,
-        lower_sorted,
-        upper_sorted,
-        color="#1f77b4",
-        alpha=0.15,
-        label=band_label,
-    )
+    band_specs = [
+        ("p10", "p90", "#dbe6f6", 1, "10-90p"),
+        ("p20", "p80", "#b8d0f0", 2, "20-80p"),
+        ("p30", "p70", "#82addf", 3, "30-70p"),
+        ("p40", "p60", "#4f86c9", 4, "40-60p"),
+    ]
+    for lower_column, upper_column, color, zorder, label in band_specs:
+        ax.fill_between(
+            dates_sorted,
+            ordered_summary[lower_column].to_numpy(dtype=float),
+            ordered_summary[upper_column].to_numpy(dtype=float),
+            color=color,
+            alpha=0.8,
+            label=label,
+            zorder=zorder,
+        )
 
     ax.plot(
         dates_sorted,
-        median_sorted,
+        ordered_summary["p50"].to_numpy(dtype=float),
         color="#1f77b4",
         linewidth=2.0,
+        linestyle="--",
         label="Implied median",
+        zorder=5,
+    )
+
+    pillar_rows = ordered_summary.loc[ordered_summary["is_pillar"].astype(bool)]
+    ax.scatter(
+        [expiry.to_pydatetime() for expiry in pillar_rows["expiry"]],
+        pillar_rows["p50"].to_numpy(dtype=float),
+        s=42,
+        facecolor="white",
+        edgecolor="#1f77b4",
+        linewidth=1.25,
+        label="Option expiry dates",
+        zorder=6,
     )
 
     ax.set_xlabel("Expiry")
@@ -157,14 +113,34 @@ def plot_probability_summary(
         title = "Risk-neutral price distribution over time"
     ax.set_title(title)
 
-    legend = ax.legend(loc="best")
+    handles, labels = ax.get_legend_handles_labels()
+    legend_order = [
+        "Option expiry dates",
+        "Implied median",
+        "40-60p",
+        "30-70p",
+        "20-80p",
+        "10-90p",
+    ]
+    label_to_handle = dict(zip(labels, handles, strict=True))
+    ordered_handles = [
+        label_to_handle[label] for label in legend_order if label in label_to_handle
+    ]
+    ordered_labels = [
+        label for label in legend_order if label in label_to_handle
+    ]
+    legend = ax.legend(ordered_handles, ordered_labels, loc="best")
     if legend is not None:
         for text in legend.get_texts():
-            text.set_color("black")
+            if text.get_text().endswith("p"):
+                text.set_color(ax.xaxis.label.get_color())
+                text.set_fontsize("small")
+            else:
+                text.set_color("black")
 
     has_intraday_precision = any(
-        expiry_ts.time() != pd.Timestamp(expiry_ts).normalize().time()
-        for expiry_ts in dates
+        expiry_ts.time() != expiry_ts.normalize().time()
+        for expiry_ts in ordered_summary["expiry"]
     )
     if has_intraday_precision:
         locator = mdates.AutoDateLocator()
