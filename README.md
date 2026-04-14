@@ -150,7 +150,7 @@ surface_market = MarketInputs(
 surface = ProbSurface.from_chain(chain_surface, surface_market)
 
 # 4. query and visualize the surface
-surface.plot_fan() # Plot a fixed multi-band fan with a dashed median and expiry-pillar dots
+surface.plot_fan() # Fan plot of future price probabilities
 plt.show()
 
 # 5. query at arbitrary maturities directly from ProbSurface
