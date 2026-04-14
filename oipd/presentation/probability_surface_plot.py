@@ -126,9 +126,7 @@ def plot_probability_summary(
     ordered_handles = [
         label_to_handle[label] for label in legend_order if label in label_to_handle
     ]
-    ordered_labels = [
-        label for label in legend_order if label in label_to_handle
-    ]
+    ordered_labels = [label for label in legend_order if label in label_to_handle]
     legend = ax.legend(ordered_handles, ordered_labels, loc="best")
     if legend is not None:
         for text in legend.get_texts():

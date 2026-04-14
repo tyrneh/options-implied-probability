@@ -12,6 +12,7 @@ from typing import Optional, Tuple, Dict
 
 import pandas as pd
 import numpy as np
+
 try:
     import yfinance as yf
 except ImportError:  # pragma: no cover - depends on install profile

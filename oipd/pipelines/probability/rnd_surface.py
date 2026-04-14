@@ -366,10 +366,7 @@ def _build_fan_quantile_record(
     )
 
     quantile_values = np.asarray(
-        [
-            quantile_from_cdf(prices, cdf_values, level)
-            for level in quantile_levels
-        ],
+        [quantile_from_cdf(prices, cdf_values, level) for level in quantile_levels],
         dtype=float,
     )
     if not np.all(np.isfinite(quantile_values)):
@@ -442,7 +439,9 @@ def build_fan_quantile_summary_frame(prob_surface: Any) -> pd.DataFrame:
         records.append(record)
 
     if not records:
-        raise ValueError("No valid probability slices available for fan summary generation")
+        raise ValueError(
+            "No valid probability slices available for fan summary generation"
+        )
 
     if skipped_expiries:
         skipped_count = len(skipped_expiries)

@@ -121,6 +121,8 @@ def fitted_vol_surface(multi_expiry_chain, market_inputs):
 def prob_surface(fitted_vol_surface):
     """A ProbSurface derived from a fitted VolSurface."""
     return fitted_vol_surface.implied_distribution()
+
+
 # =============================================================================
 # ProbSurface.from_chain() Tests
 # =============================================================================
