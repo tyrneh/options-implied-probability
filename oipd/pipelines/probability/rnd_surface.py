@@ -17,6 +17,7 @@ from oipd.core.maturity import (
     resolve_maturity,
 )
 from oipd.pipelines.probability.rnd_curve import build_density_results_frame
+from oipd.pipelines.probability.rnd_curve import derive_distribution_from_curve
 from oipd.pipelines.utils.surface_export import (
     resolve_surface_export_expiries,
     validate_export_domain,
@@ -253,6 +254,38 @@ def derive_surface_distribution_at_t(
     return np.asarray(strike_grid, dtype=float), pdf_values, rebuilt_cdf_values
 
 
+def derive_surface_slice_probability(
+    vol_surface: Any,
+    expiry: float | str | date | pd.Timestamp,
+    *,
+    points: int,
+) -> tuple[ResolvedMarket, dict[str, Any], np.ndarray, np.ndarray, np.ndarray]:
+    """Derive one surface-slice probability payload via the single-expiry path.
+
+    Args:
+        vol_surface: Fitted volatility surface interface object.
+        expiry: Requested maturity as a year fraction or date-like object.
+        points: Number of probability-grid points to request from the canonical
+            single-expiry distribution pipeline.
+
+    Returns:
+        tuple[ResolvedMarket, dict[str, Any], np.ndarray, np.ndarray, np.ndarray]:
+            Resolved market, metadata, prices, PDF values, and CDF values for
+            the requested slice.
+    """
+    resolved_expiry, _ = resolve_surface_query_time(vol_surface, expiry)
+    vol_curve = vol_surface.slice(resolved_expiry)
+    resolved_market = vol_curve.resolved_market
+    prices, pdf_values, cdf_values, metadata = derive_distribution_from_curve(
+        vol_curve._vol_curve,
+        resolved_market,
+        pricing_engine=vol_curve.pricing_engine,
+        vol_metadata=vol_curve._metadata,
+        points=points,
+    )
+    return resolved_market, metadata, prices, pdf_values, cdf_values
+
+
 def build_interpolated_resolved_market(
     vol_surface: Any,
     t_years: float,
@@ -359,14 +392,9 @@ def _build_fan_quantile_record(
         _InvalidFanSliceError: If extracted quantiles are non-finite or unordered.
     """
     resolved_expiry = pd.Timestamp(expiry_timestamp)
-    _, t_years = prob_surface._resolve_query_time(resolved_expiry)
-    prices, _, cdf_values = prob_surface._distribution_arrays_for_t_years(
-        t_years,
-        expiry_timestamp=resolved_expiry,
-    )
-
+    curve = prob_surface.slice(resolved_expiry)
     quantile_values = np.asarray(
-        [quantile_from_cdf(prices, cdf_values, level) for level in quantile_levels],
+        [curve.quantile(level) for level in quantile_levels],
         dtype=float,
     )
     if not np.all(np.isfinite(quantile_values)):
@@ -498,15 +526,8 @@ def build_surface_density_results_frame(
 
     frames: list[pd.DataFrame] = []
     for expiry_timestamp in export_expiries:
-        _, t_years = prob_surface._resolve_query_time(expiry_timestamp)
-        prices, pdf_values, cdf_values = prob_surface._distribution_arrays_for_t_years(
-            t_years,
-            expiry_timestamp=expiry_timestamp,
-        )
-        frame = build_density_results_frame(
-            prices,
-            pdf_values,
-            cdf_values,
+        curve = prob_surface.slice(pd.Timestamp(expiry_timestamp))
+        frame = curve.density_results(
             domain=domain,
             points=points,
         )
@@ -523,5 +544,6 @@ __all__ = [
     "build_surface_density_results_frame",
     "build_probcurve_metadata",
     "derive_surface_distribution_at_t",
+    "derive_surface_slice_probability",
     "resolve_surface_query_time",
 ]

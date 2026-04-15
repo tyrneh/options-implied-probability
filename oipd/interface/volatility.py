@@ -90,6 +90,118 @@ def _normalize_expiry_series(expiry_values: pd.Series) -> pd.Series:
     )
 
 
+def _extract_chain_strike_domain(
+    chain: pd.DataFrame | None,
+) -> tuple[float, float] | None:
+    """Return the finite strike domain for one fitted slice when available.
+
+    Args:
+        chain: Fitted-slice option chain that may contain a ``strike`` column.
+
+    Returns:
+        tuple[float, float] | None: Minimum and maximum strike when available.
+    """
+    if chain is None or chain.empty or "strike" not in chain.columns:
+        return None
+
+    strike_values = pd.to_numeric(chain["strike"], errors="coerce").to_numpy(
+        dtype=float
+    )
+    strike_values = strike_values[np.isfinite(strike_values)]
+    if strike_values.size == 0:
+        return None
+
+    return float(np.min(strike_values)), float(np.max(strike_values))
+
+
+def _resolve_interpolated_domain_hint(
+    surface_model: FittedSurface,
+    fitted_expiries: Sequence[pd.Timestamp],
+    target_expiry: pd.Timestamp,
+) -> tuple[tuple[float, float] | None, tuple[pd.Timestamp, ...], str]:
+    """Resolve a local strike-domain hint for one interpolated surface slice.
+
+    Args:
+        surface_model: Calibrated surface model holding fitted slice payloads.
+        fitted_expiries: Sorted fitted pillar expiries on the surface.
+        target_expiry: Requested interpolated expiry.
+
+    Returns:
+        tuple[tuple[float, float] | None, tuple[pd.Timestamp, ...], str]:
+            Local domain hint, the expiries used to form that hint, and a short
+            provenance label describing how the hint was formed.
+    """
+    ordered_expiries = tuple(pd.Timestamp(expiry) for expiry in fitted_expiries)
+    if not ordered_expiries:
+        return None, (), "no_fitted_pillars"
+
+    expiry_index = pd.Index(ordered_expiries).searchsorted(target_expiry, side="left")
+    if 0 < expiry_index < len(ordered_expiries):
+        candidate_expiries = (
+            ordered_expiries[expiry_index - 1],
+            ordered_expiries[expiry_index],
+        )
+        source_label = "bracketing_pillars"
+    elif expiry_index == 0:
+        candidate_expiries = (ordered_expiries[0],)
+        source_label = "nearest_upper_pillar"
+    else:
+        candidate_expiries = (ordered_expiries[-1],)
+        source_label = "nearest_lower_pillar"
+
+    candidate_domains: list[tuple[float, float]] = []
+    for expiry in candidate_expiries:
+        try:
+            slice_data = surface_model.get_slice(expiry)
+        except (KeyError, ValueError):
+            continue
+        domain_hint = _extract_chain_strike_domain(slice_data.get("chain"))
+        if domain_hint is not None:
+            candidate_domains.append(domain_hint)
+
+    if not candidate_domains:
+        nearest_valid_candidates = sorted(
+            ordered_expiries,
+            key=lambda expiry: abs(expiry - target_expiry),
+        )
+        for expiry in nearest_valid_candidates:
+            try:
+                slice_data = surface_model.get_slice(expiry)
+            except (KeyError, ValueError):
+                continue
+            domain_hint = _extract_chain_strike_domain(slice_data.get("chain"))
+            if domain_hint is None:
+                continue
+            return domain_hint, (expiry,), "nearest_valid_pillar"
+        return None, candidate_expiries, "no_domain_hint"
+
+    lower_bound = min(domain[0] for domain in candidate_domains)
+    upper_bound = max(domain[1] for domain in candidate_domains)
+    return (lower_bound, upper_bound), candidate_expiries, source_label
+
+
+def _infer_market_dividend_provenance(
+    market: MarketInputs,
+) -> Literal[
+    "user_schedule",
+    "user_yield",
+    "none",
+]:
+    """Infer dividend provenance for a stored parent market snapshot.
+
+    Args:
+        market: Parent market inputs used when the surface was fitted.
+
+    Returns:
+        Literal["user_schedule", "user_yield", "none"]: Dividend provenance label.
+    """
+    if market.dividend_schedule is not None:
+        return "user_schedule"
+    if market.dividend_yield is not None:
+        return "user_yield"
+    return "none"
+
+
 class VolCurve:
     """Single-expiry implied-volatility smile fitter with sklearn-style API.
 
@@ -592,7 +704,13 @@ class VolCurve:
         # Return Result Container
         from oipd.interface.probability import ProbCurve
 
-        return ProbCurve(self)
+        return ProbCurve(
+            self,
+            metadata=metadata,
+            prices=prices,
+            pdf_values=pdf,
+            cdf_values=cdf,
+        )
 
     def price(
         self,
@@ -1062,39 +1180,52 @@ class VolSurface:
         forward_price = float(interpolator._forward_interp(t))
         at_money_vol = float(interpolator.implied_vol(forward_price, t))
 
-        # Construct synthetic ResolvedMarket for this expiry
-        synthetic_market = ResolvedMarket(
-            risk_free_rate=self._market.risk_free_rate,
-            underlying_price=forward_price,  # Use forward as "underlying" for Black-76
-            valuation_date=self._market.valuation_timestamp,
-            dividend_yield=self._market.dividend_yield,
-            dividend_schedule=None,
-            provenance=Provenance(price="user", dividends="none"),
-            source_meta={
-                "interpolated": True,
-                "expiry": resolved_maturity.expiry,
-                "risk_free_rate_mode": self._market.risk_free_rate_mode,
-            },
+        default_domain, interpolated_from_expiries, domain_hint_source = (
+            _resolve_interpolated_domain_hint(
+                self._model,
+                self.expiries,
+                resolved_maturity.expiry,
+            )
         )
 
-        # Derive default strike domain from nearest fitted slices
-        # Use the union of min/max strikes across all fitted slices
-        all_strikes = []
-        for exp_ts in self.expiries:
-            try:
-                slice_data = self._model.get_slice(exp_ts)
-                if (
-                    slice_data.get("chain") is not None
-                    and "strike" in slice_data["chain"].columns
-                ):
-                    all_strikes.extend(slice_data["chain"]["strike"].tolist())
-            except (ValueError, KeyError):
-                pass
-
-        if all_strikes:
-            default_domain = (min(all_strikes), max(all_strikes))
+        if self.pricing_engine == "bs":
+            synthetic_underlying_price = float(self._market.underlying_price)
         else:
-            default_domain = None
+            synthetic_underlying_price = forward_price
+
+        if self._market.dividend_schedule is not None:
+            synthetic_dividend_schedule = self._market.dividend_schedule.copy()
+        else:
+            synthetic_dividend_schedule = None
+
+        synthetic_source_meta = {
+            "interpolated": True,
+            "expiry": resolved_maturity.expiry,
+            "time_to_expiry_years": t,
+            "risk_free_rate_mode": self._market.risk_free_rate_mode,
+            "forward_price": forward_price,
+            "interpolated_from_expiries": interpolated_from_expiries,
+            "domain_hint_source": domain_hint_source,
+        }
+
+        if default_domain is not None:
+            synthetic_source_meta["default_domain"] = default_domain
+
+        # Construct synthetic ResolvedMarket for this expiry.
+        # For BS surfaces we preserve the parent spot/dividend state and carry
+        # the interpolated forward separately in metadata/source_meta.
+        synthetic_market = ResolvedMarket(
+            risk_free_rate=self._market.risk_free_rate,
+            underlying_price=synthetic_underlying_price,
+            valuation_date=self._market.valuation_timestamp,
+            dividend_yield=self._market.dividend_yield,
+            dividend_schedule=synthetic_dividend_schedule,
+            provenance=Provenance(
+                price="user",
+                dividends=_infer_market_dividend_provenance(self._market),
+            ),
+            source_meta=synthetic_source_meta,
+        )
 
         # Create a callable that wraps the interpolator
         def interpolated_vol_curve(strikes: np.ndarray) -> np.ndarray:
@@ -1116,9 +1247,11 @@ class VolSurface:
         vol_curve._metadata = {  # type: ignore[attr-defined]
             "interpolated": True,
             **build_maturity_metadata(resolved_maturity),
+            "interpolated_from_expiries": interpolated_from_expiries,
             "forward_price": forward_price,
             "at_money_vol": at_money_vol,
             "method": "total_variance_interpolation",
+            "domain_hint_source": domain_hint_source,
             "default_domain": default_domain,
         }
         vol_curve._resolved_market = synthetic_market  # type: ignore[attr-defined]

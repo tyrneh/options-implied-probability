@@ -447,12 +447,15 @@ class TestVolSurfaceInterpolation:
         metadata = interpolated_curve._metadata
 
         assert metadata is not None
+        assert metadata["interpolated"] is True
         for key in (
             "expiry",
             "time_to_expiry_years",
             "time_to_expiry_days",
             "forward_price",
             "at_money_vol",
+            "interpolated_from_expiries",
+            "domain_hint_source",
         ):
             assert key in metadata
 
@@ -469,6 +472,53 @@ class TestVolSurfaceInterpolation:
         assert metadata["calendar_days_to_expiry"] == resolved.calendar_days_to_expiry
         assert float(metadata["forward_price"]) > 0.0
         assert float(metadata["at_money_vol"]) > 0.0
+        assert metadata["interpolated_from_expiries"] == vs.expiries
+        assert metadata["domain_hint_source"] == "bracketing_pillars"
+
+    def test_interpolated_bs_slice_preserves_spot_market_semantics(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """BS interpolated slices should preserve spot in resolved market state."""
+        from oipd import MarketInputs, VolSurface
+
+        market_with_dividend = MarketInputs(
+            valuation_date=market_inputs.valuation_date,
+            underlying_price=market_inputs.underlying_price,
+            risk_free_rate=market_inputs.risk_free_rate,
+            dividend_schedule=pd.DataFrame(
+                {"ex_date": [pd.Timestamp("2025-02-01")], "amount": [1.0]}
+            ),
+        )
+
+        vs = VolSurface(pricing_engine="bs")
+        vs.fit(multi_expiry_chain, market_with_dividend)
+
+        interpolated_curve = vs.slice("2025-03-21")
+        metadata = interpolated_curve._metadata
+        resolved_market = interpolated_curve.resolved_market
+
+        assert metadata["interpolated"] is True
+        assert resolved_market.source_meta["interpolated"] is True
+        assert resolved_market.source_meta["expiry"] == metadata["expiry"]
+        assert resolved_market.source_meta["forward_price"] == pytest.approx(
+            metadata["forward_price"]
+        )
+        assert (
+            resolved_market.source_meta["interpolated_from_expiries"]
+            == metadata["interpolated_from_expiries"]
+        )
+        assert (
+            resolved_market.source_meta["domain_hint_source"]
+            == metadata["domain_hint_source"]
+        )
+        assert resolved_market.underlying_price == pytest.approx(
+            market_with_dividend.underlying_price
+        )
+        assert resolved_market.dividend_schedule is not None
+        pd.testing.assert_frame_equal(
+            resolved_market.dividend_schedule.reset_index(drop=True),
+            market_with_dividend.dividend_schedule.reset_index(drop=True),
+        )
 
 
 # =============================================================================

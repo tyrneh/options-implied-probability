@@ -26,6 +26,26 @@ from oipd.core.utils import (
 )
 
 
+def _extract_strike_domain(options_data: pd.DataFrame) -> tuple[float, float] | None:
+    """Return the finite strike domain for one options table when available.
+
+    Args:
+        options_data: Option rows that may contain a ``strike`` column.
+
+    Returns:
+        tuple[float, float] | None: Minimum and maximum strike when available.
+    """
+    if "strike" not in options_data.columns or options_data.empty:
+        return None
+
+    strike_values = options_data["strike"].to_numpy(dtype=float)
+    strike_values = strike_values[np.isfinite(strike_values)]
+    if strike_values.size == 0:
+        return None
+
+    return float(np.min(strike_values)), float(np.max(strike_values))
+
+
 def fit_vol_curve_internal(
     options_data: pd.DataFrame,
     resolved_market: ResolvedMarket,
@@ -238,6 +258,8 @@ def fit_vol_curve_internal(
         "forward_price": underlying_for_iv,
         "pricing_engine": pricing_engine,
         "method": method,
+        "raw_observed_domain": _extract_strike_domain(cleaned_options),
+        "post_iv_survival_domain": _extract_strike_domain(options_with_iv),
         "observed_iv": options_with_iv,
         "observed_iv_bid": observed_bid_iv,
         "observed_iv_ask": observed_ask_iv,

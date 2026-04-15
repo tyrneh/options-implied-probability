@@ -205,9 +205,18 @@ class TestProbCurveProperties:
             "time_to_expiry_days",
             "forward_price",
             "at_money_vol",
+            "resolved_domain",
+            "observed_domain",
+            "tail_mass_beyond_upper",
+            "raw_observed_domain",
+            "post_iv_survival_domain",
+            "added_mass_last_expansion",
+            "domain_grid_spacing",
         ):
             assert key in metadata
         assert np.isfinite(metadata["at_money_vol"])
+        assert metadata["resolved_domain"][0] > 0.0
+        assert metadata["resolved_domain"][1] > metadata["resolved_domain"][0]
 
         resolved = resolve_maturity(
             metadata["expiry"],
@@ -414,6 +423,12 @@ class TestProbCurveDensityResults:
             result["cdf"].to_numpy(dtype=float), prob_curve.cdf_values
         )
 
+    def test_native_distribution_uses_full_domain_by_default(self, prob_curve):
+        """Native arrays use the resolved full-domain support."""
+        assert prob_curve.prices[0] == pytest.approx(0.01)
+        assert prob_curve.metadata["resolved_domain"][0] == pytest.approx(0.01)
+        assert prob_curve.metadata["resolved_domain"][1] >= prob_curve.prices[-1]
+
     def test_density_results_resamples_explicit_domain(self, prob_curve):
         """Explicit domain triggers interpolation onto the requested grid."""
         result = prob_curve.density_results(domain=(80.0, 120.0), points=25)
@@ -440,6 +455,18 @@ class TestProbCurveDensityResults:
             [prob_curve.prob_below(price) for price in prices],
             rtol=1e-8,
         )
+
+    def test_density_results_domain_is_downstream_resampling_only(self, prob_curve):
+        """Explicit export domains do not mutate the native cached arrays."""
+        native_prices = prob_curve.prices.copy()
+        native_pdf = prob_curve.pdf_values.copy()
+        native_cdf = prob_curve.cdf_values.copy()
+
+        _ = prob_curve.density_results(domain=(85.0, 115.0), points=11)
+
+        np.testing.assert_allclose(prob_curve.prices, native_prices)
+        np.testing.assert_allclose(prob_curve.pdf_values, native_pdf)
+        np.testing.assert_allclose(prob_curve.cdf_values, native_cdf)
 
     def test_density_results_rejects_invalid_domain(self, prob_curve):
         """Invalid domains are rejected at the export boundary."""

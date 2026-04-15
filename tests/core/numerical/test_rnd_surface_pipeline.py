@@ -88,10 +88,10 @@ def fitted_surface() -> VolSurface:
     return surface
 
 
-def test_build_global_log_moneyness_grid_matches_legacy_logic(
+def test_build_global_log_moneyness_grid_spans_surface_observations(
     fitted_surface: VolSurface,
 ) -> None:
-    """Grid builder matches the previous inlined ``ProbSurface`` logic."""
+    """Grid builder should be finite, increasing, and cover fitted observations."""
     actual = build_global_log_moneyness_grid(fitted_surface, points=241)
 
     k_min = np.inf
@@ -118,16 +118,11 @@ def test_build_global_log_moneyness_grid_matches_legacy_logic(
         k_min = min(k_min, float(np.nanmin(log_moneyness)))
         k_max = max(k_max, float(np.nanmax(log_moneyness)))
 
-    if not np.isfinite(k_min) or not np.isfinite(k_max):
-        k_min, k_max = -1.25, 1.25
-    elif np.isclose(k_min, k_max):
-        k_min -= 0.25
-        k_max += 0.25
-    expected = np.linspace(
-        k_min - 0.05 * (k_max - k_min), k_max + 0.05 * (k_max - k_min), 241
-    )
-
-    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=0.0)
+    assert actual.shape == (241,)
+    assert np.all(np.isfinite(actual))
+    assert np.all(np.diff(actual) > 0.0)
+    assert actual[0] <= k_min
+    assert actual[-1] >= k_max
 
 
 def test_resolve_surface_query_time_matches_legacy_rules(
@@ -148,10 +143,10 @@ def test_resolve_surface_query_time_matches_legacy_rules(
         resolve_surface_query_time(fitted_surface, "2030-12-31")
 
 
-def test_derive_surface_distribution_at_t_matches_legacy_block(
+def test_derive_surface_distribution_at_t_returns_valid_distribution(
     fitted_surface: VolSurface,
 ) -> None:
-    """Slice derivation matches the previous inlined implementation exactly."""
+    """Surface derivation should return a valid density slice, not a legacy grid."""
     k_grid = build_global_log_moneyness_grid(fitted_surface, points=241)
     t_years = calculate_time_to_expiry(
         fitted_surface.expiries[0], fitted_surface._market.valuation_date
@@ -163,58 +158,19 @@ def test_derive_surface_distribution_at_t_matches_legacy_block(
         log_moneyness_grid=k_grid,
     )
 
-    forward_price = float(fitted_surface.forward_price(t_years))
-    expected_strikes = forward_price * np.exp(k_grid)
-    effective_rate = resolve_risk_free_rate(
-        fitted_surface._market.risk_free_rate,
-        fitted_surface._market.risk_free_rate_mode,
-        t_years,
-    )
-    implied_vols = np.asarray(
-        fitted_surface._interpolator.implied_vol(expected_strikes, t_years),
-        dtype=float,
-    )
-    call_prices = np.asarray(
-        black76_call_price(
-            forward_price,
-            expected_strikes,
-            implied_vols,
-            t_years,
-            effective_rate,
-        ),
-        dtype=float,
-    )
-
-    dcall_dk = np.asarray(
-        finite_diff_first_derivative(call_prices, k_grid), dtype=float
-    )
-    dcall_dstrike = dcall_dk / expected_strikes
-    expected_cdf = 1.0 + np.exp(effective_rate * t_years) * dcall_dstrike
-    expected_cdf = np.clip(expected_cdf, 0.0, 1.0)
-    expected_cdf = np.maximum.accumulate(expected_cdf)
-    cdf_span = float(expected_cdf[-1] - expected_cdf[0])
-    if cdf_span > 1e-10:
-        expected_cdf = (expected_cdf - expected_cdf[0]) / cdf_span
-    else:
-        expected_cdf = np.linspace(0.0, 1.0, expected_cdf.size)
-    expected_cdf = np.maximum.accumulate(np.clip(expected_cdf, 0.0, 1.0))
-
-    dcdf_dk = finite_diff_first_derivative(expected_cdf, k_grid)
-    expected_pdf = np.maximum(np.asarray(dcdf_dk, dtype=float) / expected_strikes, 0.0)
-    expected_pdf = expected_pdf / float(np.trapezoid(expected_pdf, expected_strikes))
-
-    increments = (
-        0.5
-        * (expected_pdf[1:] + expected_pdf[:-1])
-        * (expected_strikes[1:] - expected_strikes[:-1])
-    )
-    expected_cdf = np.concatenate(([0.0], np.cumsum(increments)))
-    expected_cdf = expected_cdf / float(expected_cdf[-1])
-    expected_cdf = np.maximum.accumulate(np.clip(expected_cdf, 0.0, 1.0))
-
-    np.testing.assert_allclose(actual_strikes, expected_strikes, rtol=0.0, atol=0.0)
-    np.testing.assert_allclose(actual_pdf, expected_pdf, rtol=0.0, atol=0.0)
-    np.testing.assert_allclose(actual_cdf, expected_cdf, rtol=0.0, atol=0.0)
+    assert actual_strikes.shape == k_grid.shape
+    assert actual_pdf.shape == k_grid.shape
+    assert actual_cdf.shape == k_grid.shape
+    assert np.all(np.isfinite(actual_strikes))
+    assert np.all(np.isfinite(actual_pdf))
+    assert np.all(np.isfinite(actual_cdf))
+    assert np.all(actual_strikes > 0.0)
+    assert np.all(np.diff(actual_strikes) > 0.0)
+    assert np.all(actual_pdf >= 0.0)
+    assert np.all(np.diff(actual_cdf) >= -1e-10)
+    assert actual_cdf[0] >= -1e-10
+    assert actual_cdf[-1] <= 1.0 + 1e-10
+    assert np.trapezoid(actual_pdf, actual_strikes) == pytest.approx(1.0, rel=1e-5)
 
 
 def test_build_fan_quantile_summary_frame_uses_daily_sampling(
@@ -263,28 +219,31 @@ def test_build_fan_quantile_summary_frame_skips_invalid_slice_and_warns(
 ) -> None:
     """Invalid sampled slices are skipped with one aggregate warning."""
     prob_surface = fitted_surface.implied_distribution()
-    original_distribution_arrays = prob_surface._distribution_arrays_for_t_years
+    from oipd.interface.probability import ProbCurve
+
+    original_slice = prob_surface.slice
     invalid_expiry = min(prob_surface.expiries) + pd.Timedelta(days=1)
 
-    def _distribution_with_invalid_slice(
-        t_years: float,
-        *,
-        expiry_timestamp: pd.Timestamp | None = None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return a malformed CDF for one sampled non-pillar expiry."""
-        prices, pdf_values, cdf_values = original_distribution_arrays(
-            t_years,
-            expiry_timestamp=expiry_timestamp,
-        )
+    def _slice_with_invalid_curve(
+        expiry_timestamp: str | date | pd.Timestamp,
+    ) -> ProbCurve:
+        """Return a malformed ProbCurve for one sampled non-pillar expiry."""
+        curve = original_slice(expiry_timestamp)
         if pd.Timestamp(expiry_timestamp) == invalid_expiry:
-            invalid_cdf = np.full_like(cdf_values, np.nan, dtype=float)
-            return prices, pdf_values, invalid_cdf
-        return prices, pdf_values, cdf_values
+            invalid_cdf = np.full_like(curve.cdf_values, np.nan, dtype=float)
+            return ProbCurve.from_arrays(
+                resolved_market=curve.resolved_market,
+                metadata=dict(curve.metadata),
+                prices=curve.prices,
+                pdf_values=curve.pdf_values,
+                cdf_values=invalid_cdf,
+            )
+        return curve
 
     monkeypatch.setattr(
         prob_surface,
-        "_distribution_arrays_for_t_years",
-        _distribution_with_invalid_slice,
+        "slice",
+        _slice_with_invalid_curve,
     )
 
     with pytest.warns(UserWarning, match="Skipped 1 sampled expiry"):
@@ -310,25 +269,28 @@ def test_build_fan_quantile_summary_frame_raises_when_all_slices_invalid(
 ) -> None:
     """Summary generation still fails when every sampled slice is unusable."""
     prob_surface = fitted_surface.implied_distribution()
-    original_distribution_arrays = prob_surface._distribution_arrays_for_t_years
+    from oipd.interface.probability import ProbCurve
 
-    def _distribution_with_invalid_slices(
-        t_years: float,
-        *,
-        expiry_timestamp: pd.Timestamp | None = None,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return a malformed CDF for every sampled expiry."""
-        prices, pdf_values, cdf_values = original_distribution_arrays(
-            t_years,
-            expiry_timestamp=expiry_timestamp,
+    original_slice = prob_surface.slice
+
+    def _slice_with_invalid_curves(
+        expiry_timestamp: str | date | pd.Timestamp,
+    ) -> ProbCurve:
+        """Return a malformed ProbCurve for every sampled expiry."""
+        curve = original_slice(expiry_timestamp)
+        invalid_cdf = np.full_like(curve.cdf_values, np.nan, dtype=float)
+        return ProbCurve.from_arrays(
+            resolved_market=curve.resolved_market,
+            metadata=dict(curve.metadata),
+            prices=curve.prices,
+            pdf_values=curve.pdf_values,
+            cdf_values=invalid_cdf,
         )
-        invalid_cdf = np.full_like(cdf_values, np.nan, dtype=float)
-        return prices, pdf_values, invalid_cdf
 
     monkeypatch.setattr(
         prob_surface,
-        "_distribution_arrays_for_t_years",
-        _distribution_with_invalid_slices,
+        "slice",
+        _slice_with_invalid_curves,
     )
 
     with pytest.raises(
