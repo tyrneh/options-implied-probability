@@ -12,7 +12,6 @@ import pandas as pd
 from oipd.core.errors import InvalidInputError
 from oipd.core.maturity import (
     SECONDS_PER_DAY,
-    build_maturity_metadata,
     normalize_datetime_like,
     resolve_maturity,
 )
@@ -22,13 +21,7 @@ from oipd.pipelines.utils.surface_export import (
     resolve_surface_export_expiries,
     validate_export_domain,
 )
-from oipd.core.probability_density_conversion import (
-    normalized_cdf_from_call_curve,
-    pdf_and_cdf_from_normalized_cdf,
-)
-from oipd.core.utils import resolve_risk_free_rate
-from oipd.market_inputs import Provenance, ResolvedMarket
-from oipd.pricing import black76_call_price
+from oipd.market_inputs import ResolvedMarket
 
 
 def quantile_from_cdf(
@@ -88,52 +81,6 @@ def _expiry_from_year_fraction(
     """
     seconds_to_expiry = float(t_years) * days_per_year * SECONDS_PER_DAY
     return valuation_timestamp + pd.to_timedelta(seconds_to_expiry, unit="s")
-
-
-def build_global_log_moneyness_grid(vol_surface: Any, *, points: int) -> np.ndarray:
-    """Build a unified log-moneyness grid shared across all fitted expiries.
-
-    Args:
-        vol_surface: Fitted volatility surface interface object.
-        points: Number of desired grid points.
-
-    Returns:
-        np.ndarray: Uniformly spaced log-moneyness grid.
-    """
-    k_min = np.inf
-    k_max = -np.inf
-
-    for expiry_timestamp in vol_surface.expiries:
-        slice_data = vol_surface._model.get_slice(expiry_timestamp)
-        metadata = slice_data.get("metadata", {})
-        chain = slice_data.get("chain")
-        forward_price = metadata.get("forward_price")
-
-        if (
-            chain is None
-            or "strike" not in chain.columns
-            or forward_price is None
-            or float(forward_price) <= 0.0
-        ):
-            continue
-
-        strikes = chain["strike"].to_numpy(dtype=float)
-        valid_mask = np.isfinite(strikes) & (strikes > 0.0)
-        if not np.any(valid_mask):
-            continue
-
-        log_moneyness = np.log(strikes[valid_mask] / float(forward_price))
-        k_min = min(k_min, float(np.nanmin(log_moneyness)))
-        k_max = max(k_max, float(np.nanmax(log_moneyness)))
-
-    if not np.isfinite(k_min) or not np.isfinite(k_max):
-        k_min, k_max = -1.25, 1.25
-    elif np.isclose(k_min, k_max):
-        k_min -= 0.25
-        k_max += 0.25
-
-    pad = 0.05 * (k_max - k_min)
-    return np.linspace(k_min - pad, k_max + pad, points)
 
 
 def resolve_surface_query_time(
@@ -201,59 +148,6 @@ def resolve_surface_query_time(
     return resolved_maturity.expiry, float(resolved_maturity.time_to_expiry_years)
 
 
-def derive_surface_distribution_at_t(
-    vol_surface: Any,
-    t_years: float,
-    *,
-    log_moneyness_grid: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Derive strike-grid PDF/CDF arrays for a given maturity.
-
-    Args:
-        vol_surface: Fitted volatility surface interface object.
-        t_years: Time to maturity in years.
-        log_moneyness_grid: Shared log-moneyness evaluation grid.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray, np.ndarray]: ``(strikes, pdf, cdf)``.
-    """
-    market = vol_surface._market
-    forward_price = float(vol_surface.forward_price(t_years))
-    strike_grid = forward_price * np.exp(log_moneyness_grid)
-
-    effective_rate = resolve_risk_free_rate(
-        market.risk_free_rate, market.risk_free_rate_mode, t_years
-    )
-    interpolator = vol_surface._interpolator
-    implied_vols = np.asarray(
-        interpolator.implied_vol(strike_grid, t_years), dtype=float
-    )
-    call_prices = np.asarray(
-        black76_call_price(
-            forward_price,
-            strike_grid,
-            implied_vols,
-            t_years,
-            effective_rate,
-        ),
-        dtype=float,
-    )
-
-    cdf_values = normalized_cdf_from_call_curve(
-        call_prices,
-        strike_grid,
-        log_moneyness_grid,
-        effective_rate=effective_rate,
-        time_to_expiry_years=t_years,
-    )
-    pdf_values, rebuilt_cdf_values = pdf_and_cdf_from_normalized_cdf(
-        cdf_values,
-        strike_grid,
-        log_moneyness_grid,
-    )
-    return np.asarray(strike_grid, dtype=float), pdf_values, rebuilt_cdf_values
-
-
 def derive_surface_slice_probability(
     vol_surface: Any,
     expiry: float | str | date | pd.Timestamp,
@@ -284,85 +178,6 @@ def derive_surface_slice_probability(
         points=points,
     )
     return resolved_market, metadata, prices, pdf_values, cdf_values
-
-
-def build_interpolated_resolved_market(
-    vol_surface: Any,
-    t_years: float,
-    *,
-    expiry_timestamp: pd.Timestamp | None = None,
-) -> ResolvedMarket:
-    """Build a synthetic resolved market snapshot for maturity ``t_years``.
-
-    Args:
-        vol_surface: Fitted volatility surface interface object.
-        t_years: Time to maturity in years.
-
-    Returns:
-        ResolvedMarket: Synthetic market snapshot aligned with ``t_years``.
-    """
-    market = vol_surface._market
-    valuation_timestamp = market.valuation_timestamp
-    if expiry_timestamp is None:
-        expiry_timestamp = _expiry_from_year_fraction(valuation_timestamp, t_years)
-    else:
-        expiry_timestamp = normalize_datetime_like(expiry_timestamp)
-    resolved_maturity = resolve_maturity(
-        expiry_timestamp,
-        valuation_timestamp,
-        floor_at_zero=False,
-    )
-    canonical_t_years = float(resolved_maturity.time_to_expiry_years)
-
-    return ResolvedMarket(
-        risk_free_rate=market.risk_free_rate,
-        underlying_price=float(vol_surface.forward_price(canonical_t_years)),
-        valuation_date=valuation_timestamp,
-        dividend_yield=market.dividend_yield,
-        dividend_schedule=None,
-        provenance=Provenance(price="user", dividends="none"),
-        source_meta={
-            "interpolated": True,
-            "expiry": resolved_maturity.expiry,
-            "time_to_expiry_years": canonical_t_years,
-            "risk_free_rate_mode": market.risk_free_rate_mode,
-        },
-    )
-
-
-def build_probcurve_metadata(
-    vol_surface: Any,
-    expiry_timestamp: pd.Timestamp,
-    t_years: float,
-) -> dict[str, Any]:
-    """Build metadata payload for a ``ProbSurface.slice(...)`` result.
-
-    Args:
-        vol_surface: Fitted volatility surface interface object.
-        expiry_timestamp: Requested expiry timestamp.
-        t_years: Time to expiry in years.
-
-    Returns:
-        dict[str, Any]: Metadata dictionary for ``ProbCurve.from_arrays``.
-    """
-    market = vol_surface._market
-    valuation_timestamp = market.valuation_timestamp
-    resolved_maturity = resolve_maturity(
-        expiry_timestamp,
-        valuation_timestamp,
-        floor_at_zero=False,
-    )
-    canonical_t_years = float(resolved_maturity.time_to_expiry_years)
-    is_pillar = resolved_maturity.expiry in vol_surface.expiries
-    return {
-        "interpolated": not is_pillar,
-        "method": "unified_surface_probability",
-        **build_maturity_metadata(resolved_maturity),
-        "forward_price": float(vol_surface.forward_price(canonical_t_years)),
-        "at_money_vol": float(vol_surface.atm_vol(canonical_t_years)),
-    }
-
-
 class _InvalidFanSliceError(ValueError):
     """Internal error for sampled fan slices that should be skipped."""
 
@@ -539,11 +354,7 @@ def build_surface_density_results_frame(
 
 __all__ = [
     "build_fan_quantile_summary_frame",
-    "build_global_log_moneyness_grid",
-    "build_interpolated_resolved_market",
     "build_surface_density_results_frame",
-    "build_probcurve_metadata",
-    "derive_surface_distribution_at_t",
     "derive_surface_slice_probability",
     "resolve_surface_query_time",
 ]
