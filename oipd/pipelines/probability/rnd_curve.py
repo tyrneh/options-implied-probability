@@ -13,6 +13,11 @@ from oipd.core.utils import (
     resolve_risk_free_rate,
 )
 from oipd.market_inputs import ResolvedMarket
+from oipd.pipelines.probability.models import (
+    CurveProbabilityDefinition,
+    DistributionSnapshot,
+    MaterializationSpec,
+)
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.pipelines.utils.surface_export import validate_export_domain
 from oipd.core.probability_density_conversion import (
@@ -24,7 +29,6 @@ from oipd.core.probability_density_conversion.finite_diff import (
     finite_diff_first_derivative,
 )
 from oipd.pricing.utils import prepare_dividends
-
 
 DEFAULT_PDF_MIN_STRIKE = 0.01
 DEFAULT_PDF_POINTS = 200
@@ -355,20 +359,24 @@ def resolve_pdf_domain(
             float(post_iv_survival_domain[1]),
         )
     default_domain = vol_metadata.get("default_domain")
-    minimum_required_upper = max(
-        float(domain_upper)
-        for domain_upper in (
-            raw_observed_domain[1] if raw_observed_domain is not None else None,
-            observed_domain[1] if observed_domain is not None else None,
+    minimum_required_upper = (
+        max(
+            float(domain_upper)
+            for domain_upper in (
+                raw_observed_domain[1] if raw_observed_domain is not None else None,
+                observed_domain[1] if observed_domain is not None else None,
+            )
+            if domain_upper is not None
         )
-        if domain_upper is not None
-    ) if any(
-        domain_candidate is not None
-        for domain_candidate in (
-            raw_observed_domain,
-            observed_domain,
+        if any(
+            domain_candidate is not None
+            for domain_candidate in (
+                raw_observed_domain,
+                observed_domain,
+            )
         )
-    ) else None
+        else None
+    )
     initial_upper, default_lower = _initial_pdf_upper_bound(
         resolved_market,
         vol_metadata,
@@ -424,10 +432,9 @@ def resolve_pdf_domain(
                 )
             else:
                 added_mass_last_expansion = 0.0
-        meets_required_upper = (
-            minimum_required_upper is None
-            or resolved_domain[1] >= float(minimum_required_upper)
-        )
+        meets_required_upper = minimum_required_upper is None or resolved_domain[
+            1
+        ] >= float(minimum_required_upper)
         if previous_upper is not None:
             if (
                 tail_mass_beyond_upper <= tail_mass_tolerance
@@ -688,6 +695,37 @@ def derive_distribution_from_curve(
     metadata.update(domain_metadata)
 
     return pdf_prices, pdf_values, cdf_values, metadata
+
+
+def materialize_distribution_from_definition(
+    definition: CurveProbabilityDefinition,
+    spec: MaterializationSpec | None = None,
+) -> DistributionSnapshot:
+    """Materialize a lazy curve probability definition into arrays.
+
+    Args:
+        definition: Frozen single-expiry probability recipe.
+        spec: Optional materialization policy. When omitted, the definition's
+            native policy is used.
+
+    Returns:
+        DistributionSnapshot: Native price, PDF, CDF, and metadata snapshot.
+    """
+    materialization_spec = spec or definition.native_spec
+    prices, pdf_values, cdf_values, metadata = derive_distribution_from_curve(
+        definition.vol_curve,
+        definition.resolved_market,
+        pricing_engine=definition.pricing_engine,
+        vol_metadata=definition.vol_metadata,
+        domain=materialization_spec.domain,
+        points=materialization_spec.points,
+    )
+    return DistributionSnapshot(
+        prices=prices,
+        pdf_values=pdf_values,
+        cdf_values=cdf_values,
+        metadata=metadata,
+    )
 
 
 def build_density_results_frame(

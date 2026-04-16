@@ -60,7 +60,6 @@ from oipd.market_inputs import (
 )
 from oipd.pipelines.vol_curve import fit_vol_curve_internal, compute_fitted_smile
 from oipd.pipelines.probability import (
-    derive_distribution_from_curve,
     resolve_surface_query_time,
 )
 from oipd.pipelines.vol_surface import fit_surface
@@ -693,24 +692,9 @@ class VolCurve:
         if is_interpolated and self._resolved_market is None:
             raise ValueError("Interpolated slice missing resolved market parameters")
 
-        # Delegate to the stateless pipeline
-        prices, pdf, cdf, metadata = derive_distribution_from_curve(
-            self._vol_curve,
-            self._resolved_market,
-            pricing_engine=self.pricing_engine,
-            vol_metadata=self._metadata,
-        )
-
-        # Return Result Container
         from oipd.interface.probability import ProbCurve
 
-        return ProbCurve(
-            self,
-            metadata=metadata,
-            prices=prices,
-            pdf_values=pdf,
-            cdf_values=cdf,
-        )
+        return ProbCurve._from_vol_curve(self)
 
     def price(
         self,

@@ -17,14 +17,22 @@ from oipd.pipelines.probability import (
     build_density_results_frame,
     build_fan_quantile_summary_frame,
     build_surface_density_results_frame,
-    derive_distribution_from_curve,
     quantile_from_cdf,
     resolve_surface_query_time,
 )
-from oipd.pipelines.probability.rnd_surface import derive_surface_slice_probability
+from oipd.pipelines.probability.rnd_curve import (
+    materialize_distribution_from_definition,
+)
+from oipd.pipelines.probability.models import (
+    CurveProbabilityDefinition,
+    DistributionSnapshot,
+    MaterializationSpec,
+    SurfaceProbabilityDefinition,
+)
 
 if TYPE_CHECKING:
     from oipd.market_inputs import MarketInputs
+    from oipd.interface.volatility import VolCurve
     from oipd.interface.volatility import VolSurface
 
 
@@ -62,24 +70,96 @@ class ProbCurve:
                 "ProbCurve requires either a fitted vol_curve or resolved_market."
             )
 
-        self._vol_curve = vol_curve
-        if vol_curve is not None:
-            self._resolved_market = vol_curve.resolved_market
-            self._metadata = metadata or vol_curve._metadata or {}
-        else:
+        has_arrays = (
+            prices is not None or pdf_values is not None or cdf_values is not None
+        )
+        if has_arrays and (prices is None or pdf_values is None or cdf_values is None):
+            raise ValueError(
+                "Array-backed ProbCurve construction requires prices, pdf_values, "
+                "and cdf_values."
+            )
+
+        self._native_spec: MaterializationSpec = MaterializationSpec(points=200)
+        self._definition: CurveProbabilityDefinition | None = None
+        self._native_snapshot: DistributionSnapshot | None = None
+        self._resolved_market: ResolvedMarket | None = None
+        self._metadata: dict[str, Any] = {}
+
+        if has_arrays:
+            if vol_curve is not None:
+                self._resolved_market = vol_curve.resolved_market
+                snapshot_metadata = metadata or vol_curve._metadata or {}
+            else:
+                self._resolved_market = resolved_market
+                snapshot_metadata = metadata or {}
+            self._native_snapshot = DistributionSnapshot(
+                prices=np.asarray(prices, dtype=float),
+                pdf_values=np.asarray(pdf_values, dtype=float),
+                cdf_values=np.asarray(cdf_values, dtype=float),
+                metadata=snapshot_metadata,
+            )
+            self._metadata = self._native_snapshot.metadata
+            return
+
+        if vol_curve is None:
             self._resolved_market = resolved_market
             self._metadata = metadata or {}
+            return
 
-        # Cached grid values (lazy-loaded on property access)
-        self._cached_prices: Optional[np.ndarray] = (
-            np.asarray(prices, dtype=float) if prices is not None else None
+        self._definition = CurveProbabilityDefinition.from_vol_curve(
+            vol_curve,
+            native_spec=self._native_spec,
+            metadata=metadata,
         )
-        self._cached_pdf: Optional[np.ndarray] = (
-            np.asarray(pdf_values, dtype=float) if pdf_values is not None else None
+        self._resolved_market = self._definition.resolved_market
+        self._metadata = self._definition.vol_metadata
+
+    @classmethod
+    def _from_definition(
+        cls,
+        definition: CurveProbabilityDefinition,
+    ) -> "ProbCurve":
+        """Build a lazy ProbCurve from an internal probability definition.
+
+        Args:
+            definition: Frozen single-expiry probability recipe.
+
+        Returns:
+            ProbCurve: Lazy probability curve backed by ``definition``.
+        """
+        instance = cls.__new__(cls)
+        instance._native_spec = definition.native_spec
+        instance._definition = definition
+        instance._native_snapshot = None
+        instance._resolved_market = definition.resolved_market
+        instance._metadata = definition.vol_metadata
+        return instance
+
+    @classmethod
+    def _from_vol_curve(
+        cls,
+        vol_curve: Any,
+        *,
+        native_spec: MaterializationSpec | None = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> "ProbCurve":
+        """Build a lazy ProbCurve from a fitted VolCurve using an internal spec.
+
+        Args:
+            vol_curve: Fitted public VolCurve object.
+            native_spec: Internal native materialization policy. When omitted,
+                the public default policy is used.
+            metadata: Optional metadata override.
+
+        Returns:
+            ProbCurve: Lazy probability curve for the fitted volatility curve.
+        """
+        definition = CurveProbabilityDefinition.from_vol_curve(
+            vol_curve,
+            native_spec=native_spec or MaterializationSpec(points=200),
+            metadata=metadata,
         )
-        self._cached_cdf: Optional[np.ndarray] = (
-            np.asarray(cdf_values, dtype=float) if cdf_values is not None else None
-        )
+        return cls._from_definition(definition)
 
     @classmethod
     def from_arrays(
@@ -140,39 +220,37 @@ class ProbCurve:
             ValueError: If the chain contains multiple expiries or invalid expiry values.
             CalculationError: If the underlying volatility calibration fails.
         """
-        from oipd import VolCurve
+        from oipd.interface.volatility import VolCurve
 
         vol_curve = VolCurve(method="svi", max_staleness_days=max_staleness_days)
         vol_curve.fit(chain, market, column_mapping=column_mapping)
-        return vol_curve.implied_distribution()
+        return ProbCurve._from_vol_curve(vol_curve)
 
-    def _ensure_grid_generated(self) -> None:
-        """Lazily generate a default evaluation grid for array properties and plotting.
+    def _materialize_native_distribution(self) -> DistributionSnapshot:
+        """Return the native distribution snapshot, materializing it if needed.
 
-        Delegates to the stateless pipeline to generate a standard grid
-        (based on ATM forward and time to expiry) if one hasn't been cached yet.
-        This allows ``.pdf_values`` and ``.plot()`` to be used without providing explicit ranges.
+        Returns:
+            DistributionSnapshot: Cached native probability arrays and metadata.
+
+        Raises:
+            ValueError: If no fitted volatility definition is available.
         """
-        if (
-            self._cached_prices is not None
-            and self._cached_pdf is not None
-            and self._cached_cdf is not None
-        ):
-            return
+        if self._native_snapshot is not None:
+            return self._native_snapshot
 
-        if self._vol_curve is None:
+        if self._definition is None:
             raise ValueError("Probability arrays are unavailable for this curve.")
 
-        prices, pdf, cdf, _ = derive_distribution_from_curve(
-            self._vol_curve,
-            self._resolved_market,
-            pricing_engine=self._vol_curve.pricing_engine,
-            vol_metadata=self._metadata,
+        self._native_snapshot = materialize_distribution_from_definition(
+            self._definition,
+            self._native_spec,
         )
+        self._metadata = self._native_snapshot.metadata
+        return self._native_snapshot
 
-        self._cached_prices = prices
-        self._cached_pdf = pdf
-        self._cached_cdf = cdf
+    def _ensure_grid_generated(self) -> None:
+        """Lazily generate and cache the native probability snapshot."""
+        self._materialize_native_distribution()
 
     def _require_cached_distribution_arrays(
         self,
@@ -185,14 +263,8 @@ class ProbCurve:
         Raises:
             ValueError: If the cached arrays remain unavailable after initialization.
         """
-        self._ensure_grid_generated()
-        if (
-            self._cached_prices is None
-            or self._cached_pdf is None
-            or self._cached_cdf is None
-        ):
-            raise ValueError("Probability arrays are unavailable for this curve.")
-        return self._cached_prices, self._cached_pdf, self._cached_cdf
+        snapshot = self._materialize_native_distribution()
+        return snapshot.prices, snapshot.pdf_values, snapshot.cdf_values
 
     def pdf(self, price: float | np.ndarray) -> float | np.ndarray:
         """Evaluate the Probability Density Function (PDF) at the given price level(s).
@@ -398,7 +470,7 @@ class ProbCurve:
             dict[str, Any]: Metadata dictionary.
         """
 
-        return self._metadata
+        return self._materialize_native_distribution().metadata
 
     def density_results(
         self,
@@ -452,12 +524,15 @@ class ProbCurve:
         Returns:
             matplotlib.figure.Figure: The plot figure.
         """
-        underlying_price = self._resolved_market.underlying_price
+        resolved_market = self.resolved_market
+        metadata = self.metadata or {}
+
+        underlying_price = resolved_market.underlying_price
         valuation_date = format_timestamp_for_display(
-            self._resolved_market.valuation_timestamp
+            resolved_market.valuation_timestamp
         )
 
-        expiry_raw = self._metadata.get("expiry")
+        expiry_raw = metadata.get("expiry")
         expiry_date = (
             format_timestamp_for_display(expiry_raw) if expiry_raw is not None else None
         )
@@ -466,7 +541,7 @@ class ProbCurve:
         if xlim is not None:
             # Generate dynamic grid based on xlim
             grid_prices = np.linspace(xlim[0], xlim[1], points)
-            grid_pdf = self.pdf(grid_prices)
+            grid_pdf = np.asarray(self.pdf(grid_prices), dtype=float)
             grid_cdf = np.array(
                 [self.prob_below(p) for p in grid_prices]
             )  # list comp for scalar cdf
@@ -505,8 +580,10 @@ class ProbSurface:
 
         Args:
             vol_surface: Fitted volatility surface used as the canonical source.
-            grid_points: Number of native probability-grid points requested for
-                each cached slice.
+            grid_points: Native materialization grid size for each cached slice.
+                Defaults to 200, aligned with ``ProbCurve``. Export
+                ``density_results(points=...)`` controls downstream resampling,
+                not this native grid.
 
         Raises:
             ValueError: If ``vol_surface`` has not been fitted.
@@ -523,8 +600,13 @@ class ProbSurface:
         if grid_points < 5:
             raise ValueError("grid_points must be at least 5 for finite differences.")
 
-        self._vol_surface = vol_surface
-        self._market = vol_surface._market
+        native_spec = MaterializationSpec(points=int(grid_points))
+        self._definition = SurfaceProbabilityDefinition.from_vol_surface(
+            vol_surface,
+            native_spec=native_spec,
+        )
+        self._vol_surface = self._definition.vol_surface
+        self._market = self._vol_surface._market
         self._valuation_timestamp = self._market.valuation_timestamp
         self._grid_points = int(grid_points)
         self._curve_cache: dict[int, ProbCurve] = {}
@@ -605,26 +687,23 @@ class ProbSurface:
         if cache_key in self._curve_cache:
             return self._curve_cache[cache_key]
 
-        (
-            resolved_market,
-            metadata,
-            prices,
-            pdf_values,
-            cdf_values,
-        ) = derive_surface_slice_probability(
-            self._vol_surface,
-            expiry_timestamp,
-            points=self._grid_points,
-        )
-        curve = ProbCurve.from_arrays(
-            resolved_market=resolved_market,
-            metadata=metadata,
-            prices=prices,
-            pdf_values=pdf_values,
-            cdf_values=cdf_values,
+        vol_curve = self._vol_surface.slice(pd.Timestamp(expiry_timestamp))
+        curve = ProbCurve._from_vol_curve(
+            vol_curve,
+            native_spec=self._definition.native_spec,
         )
         self._curve_cache[cache_key] = curve
         return curve
+
+    def _evict_transient_cache_entries(self, preserved_keys: set[int]) -> None:
+        """Remove cache entries created by bulk exports or fan plotting.
+
+        Args:
+            preserved_keys: Cache keys that existed before the bulk operation.
+        """
+        for cache_key in list(self._curve_cache):
+            if cache_key not in preserved_keys:
+                self._curve_cache.pop(cache_key, None)
 
     @classmethod
     def from_chain(
@@ -665,7 +744,7 @@ class ProbSurface:
                 f"got {failure_policy!r}."
             )
 
-        from oipd import VolSurface
+        from oipd.interface.volatility import VolSurface
 
         vol_surface = VolSurface(method="svi", max_staleness_days=max_staleness_days)
         vol_surface.fit(
@@ -674,7 +753,7 @@ class ProbSurface:
             column_mapping=column_mapping,
             failure_policy=failure_policy,
         )
-        return vol_surface.implied_distribution()
+        return ProbSurface(vol_surface=vol_surface)
 
     def slice(self, expiry: str | date | pd.Timestamp) -> ProbCurve:
         """Return a ProbCurve for the requested maturity.
@@ -701,7 +780,7 @@ class ProbSurface:
     @property
     def expiries(self) -> tuple[pd.Timestamp, ...]:
         """Return fitted expiries available on the probability surface."""
-        return self._vol_surface.expiries
+        return self._definition.expiries
 
     def pdf(
         self,
@@ -814,14 +893,18 @@ class ProbSurface:
         Returns:
             DataFrame with columns ``expiry``, ``price``, ``pdf``, and ``cdf``.
         """
-        return build_surface_density_results_frame(
-            self,
-            domain=domain,
-            points=points,
-            start=start,
-            end=end,
-            step_days=step_days,
-        )
+        preserved_keys = set(self._curve_cache)
+        try:
+            return build_surface_density_results_frame(
+                self,
+                domain=domain,
+                points=points,
+                start=start,
+                end=end,
+                step_days=step_days,
+            )
+        finally:
+            self._evict_transient_cache_entries(preserved_keys)
 
     def plot_fan(
         self,
@@ -844,7 +927,11 @@ class ProbSurface:
         """
         if len(self.expiries) == 0:
             raise ValueError("Call fit before plotting the probability surface")
-        summary_frame = build_fan_quantile_summary_frame(self)
+        preserved_keys = set(self._curve_cache)
+        try:
+            summary_frame = build_fan_quantile_summary_frame(self)
+        finally:
+            self._evict_transient_cache_entries(preserved_keys)
 
         return plot_probability_summary(
             summary_frame,

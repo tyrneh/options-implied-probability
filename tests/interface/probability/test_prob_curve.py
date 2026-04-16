@@ -12,6 +12,68 @@ import pandas as pd
 from datetime import date
 
 from oipd.core.maturity import resolve_maturity
+from oipd.pipelines.probability import derive_distribution_from_curve, quantile_from_cdf
+
+
+def _derive_direct_probability_arrays(vol_curve):
+    """Derive probability arrays through the stateless pipeline.
+
+    Args:
+        vol_curve: Fitted public VolCurve object.
+
+    Returns:
+        tuple: Direct ``prices``, ``pdf_values``, ``cdf_values``, and metadata.
+    """
+    return derive_distribution_from_curve(
+        vol_curve._vol_curve,
+        vol_curve.resolved_market,
+        pricing_engine=vol_curve.pricing_engine,
+        vol_metadata=vol_curve._metadata,
+    )
+
+
+def _build_repriced_single_expiry_chain(
+    template_chain,
+    market_inputs,
+    call_prices,
+):
+    """Build a same-expiry chain with repriced calls and parity-derived puts.
+
+    Args:
+        template_chain: Existing single-expiry option chain.
+        market_inputs: Market inputs aligned with the template chain.
+        call_prices: New call mid prices ordered by ascending strike.
+
+    Returns:
+        pd.DataFrame: Repriced option chain preserving the original expiry.
+    """
+    call_mask = template_chain["option_type"].astype(str).str.upper().str[0] == "C"
+    calls = (
+        template_chain.loc[call_mask]
+        .sort_values("strike")
+        .reset_index(drop=True)
+        .copy()
+    )
+    calls["last_price"] = np.asarray(call_prices, dtype=float)
+    calls["bid"] = calls["last_price"] - 0.25
+    calls["ask"] = calls["last_price"] + 0.25
+
+    expiry = pd.Timestamp(calls["expiry"].iloc[0])
+    valuation_date = pd.Timestamp(market_inputs.valuation_date)
+    time_to_expiry_years = (expiry - valuation_date).days / 365.0
+    discount_factor = np.exp(-market_inputs.risk_free_rate * time_to_expiry_years)
+
+    puts = calls.copy()
+    puts["option_type"] = "P"
+    for price_column in ("last_price", "bid", "ask"):
+        puts[price_column] = (
+            calls[price_column]
+            - market_inputs.underlying_price
+            + calls["strike"] * discount_factor
+        ).abs()
+
+    return pd.concat([calls, puts], ignore_index=True)
+
 
 # =============================================================================
 # Fixtures
@@ -119,6 +181,145 @@ def fitted_vol_curve(single_expiry_chain, market_inputs):
 def prob_curve(fitted_vol_curve):
     """A ProbCurve derived from a fitted VolCurve."""
     return fitted_vol_curve.implied_distribution()
+
+
+# =============================================================================
+# ProbCurve Lazy Materialization Tests
+# =============================================================================
+
+
+class TestProbCurveLazyMaterialization:
+    """Characterization tests for lazy ProbCurve materialization."""
+
+    def test_implied_distribution_waits_until_probability_access(
+        self,
+        fitted_vol_curve,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """VolCurve.implied_distribution() should not materialize arrays eagerly."""
+        import oipd.interface.probability as probability_interface
+
+        materialization_calls = 0
+        original_materializer = (
+            probability_interface.materialize_distribution_from_definition
+        )
+
+        def counting_materializer(*args, **kwargs):
+            """Count native materializations while preserving behavior."""
+            nonlocal materialization_calls
+            materialization_calls += 1
+            return original_materializer(*args, **kwargs)
+
+        monkeypatch.setattr(
+            probability_interface,
+            "materialize_distribution_from_definition",
+            counting_materializer,
+        )
+
+        prob_curve = fitted_vol_curve.implied_distribution()
+        assert materialization_calls == 0
+
+        _ = prob_curve.resolved_market
+        assert materialization_calls == 0
+
+        _ = prob_curve.pdf(100.0)
+        assert materialization_calls == 1
+
+        _ = prob_curve.pdf_values
+        _ = prob_curve.cdf_values
+        _ = prob_curve.density_results()
+        assert materialization_calls == 1
+
+    def test_lazy_probcurve_matches_direct_pipeline_results(self, fitted_vol_curve):
+        """Lazy ProbCurve arrays and queries should match direct derivation."""
+        expected_prices, expected_pdf, expected_cdf, _ = (
+            _derive_direct_probability_arrays(fitted_vol_curve)
+        )
+        prob_curve = fitted_vol_curve.implied_distribution()
+
+        np.testing.assert_allclose(prob_curve.prices, expected_prices)
+        np.testing.assert_allclose(prob_curve.pdf_values, expected_pdf)
+        np.testing.assert_allclose(prob_curve.cdf_values, expected_cdf)
+
+        sample_indices = np.linspace(0, len(expected_prices) - 1, num=5, dtype=int)
+        sample_prices = expected_prices[sample_indices]
+        np.testing.assert_allclose(
+            prob_curve.pdf(sample_prices),
+            expected_pdf[sample_indices],
+        )
+        np.testing.assert_allclose(
+            [prob_curve.prob_below(float(price)) for price in sample_prices],
+            np.interp(
+                sample_prices, expected_prices, np.maximum.accumulate(expected_cdf)
+            ),
+        )
+        assert prob_curve.quantile(0.1) == pytest.approx(
+            quantile_from_cdf(expected_prices, expected_cdf, 0.1)
+        )
+        assert prob_curve.quantile(0.5) == pytest.approx(
+            quantile_from_cdf(expected_prices, expected_cdf, 0.5)
+        )
+        assert prob_curve.quantile(0.9) == pytest.approx(
+            quantile_from_cdf(expected_prices, expected_cdf, 0.9)
+        )
+        assert prob_curve.mean() == pytest.approx(
+            np.trapezoid(expected_prices * expected_pdf, expected_prices)
+        )
+        expected_mean = np.trapezoid(expected_prices * expected_pdf, expected_prices)
+        assert prob_curve.variance() == pytest.approx(
+            np.trapezoid(
+                ((expected_prices - expected_mean) ** 2) * expected_pdf,
+                expected_prices,
+            )
+        )
+
+    def test_probcurve_snapshot_survives_parent_volcurve_refit(
+        self,
+        single_expiry_chain,
+        market_inputs,
+    ):
+        """Existing ProbCurve should not change after its source VolCurve is refit."""
+        from oipd import VolCurve
+
+        vol_curve = VolCurve(pricing_engine="bs")
+        vol_curve.fit(single_expiry_chain, market_inputs)
+        expected_prices, expected_pdf, expected_cdf, _ = (
+            _derive_direct_probability_arrays(vol_curve)
+        )
+
+        prob_curve = vol_curve.implied_distribution()
+
+        refit_chain = _build_repriced_single_expiry_chain(
+            single_expiry_chain,
+            market_inputs,
+            call_prices=[13.5, 9.4, 6.2, 3.8, 2.0],
+        )
+        vol_curve.fit(refit_chain, market_inputs)
+        _, refit_pdf, _, _ = _derive_direct_probability_arrays(vol_curve)
+        assert not np.allclose(refit_pdf, expected_pdf, rtol=1e-8, atol=1e-10)
+
+        np.testing.assert_allclose(prob_curve.prices, expected_prices)
+        np.testing.assert_allclose(prob_curve.pdf_values, expected_pdf)
+        np.testing.assert_allclose(prob_curve.cdf_values, expected_cdf)
+
+    def test_domain_export_before_native_access_is_downstream_resampling_only(
+        self,
+        fitted_vol_curve,
+    ):
+        """Explicit export domains should not replace the lazy native support."""
+        expected_prices, expected_pdf, expected_cdf, _ = (
+            _derive_direct_probability_arrays(fitted_vol_curve)
+        )
+        prob_curve = fitted_vol_curve.implied_distribution()
+
+        result = prob_curve.density_results(domain=(85.0, 115.0), points=11)
+
+        assert len(result) == 11
+        assert result["price"].iloc[0] == pytest.approx(85.0)
+        assert result["price"].iloc[-1] == pytest.approx(115.0)
+        np.testing.assert_allclose(prob_curve.prices, expected_prices)
+        np.testing.assert_allclose(prob_curve.pdf_values, expected_pdf)
+        np.testing.assert_allclose(prob_curve.cdf_values, expected_cdf)
 
 
 # =============================================================================

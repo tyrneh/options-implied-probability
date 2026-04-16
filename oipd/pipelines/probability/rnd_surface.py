@@ -178,6 +178,8 @@ def derive_surface_slice_probability(
         points=points,
     )
     return resolved_market, metadata, prices, pdf_values, cdf_values
+
+
 class _InvalidFanSliceError(ValueError):
     """Internal error for sampled fan slices that should be skipped."""
 

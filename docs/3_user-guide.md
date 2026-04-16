@@ -242,3 +242,5 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Visualization (2D)** | `plot(kind=...)` | PDF/CDF plot for one expiry. | `plot_fan()` | Fixed multi-band fan chart over expiries with four shaded bands, a dashed median, and dots at fitted expiry pillars. |
 | **Metadata / Expiries** | `resolved_market`, `metadata` | Market snapshot + fit metadata. | `expiries` | Available expiry dates. |
 | **Slicing** | | | `slice(expiry)` | Extract a `ProbCurve` snapshot. |
+
+`ProbSurface` uses `grid_points=200` by default for the native materialization grid of each cached slice, aligned with `ProbCurve`. This grid controls stored `prices`, `pdf_values`, and `cdf_values`; `density_results(points=...)` only controls downstream export/resampling resolution.
