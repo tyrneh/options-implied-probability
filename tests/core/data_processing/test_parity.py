@@ -206,6 +206,37 @@ class TestApplyPutCallParity:
         strike_100 = result[result["strike"] == 100]
         assert strike_100["source"].iloc[0] == "put_converted"
 
+    def test_parity_preserves_lowercase_volume(self, balanced_options_data):
+        """Test parity output retains volume for downstream SVI weighting."""
+        forward_price = 100.0
+        discount_factor = 0.99
+        balanced_options_data = balanced_options_data.copy()
+        balanced_options_data["volume"] = [10, 20, 30, 40, 50, 60]
+
+        result = apply_put_call_parity_to_quotes(
+            balanced_options_data, forward_price, discount_factor
+        )
+
+        assert "volume" in result.columns
+        assert "Volume" not in result.columns
+        assert result.loc[result["strike"] == 95, "volume"].iloc[0] == 20
+        assert result.loc[result["strike"] == 105, "volume"].iloc[0] == 50
+
+    def test_parity_ignores_legacy_capitalized_volume(self, balanced_options_data):
+        """Test legacy ``Volume`` input is not treated as canonical volume."""
+        forward_price = 100.0
+        discount_factor = 0.99
+        balanced_options_data = balanced_options_data.copy()
+        balanced_options_data["Volume"] = [10, 20, 30, 40, 50, 60]
+
+        result = apply_put_call_parity_to_quotes(
+            balanced_options_data, forward_price, discount_factor
+        )
+
+        assert "Volume" not in result.columns
+        assert "volume" in result.columns
+        assert result["volume"].isna().all()
+
 
 class TestPreprocessWithParity:
     """Test the main preprocessing entry point."""

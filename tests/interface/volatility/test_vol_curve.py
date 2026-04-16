@@ -428,6 +428,22 @@ class TestVolCurveImpliedDistribution:
         prob = vc.implied_distribution()
         assert np.all(prob.pdf_values >= 0)
 
+    def test_implied_distribution_grid_points_controls_native_resolution(
+        self,
+        sample_option_chain,
+        market_inputs,
+    ):
+        """grid_points controls native probability materialization resolution."""
+        from oipd import VolCurve
+
+        vc = VolCurve()
+        vc.fit(sample_option_chain, market_inputs)
+        prob = vc.implied_distribution(grid_points=500)
+
+        assert len(prob.prices) == 500
+        assert prob.metadata["native_grid_policy"] == "fixed"
+        assert prob.metadata["native_grid_points"] == 500
+
 
 # =============================================================================
 # VolCurve.diagnostics Tests

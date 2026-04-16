@@ -311,15 +311,15 @@ def build_surface_density_results_frame(
     start: str | date | pd.Timestamp | None = None,
     end: str | date | pd.Timestamp | None = None,
     step_days: int | None = 1,
+    full_domain: bool = False,
 ) -> pd.DataFrame:
     """Build a long-format density export DataFrame for a probability surface.
 
     Args:
         prob_surface: Probability surface interface object.
         domain: Optional export domain as ``(min_price, max_price)``.
-        points: Number of resampled grid points when ``domain`` is set.
-            Ignored when ``domain`` is omitted and the native slice grids are
-            returned unchanged.
+        points: Number of resampled grid points for compact or explicit-domain
+            exports. Ignored when ``full_domain`` returns native arrays exactly.
         start: Optional lower expiry bound. If omitted, the export starts at
             the first fitted pillar expiry.
         end: Optional upper expiry bound. If omitted, the export ends at the
@@ -327,6 +327,8 @@ def build_surface_density_results_frame(
         step_days: Calendar-day sampling interval. Defaults to ``1`` so the
             export includes a daily grid while still preserving all fitted
             pillar expiries. Use ``None`` to export fitted pillars only.
+        full_domain: If ``True`` and ``domain`` is omitted, each slice exports
+            its native full-domain arrays exactly.
 
     Returns:
         Long DataFrame with columns ``expiry``, ``price``, ``pdf``, and ``cdf``.
@@ -347,6 +349,7 @@ def build_surface_density_results_frame(
         frame = curve.density_results(
             domain=domain,
             points=points,
+            full_domain=full_domain,
         )
         frame.insert(0, "expiry", pd.Timestamp(expiry_timestamp))
         frames.append(frame)

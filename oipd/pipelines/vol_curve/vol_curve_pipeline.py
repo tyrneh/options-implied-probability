@@ -170,12 +170,7 @@ def fit_vol_curve_internal(
     strikes = options_with_iv["strike"].to_numpy(dtype=float)
     ivs = options_with_iv["iv"].to_numpy(dtype=float)
 
-    # Extract volume array if available
-    volume_array: np.ndarray | None = None
-    if "volume" in options_with_iv.columns:
-        volume_array = options_with_iv["volume"].to_numpy(dtype=float)
-        if not np.isfinite(volume_array).any() or np.all(volume_array <= 0):
-            volume_array = None
+    volume_array = _extract_volume_array(options_with_iv)
 
     # 8. Compute observed bid/ask/last IVs for plotting AND for SVI calibration
     observed_bid_iv = _compute_observed_iv(
@@ -313,6 +308,29 @@ def _compute_observed_iv(
     if "option_type" in iv_df.columns:
         columns.append("option_type")
     return iv_df.loc[:, columns]
+
+
+def _extract_volume_array(options_with_iv: pd.DataFrame) -> Optional[np.ndarray]:
+    """Return valid per-strike volume values for SVI weighting.
+
+    Args:
+        options_with_iv: IV-ready options data after parity preprocessing and
+            price selection.
+
+    Returns:
+        Optional volume array aligned with ``options_with_iv`` rows. Returns
+        ``None`` when no positive finite volume information is available.
+    """
+
+    if "volume" not in options_with_iv.columns:
+        return None
+
+    volume_array = pd.to_numeric(options_with_iv["volume"], errors="coerce").to_numpy(
+        dtype=float
+    )
+    if not np.isfinite(volume_array).any() or np.all(volume_array <= 0):
+        return None
+    return volume_array
 
 
 def compute_fitted_smile(

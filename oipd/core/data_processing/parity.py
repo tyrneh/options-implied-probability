@@ -489,10 +489,10 @@ def _extract_last_price(option_row: pd.Series) -> float:
 
 
 def _extract_volume(option_row: pd.Series) -> float:
-    """Extract volume from an option row, ignoring column casing.
+    """Extract volume from an option row.
 
     Args:
-        option_row: Row potentially containing ``Volume`` or ``volume`` columns.
+        option_row: Row potentially containing the canonical ``volume`` column.
 
     Returns:
         Volume if present; otherwise ``np.nan``.
@@ -500,9 +500,8 @@ def _extract_volume(option_row: pd.Series) -> float:
     if option_row is None:
         return float("nan")
     try:
-        for key in ("Volume", "volume"):
-            if key in option_row and pd.notna(option_row[key]):
-                return float(option_row[key])
+        if "volume" in option_row and pd.notna(option_row["volume"]):
+            return float(option_row["volume"])
     except Exception:
         return float("nan")
     return float("nan")
@@ -595,7 +594,7 @@ def _process_strike_prices(
             "bid": final_bid,
             "ask": final_ask,
             "source": source,
-            "Volume": volume,
+            "volume": volume,
         }
     )
 

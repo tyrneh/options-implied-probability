@@ -62,6 +62,13 @@ dev = [
     "build>=1.0.0",
 ]
 
+# Experiment runners and YAML-based reproducibility configs
+experiments = [
+    "PyYAML>=6.0",
+    "Pillow>=10.0.0",
+    "pyarrow>=15.0.0",
+]
+
 
 
 [project.urls]

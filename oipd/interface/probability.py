@@ -79,7 +79,7 @@ class ProbCurve:
                 "and cdf_values."
             )
 
-        self._native_spec: MaterializationSpec = MaterializationSpec(points=200)
+        self._native_spec: MaterializationSpec = MaterializationSpec(points=None)
         self._definition: CurveProbabilityDefinition | None = None
         self._native_snapshot: DistributionSnapshot | None = None
         self._resolved_market: ResolvedMarket | None = None
@@ -156,7 +156,7 @@ class ProbCurve:
         """
         definition = CurveProbabilityDefinition.from_vol_curve(
             vol_curve,
-            native_spec=native_spec or MaterializationSpec(points=200),
+            native_spec=native_spec or MaterializationSpec(points=None),
             metadata=metadata,
         )
         return cls._from_definition(definition)
@@ -476,6 +476,8 @@ class ProbCurve:
         self,
         domain: tuple[float, float] | None = None,
         points: int = 200,
+        *,
+        full_domain: bool = False,
     ) -> pd.DataFrame:
         """Return a DataFrame view of the fitted probability density.
 
@@ -484,19 +486,25 @@ class ProbCurve:
                 When provided, the native cached distribution is resampled onto
                 this range. This does not change the upstream PDF domain chosen
                 during implied-distribution construction.
-            points: Number of resampled points when ``domain`` is set. Ignored
-                when ``domain`` is omitted and the native fitted grid is used.
+            points: Number of resampled points for compact or explicit-domain
+                exports. Ignored when ``full_domain`` returns native arrays
+                exactly.
+            full_domain: If ``True`` and ``domain`` is omitted, return the
+                native full-domain arrays exactly. Explicit ``domain`` always
+                takes precedence.
 
         Returns:
             DataFrame with columns ``price``, ``pdf``, and ``cdf``.
         """
-        prices, pdf_values, cdf_values = self._require_cached_distribution_arrays()
+        snapshot = self._materialize_native_distribution()
         return build_density_results_frame(
-            prices,
-            pdf_values,
-            cdf_values,
+            snapshot.prices,
+            snapshot.pdf_values,
+            snapshot.cdf_values,
             domain=domain,
             points=points,
+            default_domain=snapshot.metadata.get("default_view_domain"),
+            full_domain=full_domain,
         )
 
     def plot(
@@ -507,7 +515,8 @@ class ProbCurve:
         title: Optional[str] = None,
         xlim: Optional[tuple[float, float]] = None,
         ylim: Optional[tuple[float, float]] = None,
-        points: int = 200,
+        points: int = 800,
+        full_domain: bool = False,
         **kwargs,
     ) -> Any:
         """Plot the risk-neutral probability distribution.
@@ -518,14 +527,18 @@ class ProbCurve:
             title: Optional custom title for the plot.
             xlim: Optional x-axis limits as (min, max).
             ylim: Optional y-axis limits as (min, max).
-            points: Number of points in the grid (if generating dynamically).
+            points: Number of display points used for plot resampling.
+            full_domain: If ``True`` and ``xlim`` is omitted, plot across the
+                full native probability domain. Otherwise the compact default
+                view domain is used.
             **kwargs: Additional arguments forwarded to ``oipd.presentation.plot_rnd.plot_rnd``.
 
         Returns:
             matplotlib.figure.Figure: The plot figure.
         """
         resolved_market = self.resolved_market
-        metadata = self.metadata or {}
+        snapshot = self._materialize_native_distribution()
+        metadata = snapshot.metadata
 
         underlying_price = resolved_market.underlying_price
         valuation_date = format_timestamp_for_display(
@@ -537,19 +550,24 @@ class ProbCurve:
             format_timestamp_for_display(expiry_raw) if expiry_raw is not None else None
         )
 
-        # Determine grid
+        native_domain = (float(snapshot.prices[0]), float(snapshot.prices[-1]))
         if xlim is not None:
-            # Generate dynamic grid based on xlim
-            grid_prices = np.linspace(xlim[0], xlim[1], points)
-            grid_pdf = np.asarray(self.pdf(grid_prices), dtype=float)
-            grid_cdf = np.array(
-                [self.prob_below(p) for p in grid_prices]
-            )  # list comp for scalar cdf
+            plot_domain = xlim
+        elif full_domain:
+            plot_domain = native_domain
         else:
-            # Use default cached grid
-            grid_prices = self.prices
-            grid_pdf = self.pdf_values
-            grid_cdf = self.cdf_values
+            plot_domain = metadata.get("default_view_domain", native_domain)
+
+        plot_frame = build_density_results_frame(
+            snapshot.prices,
+            snapshot.pdf_values,
+            snapshot.cdf_values,
+            domain=plot_domain,
+            points=points,
+        )
+        grid_prices = plot_frame["price"].to_numpy(dtype=float)
+        grid_pdf = plot_frame["pdf"].to_numpy(dtype=float)
+        grid_cdf = plot_frame["cdf"].to_numpy(dtype=float)
 
         return plot_rnd(
             prices=grid_prices,
@@ -574,14 +592,14 @@ class ProbSurface:
         self,
         *,
         vol_surface: "VolSurface",
-        grid_points: int = 200,
+        grid_points: int | None = None,
     ) -> None:
         """Initialize a ProbSurface directly from a fitted VolSurface.
 
         Args:
             vol_surface: Fitted volatility surface used as the canonical source.
             grid_points: Native materialization grid size for each cached slice.
-                Defaults to 200, aligned with ``ProbCurve``. Export
+                ``None`` uses the smart native grid policy. Export
                 ``density_results(points=...)`` controls downstream resampling,
                 not this native grid.
 
@@ -597,10 +615,15 @@ class ProbSurface:
             raise ValueError(
                 "ProbSurface requires a fitted VolSurface with interpolator and market."
             )
-        if grid_points < 5:
+        if isinstance(grid_points, bool):
+            raise ValueError("grid_points must be at least 5 for finite differences.")
+        if grid_points is not None and not isinstance(grid_points, int):
+            raise ValueError("grid_points must be at least 5 for finite differences.")
+        if grid_points is not None and grid_points < 5:
             raise ValueError("grid_points must be at least 5 for finite differences.")
 
-        native_spec = MaterializationSpec(points=int(grid_points))
+        native_points = None if grid_points is None else int(grid_points)
+        native_spec = MaterializationSpec(points=native_points)
         self._definition = SurfaceProbabilityDefinition.from_vol_surface(
             vol_surface,
             native_spec=native_spec,
@@ -608,7 +631,7 @@ class ProbSurface:
         self._vol_surface = self._definition.vol_surface
         self._market = self._vol_surface._market
         self._valuation_timestamp = self._market.valuation_timestamp
-        self._grid_points = int(grid_points)
+        self._grid_points = native_points
         self._curve_cache: dict[int, ProbCurve] = {}
 
     def _resolve_query_time(
@@ -874,13 +897,16 @@ class ProbSurface:
         start: str | date | pd.Timestamp | None = None,
         end: str | date | pd.Timestamp | None = None,
         step_days: int | None = 1,
+        *,
+        full_domain: bool = False,
     ) -> pd.DataFrame:
         """Return a long-format DataFrame view of surface probability slices.
 
         Args:
             domain: Optional explicit export domain as ``(min_price, max_price)``.
-            points: Number of resampled points when ``domain`` is set. Ignored
-                when ``domain`` is omitted and the native slice grids are used.
+            points: Number of resampled points for compact or explicit-domain
+                exports. Ignored when ``full_domain`` returns native arrays
+                exactly.
             start: Optional lower expiry bound. If omitted, uses the first fitted
                 pillar expiry.
             end: Optional upper expiry bound. If omitted, uses the last fitted
@@ -889,6 +915,9 @@ class ProbSurface:
                 export includes a daily grid. Fitted pillar expiries are always
                 included even when they fall off the stepped schedule. Use
                 ``None`` to export fitted pillars only.
+            full_domain: If ``True`` and ``domain`` is omitted, each slice
+                exports its native full-domain arrays exactly. Explicit
+                ``domain`` always takes precedence.
 
         Returns:
             DataFrame with columns ``expiry``, ``price``, ``pdf``, and ``cdf``.
@@ -902,6 +931,7 @@ class ProbSurface:
                 start=start,
                 end=end,
                 step_days=step_days,
+                full_domain=full_domain,
             )
         finally:
             self._evict_transient_cache_entries(preserved_keys)

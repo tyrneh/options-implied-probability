@@ -20,9 +20,9 @@ from oipd.core.vol_surface_fitting import AVAILABLE_SURFACE_FITS, fit_surface
 from oipd.core.vol_surface_fitting.shared.svi import SVICalibrationOptions, svi_options
 from oipd.core.vol_surface_fitting.shared.vol_model import VolModel, SLICE_METHODS
 from oipd.core.probability_density_conversion import (
+    cdf_from_price_curve,
     price_curve_from_iv,
     pdf_from_price_curve,
-    calculate_cdf_from_pdf,
 )
 from oipd.data_access.readers import CSVReader, DataFrameReader
 from oipd.data_access.vendors import get_reader
@@ -972,8 +972,16 @@ def _estimate(
     )
 
     try:
-        # Numerically integrate the PDF to obtain the matching CDF
-        _, cdf_values = calculate_cdf_from_pdf(pdf_strike_values, pdf_values)
+        cdf_result = cdf_from_price_curve(
+            pricing_strike_grid,
+            pricing_call_prices,
+            risk_free_rate=resolved_market.risk_free_rate,
+            time_to_expiry_years=resolved_maturity.time_to_expiry_years,
+            min_strike=float(pdf_strike_values[0]),
+            max_strike=float(pdf_strike_values[-1]),
+            reference_price=underlying_price,
+        )
+        cdf_values = cdf_result.cdf_values
     except Exception as exc:
         raise CalculationError(f"Failed to compute CDF: {exc}") from exc
 

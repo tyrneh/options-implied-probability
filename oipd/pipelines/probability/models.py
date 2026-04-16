@@ -45,11 +45,21 @@ class MaterializationSpec:
     Attributes:
         domain: Optional explicit native PDF domain. ``None`` keeps the adaptive
             full-domain behavior.
-        points: Requested native grid resolution.
+        points: Requested native grid resolution. ``None`` uses the smart
+            native grid policy.
     """
 
     domain: tuple[float, float] | None = None
-    points: int = 200
+    points: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate cheap materialization policy inputs."""
+        if isinstance(self.points, bool):
+            raise ValueError("grid_points must be at least 5 for finite differences.")
+        if self.points is not None and not isinstance(self.points, int):
+            raise ValueError("grid_points must be at least 5 for finite differences.")
+        if self.points is not None and self.points < 5:
+            raise ValueError("grid_points must be at least 5 for finite differences.")
 
 
 @dataclass(frozen=True)

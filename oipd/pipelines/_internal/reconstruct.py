@@ -11,7 +11,7 @@ from scipy import interpolate
 from oipd.core.maturity import convert_days_to_years
 
 from oipd.core.probability_density_conversion import (
-    calculate_cdf_from_pdf,
+    cdf_from_price_curve,
     pdf_from_price_curve,
     price_curve_from_iv,
 )
@@ -147,7 +147,16 @@ class RebuiltSurface:
             risk_free_rate=self.risk_free_rate,
             time_to_expiry_years=maturity,
         )
-        _, cdf = calculate_cdf_from_pdf(prices, pdf)
+        cdf_result = cdf_from_price_curve(
+            strike_pricing,
+            call_prices,
+            risk_free_rate=self.risk_free_rate,
+            time_to_expiry_years=maturity,
+            min_strike=float(prices[0]),
+            max_strike=float(prices[-1]),
+            reference_price=forward,
+        )
+        cdf = cdf_result.cdf_values
 
         data = pd.DataFrame(
             {
@@ -395,7 +404,16 @@ def rebuild_slice_from_svi(
         min_strike=min_strike,
         max_strike=max_strike,
     )
-    _, cdf = calculate_cdf_from_pdf(prices, pdf)
+    cdf_result = cdf_from_price_curve(
+        strike_pricing,
+        call_prices,
+        risk_free_rate=float(risk_free_rate),
+        time_to_expiry_years=maturity_years,
+        min_strike=float(prices[0]),
+        max_strike=float(prices[-1]),
+        reference_price=forward_price,
+    )
+    cdf = cdf_result.cdf_values
 
     data = pd.DataFrame(
         {

@@ -5,6 +5,21 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4]
+### Added
+- Added lazy probability materialization for `ProbCurve` and `ProbSurface`.
+- Added smart native probability grids: `grid_points=None` now auto-sizes from the full-domain width, spot/forward scale, and observed strike spacing.
+- Added separate view/export controls: `points` controls `density_results()` and `plot()` resolution, while `grid_points` controls native numerical resolution.
+- Added `full_domain=True` for explicit full native-domain probability exports and plots.
+
+### Changed
+- Probability CDFs now use the direct first-derivative call-price formula with minimal numerical cleanup instead of integrating the PDF.
+- `density_results()` now defaults to a compact view domain with 200 rows; use `full_domain=True` for full native-grid output.
+- `plot()` now defaults to a dense display grid over the compact view domain, avoiding jagged PDFs when the native domain is wide.
+
+### Removed
+- Removed the old integrated-PDF CDF path and legacy normalized surface-CDF helpers.
+
 ## [2.0.3]
 ### Changed
 - Finalized the maturity contract around three explicit fields:

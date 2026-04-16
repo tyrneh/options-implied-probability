@@ -774,6 +774,44 @@ class TestVolSurfaceImpliedDistribution:
         prob_surface = vs.implied_distribution()
         assert len(prob_surface.expiries) == len(vs.expiries)
 
+    def test_implied_distribution_grid_points_controls_slice_resolution(
+        self,
+        multi_expiry_chain,
+        market_inputs,
+    ):
+        """grid_points controls native probability resolution for surface slices."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        prob_surface = vs.implied_distribution(grid_points=500)
+        curve = prob_surface.slice(prob_surface.expiries[0])
+
+        assert len(curve.prices) == 500
+        assert curve.metadata["native_grid_policy"] == "fixed"
+        assert curve.metadata["native_grid_points"] == 500
+
+    @pytest.mark.parametrize(
+        "bad_grid_points",
+        [True, False, 4, 0, -1, 4.5, "500", object()],
+    )
+    def test_implied_distribution_rejects_invalid_grid_points_immediately(
+        self,
+        multi_expiry_chain,
+        market_inputs,
+        bad_grid_points,
+    ):
+        """VolSurface should reject invalid grid_points before returning ProbSurface."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        with pytest.raises(
+            ValueError,
+            match="grid_points must be at least 5 for finite differences",
+        ):
+            vs.implied_distribution(grid_points=bad_grid_points)
+
 
 # =============================================================================
 # VolSurface.plot() Tests

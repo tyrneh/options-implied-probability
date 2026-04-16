@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 import numpy as np
@@ -21,9 +22,10 @@ from oipd.pipelines.probability.models import (
 from oipd.pipelines.vol_curve import fit_vol_curve_internal
 from oipd.pipelines.utils.surface_export import validate_export_domain
 from oipd.core.probability_density_conversion import (
+    DirectCdfResult,
+    cdf_from_price_curve,
     price_curve_from_iv,
     pdf_from_price_curve,
-    calculate_cdf_from_pdf,
 )
 from oipd.core.probability_density_conversion.finite_diff import (
     finite_diff_first_derivative,
@@ -36,6 +38,354 @@ DEFAULT_PDF_TAIL_MASS_TOLERANCE = 1e-4
 DEFAULT_PDF_INITIAL_UPPER_MULTIPLIER = 3.0
 DEFAULT_PDF_MAX_EXPANSIONS = 6
 DEFAULT_PDF_EXPANSION_FACTOR = 2.0
+DEFAULT_NATIVE_GRID_MIN_POINTS = 241
+DEFAULT_NATIVE_GRID_MAX_POINTS = 2500
+DEFAULT_NATIVE_GRID_REL_STEP = 0.005
+DEFAULT_NATIVE_GRID_MIN_REL_STEP = 0.001
+DEFAULT_NATIVE_GRID_MAX_REL_STEP = 0.02
+DEFAULT_NATIVE_GRID_MIN_ABS_STEP = 0.01
+DEFAULT_NATIVE_GRID_MARKET_GAP_FRACTION = 0.5
+DEFAULT_VIEW_QUANTILES = (0.001, 0.999)
+DEFAULT_VIEW_DOMAIN_SOURCE = "observed_plus_0.1pct_99.9pct_quantiles"
+DEFAULT_VIEW_PADDING_FRACTION = 0.05
+
+
+@dataclass(frozen=True)
+class NativeGridPolicyResult:
+    """Resolved native probability-grid sizing policy.
+
+    Attributes:
+        points: Number of native grid points to use.
+        policy: Policy source, either ``"auto"`` or ``"fixed"``.
+        target_step: Target price spacing before point-count caps are applied.
+        actual_step: Actual price spacing implied by ``points`` and domain.
+        reference_price: Spot or forward level used to scale target spacing.
+        observed_gap: Median positive observed strike gap, if available.
+        hit_min_cap: Whether the auto policy was raised to the minimum point cap.
+        hit_max_cap: Whether the auto policy was lowered to the maximum point cap.
+        domain_width: Width of the native probability domain.
+        min_points: Minimum auto-policy point count.
+        max_points: Maximum auto-policy point count.
+    """
+
+    points: int
+    policy: str
+    target_step: float | None
+    actual_step: float
+    reference_price: float
+    observed_gap: float | None
+    hit_min_cap: bool
+    hit_max_cap: bool
+    domain_width: float
+    min_points: int = DEFAULT_NATIVE_GRID_MIN_POINTS
+    max_points: int = DEFAULT_NATIVE_GRID_MAX_POINTS
+
+
+def _median_positive_observed_strike_gap(strike_source: Any) -> float | None:
+    """Return the median positive spacing between observed strikes.
+
+    Args:
+        strike_source: DataFrame with a ``strike`` column or an array-like
+            collection of strike values.
+
+    Returns:
+        float | None: Median positive finite strike gap, or ``None`` when fewer
+        than two usable strike levels are available.
+    """
+    if strike_source is None:
+        return None
+
+    if isinstance(strike_source, pd.DataFrame):
+        if strike_source.empty or "strike" not in strike_source.columns:
+            return None
+        strike_values = strike_source["strike"].to_numpy(dtype=float)
+    else:
+        try:
+            strike_values = np.asarray(strike_source, dtype=float)
+        except (TypeError, ValueError):
+            return None
+
+    strike_values = np.ravel(strike_values)
+    strike_values = strike_values[np.isfinite(strike_values)]
+    strike_values = strike_values[strike_values > 0.0]
+    if strike_values.size < 2:
+        return None
+
+    unique_strikes = np.unique(np.sort(strike_values))
+    gaps = np.diff(unique_strikes)
+    positive_gaps = gaps[gaps > 0.0]
+    if positive_gaps.size == 0:
+        return None
+
+    return float(np.median(positive_gaps))
+
+
+def _resolve_native_grid_points(
+    resolved_domain: tuple[float, float],
+    *,
+    pricing_underlying: float,
+    grid_points: int | None = None,
+    observed_strikes: Any = None,
+) -> NativeGridPolicyResult:
+    """Resolve native probability-grid point count from domain and market scale.
+
+    Args:
+        resolved_domain: Native probability domain as ``(min_price, max_price)``.
+        pricing_underlying: Spot or forward level used for option pricing.
+        grid_points: Optional explicit native point count. When provided, this
+            bypasses the auto policy after validation.
+        observed_strikes: Optional observed strike data used to refine target
+            spacing to market granularity.
+
+    Returns:
+        NativeGridPolicyResult: Resolved point count and policy diagnostics.
+
+    Raises:
+        ValueError: If ``grid_points`` is boolean, non-integer, or less than 5.
+        CalculationError: If the domain or pricing reference is invalid.
+    """
+    if isinstance(grid_points, bool):
+        raise ValueError("grid_points must be an integer greater than or equal to 5.")
+    if grid_points is not None and not isinstance(grid_points, int):
+        raise ValueError("grid_points must be an integer greater than or equal to 5.")
+    if grid_points is not None and grid_points < 5:
+        raise ValueError("grid_points must be an integer greater than or equal to 5.")
+
+    domain_low, domain_high = float(resolved_domain[0]), float(resolved_domain[1])
+    if not np.isfinite(domain_low) or not np.isfinite(domain_high):
+        raise CalculationError("Native grid domain bounds must be finite.")
+    domain_width = domain_high - domain_low
+    if domain_width <= 0.0:
+        raise CalculationError("Native grid domain must have positive width.")
+
+    reference_price = max(abs(float(pricing_underlying)), 1.0)
+    if not np.isfinite(reference_price):
+        raise CalculationError("Native grid reference price must be finite.")
+
+    observed_gap = _median_positive_observed_strike_gap(observed_strikes)
+
+    if grid_points is not None:
+        actual_step = domain_width / max(int(grid_points) - 1, 1)
+        return NativeGridPolicyResult(
+            points=int(grid_points),
+            policy="fixed",
+            target_step=None,
+            actual_step=float(actual_step),
+            reference_price=float(reference_price),
+            observed_gap=observed_gap,
+            hit_min_cap=False,
+            hit_max_cap=False,
+            domain_width=float(domain_width),
+        )
+
+    reference_step = DEFAULT_NATIVE_GRID_REL_STEP * reference_price
+    min_step = max(
+        DEFAULT_NATIVE_GRID_MIN_ABS_STEP,
+        DEFAULT_NATIVE_GRID_MIN_REL_STEP * reference_price,
+    )
+    max_step = DEFAULT_NATIVE_GRID_MAX_REL_STEP * reference_price
+
+    if observed_gap is not None:
+        market_step = DEFAULT_NATIVE_GRID_MARKET_GAP_FRACTION * observed_gap
+        target_step = min(reference_step, market_step)
+    else:
+        target_step = reference_step
+    target_step = min(max(target_step, min_step), max_step)
+
+    auto_points = int(np.ceil(domain_width / target_step)) + 1
+    resolved_points = min(
+        max(auto_points, DEFAULT_NATIVE_GRID_MIN_POINTS),
+        DEFAULT_NATIVE_GRID_MAX_POINTS,
+    )
+    actual_step = domain_width / max(resolved_points - 1, 1)
+
+    return NativeGridPolicyResult(
+        points=int(resolved_points),
+        policy="auto",
+        target_step=float(target_step),
+        actual_step=float(actual_step),
+        reference_price=float(reference_price),
+        observed_gap=observed_gap,
+        hit_min_cap=auto_points < DEFAULT_NATIVE_GRID_MIN_POINTS,
+        hit_max_cap=auto_points > DEFAULT_NATIVE_GRID_MAX_POINTS,
+        domain_width=float(domain_width),
+    )
+
+
+def _native_grid_metadata(
+    grid_policy: NativeGridPolicyResult,
+) -> dict[str, float | int | bool | str | None]:
+    """Convert a native grid policy result into probability metadata.
+
+    Args:
+        grid_policy: Resolved native grid policy diagnostics.
+
+    Returns:
+        dict[str, float | int | bool | str | None]: Metadata fields describing
+        native grid resolution and cap behavior.
+    """
+    return {
+        "native_grid_policy": grid_policy.policy,
+        "native_grid_points": grid_policy.points,
+        "native_grid_min_points": grid_policy.min_points,
+        "native_grid_max_points": grid_policy.max_points,
+        "native_grid_target_step": grid_policy.target_step,
+        "native_grid_actual_step": grid_policy.actual_step,
+        "native_grid_reference_price": grid_policy.reference_price,
+        "native_grid_observed_gap": grid_policy.observed_gap,
+        "native_grid_hit_min_cap": grid_policy.hit_min_cap,
+        "native_grid_hit_max_cap": grid_policy.hit_max_cap,
+        "native_grid_domain_width": grid_policy.domain_width,
+    }
+
+
+def _finite_domain_tuple(domain: Any) -> tuple[float, float] | None:
+    """Return a finite increasing domain tuple when available.
+
+    Args:
+        domain: Candidate two-value domain.
+
+    Returns:
+        tuple[float, float] | None: Cleaned finite domain, or ``None`` when
+        the candidate is missing or invalid.
+    """
+    if domain is None:
+        return None
+
+    try:
+        low, high = float(domain[0]), float(domain[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    if not np.isfinite(low) or not np.isfinite(high):
+        return None
+    if high < low:
+        return None
+
+    return low, high
+
+
+def _quantile_from_monotone_cdf(
+    prices: np.ndarray,
+    cdf_values: np.ndarray,
+    quantile: float,
+) -> float:
+    """Interpolate a price quantile from aligned probability arrays.
+
+    Args:
+        prices: Price grid.
+        cdf_values: CDF values aligned with ``prices``.
+        quantile: Probability level to extract.
+
+    Returns:
+        float: Interpolated price level.
+
+    Raises:
+        CalculationError: If no finite CDF grid is available.
+    """
+    price_array = np.asarray(prices, dtype=float)
+    cdf_array = np.asarray(cdf_values, dtype=float)
+    finite_mask = np.isfinite(price_array) & np.isfinite(cdf_array)
+    if np.count_nonzero(finite_mask) < 2:
+        raise CalculationError("Default view domain requires a finite CDF grid.")
+
+    prices_clean = np.ravel(price_array[finite_mask])
+    cdf_clean = np.ravel(cdf_array[finite_mask])
+    order = np.argsort(prices_clean)
+    prices_sorted = prices_clean[order]
+    cdf_sorted = np.maximum.accumulate(cdf_clean[order])
+
+    cdf_min = float(cdf_sorted[0])
+    cdf_max = float(cdf_sorted[-1])
+    if cdf_max - cdf_min < 1e-12:
+        return float(prices_sorted[-1])
+
+    quantile_clamped = float(np.clip(quantile, cdf_min, cdf_max))
+    return float(np.interp(quantile_clamped, cdf_sorted, prices_sorted))
+
+
+def _resolve_default_view_domain(
+    prices: np.ndarray,
+    cdf_values: np.ndarray,
+    *,
+    observed_domain: tuple[float, float] | None = None,
+    pricing_underlying: float | None = None,
+    spot_price: float | None = None,
+    forward_price: float | None = None,
+) -> dict[str, tuple[float, float] | str]:
+    """Resolve compact default view-domain metadata from native arrays.
+
+    Args:
+        prices: Native price grid.
+        cdf_values: Native CDF values aligned with ``prices``.
+        observed_domain: Optional strike domain that should remain visible.
+        pricing_underlying: Spot or forward level used by the pricing engine.
+        spot_price: Current spot level, when distinct from ``pricing_underlying``.
+        forward_price: Forward level, when available from calibration metadata.
+
+    Returns:
+        dict[str, tuple[float, float] | str]: Metadata fields for the default
+        compact view domain.
+
+    Raises:
+        CalculationError: If native prices are not a finite increasing domain.
+    """
+    price_array = np.asarray(prices, dtype=float)
+    finite_prices = np.ravel(price_array[np.isfinite(price_array)])
+    if finite_prices.size < 2:
+        raise CalculationError("Default view domain requires finite native prices.")
+
+    native_low = float(np.min(finite_prices))
+    native_high = float(np.max(finite_prices))
+    if native_high <= native_low:
+        raise CalculationError("Default view domain requires positive native width.")
+
+    quantile_low = _quantile_from_monotone_cdf(
+        prices,
+        cdf_values,
+        DEFAULT_VIEW_QUANTILES[0],
+    )
+    quantile_high = _quantile_from_monotone_cdf(
+        prices,
+        cdf_values,
+        DEFAULT_VIEW_QUANTILES[1],
+    )
+    if quantile_high < quantile_low:
+        quantile_low, quantile_high = quantile_high, quantile_low
+
+    observed_bounds = _finite_domain_tuple(observed_domain)
+    if observed_bounds is None:
+        observed_bounds = (quantile_low, quantile_high)
+
+    view_low = max(native_low, min(observed_bounds[0], quantile_low))
+    view_high = min(native_high, max(observed_bounds[1], quantile_high))
+
+    view_width = view_high - view_low
+    if view_width > 0.0:
+        padding = DEFAULT_VIEW_PADDING_FRACTION * view_width
+        view_low -= padding
+        view_high += padding
+
+    for anchor in (pricing_underlying, spot_price, forward_price):
+        if anchor is None:
+            continue
+        anchor_value = float(anchor)
+        if not np.isfinite(anchor_value):
+            continue
+        anchor_value = min(max(anchor_value, native_low), native_high)
+        view_low = min(view_low, anchor_value)
+        view_high = max(view_high, anchor_value)
+
+    view_low = max(native_low, float(view_low))
+    view_high = min(native_high, float(view_high))
+    if view_high <= view_low:
+        view_low, view_high = native_low, native_high
+
+    return {
+        "default_view_domain": (float(view_low), float(view_high)),
+        "default_view_domain_source": DEFAULT_VIEW_DOMAIN_SOURCE,
+        "default_view_quantiles": DEFAULT_VIEW_QUANTILES,
+    }
 
 
 def _build_strike_grid(
@@ -256,7 +606,7 @@ def _evaluate_distribution_on_grid(
     effective_dividend: float | None,
     years_to_expiry: float,
     strike_grid: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+) -> tuple[np.ndarray, np.ndarray, float, float]:
     """Price, differentiate, and measure covered mass on one provisional grid.
 
     Args:
@@ -269,9 +619,9 @@ def _evaluate_distribution_on_grid(
         strike_grid: Provisional strike grid.
 
     Returns:
-        tuple[np.ndarray, np.ndarray, np.ndarray, float, float]: Price grid, PDF,
-        CDF, covered mass estimate from the PDF integral, and right-tail
-        survival probability inferred from the call-price slope.
+        tuple[np.ndarray, np.ndarray, float, float]: Price grid, PDF, covered
+        mass estimate from the PDF integral, and right-tail survival
+        probability inferred from the call-price slope.
     """
     pricing_grid, call_prices = price_curve_from_iv(
         vol_curve,
@@ -291,7 +641,6 @@ def _evaluate_distribution_on_grid(
         max_strike=float(pricing_grid.max()),
     )
     covered_mass = float(np.trapezoid(pdf_values, pdf_prices))
-    _, cdf_values = calculate_cdf_from_pdf(pdf_prices, pdf_values)
     call_slope = finite_diff_first_derivative(call_prices, pricing_grid)
     right_tail_survival = float(
         np.clip(
@@ -300,7 +649,104 @@ def _evaluate_distribution_on_grid(
             1.0,
         )
     )
-    return pdf_prices, pdf_values, cdf_values, covered_mass, right_tail_survival
+    return pdf_prices, pdf_values, covered_mass, right_tail_survival
+
+
+def _build_cdf_diagnostics(
+    *,
+    price_grid: np.ndarray,
+    pdf_values: np.ndarray,
+    cdf_result: DirectCdfResult,
+) -> dict[str, Any]:
+    """Build scalar diagnostics for the canonical direct CDF.
+
+    Args:
+        price_grid: Price grid aligned with all probability arrays.
+        pdf_values: PDF values aligned with ``price_grid``.
+        cdf_result: Direct first-derivative CDF result from core.
+
+    Returns:
+        dict[str, Any]: Metadata fields describing CDF method, raw diagnostics,
+        cleanup decisions, and PDF/CDF interval consistency.
+    """
+    diagnostics = cdf_result.diagnostics
+    interval_diagnostics = _cdf_pdf_interval_diagnostics(
+        price_grid=price_grid,
+        pdf_values=pdf_values,
+        cdf_values=cdf_result.cdf_values,
+    )
+
+    return {
+        "cdf_method": "call_price_first_derivative",
+        "cdf_cleanup_policy": diagnostics["cdf_cleanup_policy"],
+        "raw_cdf_start": diagnostics["raw_cdf_start"],
+        "raw_cdf_end": diagnostics["raw_cdf_end"],
+        "raw_cdf_min": diagnostics["raw_cdf_min"],
+        "raw_cdf_max": diagnostics["raw_cdf_max"],
+        "raw_cdf_is_monotone": diagnostics["raw_cdf_is_monotone"],
+        "raw_cdf_negative_step_count": diagnostics["raw_cdf_negative_step_count"],
+        "raw_cdf_max_negative_step": diagnostics["raw_cdf_max_negative_step"],
+        "raw_cdf_below_zero_count": diagnostics["raw_cdf_below_zero_count"],
+        "raw_cdf_above_one_count": diagnostics["raw_cdf_above_one_count"],
+        "raw_cdf_points": diagnostics["raw_cdf_points"],
+        "cdf_left_endpoint_snapped": diagnostics["cdf_left_endpoint_snapped"],
+        "cdf_right_endpoint_snapped": diagnostics["cdf_right_endpoint_snapped"],
+        "cdf_lower_clip_count": diagnostics["cdf_lower_clip_count"],
+        "cdf_upper_clip_count": diagnostics["cdf_upper_clip_count"],
+        "cdf_near_zero_strike_threshold": diagnostics["cdf_near_zero_strike_threshold"],
+        "cdf_pdf_interval_max_error": interval_diagnostics["max_error"],
+        "cdf_pdf_interval_mean_error": interval_diagnostics["mean_error"],
+    }
+
+
+def _cdf_pdf_interval_diagnostics(
+    *,
+    price_grid: np.ndarray,
+    pdf_values: np.ndarray,
+    cdf_values: np.ndarray,
+) -> dict[str, float]:
+    """Compare CDF interval probabilities with trapezoid PDF mass.
+
+    Args:
+        price_grid: Ordered price grid.
+        pdf_values: PDF values aligned with ``price_grid``.
+        cdf_values: CDF values aligned with ``price_grid``.
+
+    Returns:
+        dict[str, float]: Maximum and mean absolute interval disagreement.
+    """
+    prices = np.asarray(price_grid, dtype=float)
+    pdf = np.asarray(pdf_values, dtype=float)
+    cdf = np.asarray(cdf_values, dtype=float)
+    grid_count = len(prices)
+    interval_fractions = (
+        (0.05, 0.25),
+        (0.25, 0.50),
+        (0.50, 0.75),
+        (0.75, 0.95),
+        (0.10, 0.90),
+    )
+    errors = []
+
+    for left_fraction, right_fraction in interval_fractions:
+        left = int(round(left_fraction * (grid_count - 1)))
+        right = int(round(right_fraction * (grid_count - 1)))
+        if right <= left:
+            continue
+
+        cdf_interval_mass = float(cdf[right] - cdf[left])
+        pdf_interval_mass = float(
+            np.trapezoid(pdf[left : right + 1], prices[left : right + 1])
+        )
+        errors.append(abs(cdf_interval_mass - pdf_interval_mass))
+
+    if not errors:
+        return {"max_error": 0.0, "mean_error": 0.0}
+
+    return {
+        "max_error": float(np.max(errors)),
+        "mean_error": float(np.mean(errors)),
+    }
 
 
 def resolve_pdf_domain(
@@ -412,7 +858,6 @@ def resolve_pdf_domain(
         (
             pdf_prices,
             pdf_values,
-            _cdf_values,
             _covered_mass,
             tail_mass_beyond_upper,
         ) = _evaluate_distribution_on_grid(
@@ -534,7 +979,7 @@ def derive_distribution_from_curve(
     pricing_engine: str = "black76",
     vol_metadata: Optional[Dict[str, Any]] = None,
     domain: Optional[Tuple[float, float]] = None,
-    points: int = 200,
+    points: int | None = None,
     time_to_expiry_years: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Derive PDF/CDF from a pre-fitted volatility curve.
@@ -545,7 +990,8 @@ def derive_distribution_from_curve(
         pricing_engine: Pricing engine (``"black76"`` or ``"bs"``).
         vol_metadata: Optional metadata from the vol fit (for diagnostics).
         domain: Optional strike domain as ``(min_strike, max_strike)``.
-        points: Number of strike grid points.
+        points: Optional native strike grid point count. ``None`` uses the
+            smart native grid policy.
         time_to_expiry_years: Optional explicit maturity in years. When
             provided, this takes precedence over metadata-derived expiry.
 
@@ -555,6 +1001,13 @@ def derive_distribution_from_curve(
         domain estimate (metadata, observed strikes, or ATM-based fallback).
     """
     vol_meta = vol_metadata or {}
+    if isinstance(points, bool):
+        raise ValueError("grid_points must be an integer greater than or equal to 5.")
+    if points is not None and not isinstance(points, int):
+        raise ValueError("grid_points must be an integer greater than or equal to 5.")
+    if points is not None and points < 5:
+        raise ValueError("grid_points must be an integer greater than or equal to 5.")
+
     valuation_timestamp = resolved_market.valuation_timestamp
     resolved_maturity = None
 
@@ -616,7 +1069,7 @@ def derive_distribution_from_curve(
             effective_r=effective_r,
             effective_dividend=effective_dividend,
             years_to_expiry=years_to_expiry,
-            points=points,
+            points=points or DEFAULT_PDF_POINTS,
         )
     else:
         validated_domain = validate_export_domain(domain)
@@ -637,21 +1090,20 @@ def derive_distribution_from_curve(
             "domain_pricing_engine": pricing_engine,
         }
 
-    if domain is None and domain_metadata.get("domain_grid_spacing") is not None:
-        strike_grid = _build_grid_with_spacing(
-            pricing_underlying=pricing_underlying,
-            domain=resolved_domain,
-            base_step=float(domain_metadata["domain_grid_spacing"]),
-        )
-    else:
-        strike_grid = _build_strike_grid(
-            resolved_market,
-            vol_meta,
-            pricing_underlying=pricing_underlying,
-            time_to_expiry_years=years_to_expiry,
-            domain=resolved_domain,
-            points=points,
-        )
+    native_grid_policy = _resolve_native_grid_points(
+        resolved_domain,
+        pricing_underlying=float(pricing_underlying),
+        grid_points=points,
+        observed_strikes=vol_meta.get("observed_iv"),
+    )
+    strike_grid = _build_strike_grid(
+        resolved_market,
+        vol_meta,
+        pricing_underlying=pricing_underlying,
+        time_to_expiry_years=years_to_expiry,
+        domain=resolved_domain,
+        points=native_grid_policy.points,
+    )
 
     # 2. Generate Price Curve from Vol
     pricing_strike_grid, pricing_call_prices = price_curve_from_iv(
@@ -681,7 +1133,17 @@ def derive_distribution_from_curve(
 
     # 5. Derive CDF
     try:
-        _, cdf_values = calculate_cdf_from_pdf(pdf_prices, pdf_values)
+        cdf_result = cdf_from_price_curve(
+            pricing_strike_grid,
+            pricing_call_prices,
+            risk_free_rate=effective_r,
+            time_to_expiry_years=years_to_expiry,
+            min_strike=observed_min_strike,
+            max_strike=observed_max_strike,
+            reference_price=float(pricing_underlying),
+        )
+        if not np.array_equal(cdf_result.prices, pdf_prices):
+            raise CalculationError("Direct CDF and PDF grids must match.")
     except Exception as exc:
         raise CalculationError(f"Failed to compute CDF: {exc}") from exc
 
@@ -693,8 +1155,31 @@ def derive_distribution_from_curve(
         metadata["time_to_expiry_years"] = years_to_expiry
         metadata["time_to_expiry_days"] = years_to_expiry * 365.0
     metadata.update(domain_metadata)
+    metadata.update(_native_grid_metadata(native_grid_policy))
+    metadata.update(
+        _build_cdf_diagnostics(
+            price_grid=pdf_prices,
+            pdf_values=pdf_values,
+            cdf_result=cdf_result,
+        )
+    )
+    observed_view_domain = (
+        _finite_domain_tuple(domain_metadata.get("observed_domain"))
+        or _finite_domain_tuple(domain_metadata.get("post_iv_survival_domain"))
+        or _finite_domain_tuple(domain_metadata.get("raw_observed_domain"))
+    )
+    metadata.update(
+        _resolve_default_view_domain(
+            pdf_prices,
+            cdf_result.cdf_values,
+            observed_domain=observed_view_domain,
+            pricing_underlying=float(pricing_underlying),
+            spot_price=float(resolved_market.underlying_price),
+            forward_price=vol_meta.get("forward_price"),
+        )
+    )
 
-    return pdf_prices, pdf_values, cdf_values, metadata
+    return pdf_prices, pdf_values, cdf_result.cdf_values, metadata
 
 
 def materialize_distribution_from_definition(
@@ -735,6 +1220,8 @@ def build_density_results_frame(
     *,
     domain: Optional[Tuple[float, float]] = None,
     points: int = 200,
+    default_domain: Optional[Tuple[float, float]] = None,
+    full_domain: bool = False,
 ) -> pd.DataFrame:
     """Build a density export DataFrame from aligned probability arrays.
 
@@ -746,8 +1233,13 @@ def build_density_results_frame(
             When provided, this function resamples the already-computed native
             distribution arrays onto the requested range. It does not decide the
             canonical upstream PDF support.
-        points: Number of points when resampling to ``domain``. Ignored when
-            ``domain`` is omitted and the native grid is returned unchanged.
+        points: Number of points when resampling to an explicit or default
+            compact export domain. Ignored when ``full_domain`` returns native
+            arrays exactly.
+        default_domain: Optional compact export domain used when ``domain`` is
+            omitted and ``full_domain`` is ``False``.
+        full_domain: When ``True`` and ``domain`` is omitted, return the native
+            full-domain arrays exactly.
 
     Returns:
         DataFrame with columns ``price``, ``pdf``, and ``cdf``.
@@ -755,11 +1247,21 @@ def build_density_results_frame(
     Raises:
         ValueError: If the export domain or resampling grid is invalid.
     """
-    validated_domain = validate_export_domain(domain)
-
     prices_array = np.asarray(prices, dtype=float)
     pdf_array = np.asarray(pdf_values, dtype=float)
     cdf_array = np.asarray(cdf_values, dtype=float)
+
+    if domain is None and full_domain:
+        return pd.DataFrame(
+            {
+                "price": prices_array,
+                "pdf": pdf_array,
+                "cdf": cdf_array,
+            }
+        )
+
+    export_domain = domain if domain is not None else default_domain
+    validated_domain = validate_export_domain(export_domain)
 
     if validated_domain is None:
         return pd.DataFrame(

@@ -667,8 +667,12 @@ class VolCurve:
             raise ValueError("Call fit before accessing the resolved market")
         return self._resolved_market
 
-    def implied_distribution(self) -> ProbCurve:
+    def implied_distribution(self, grid_points: int | None = None) -> ProbCurve:
         """Return the risk-neutral probability distribution implied by the fitted vol smile.
+
+        Args:
+            grid_points: Optional native probability grid size. ``None`` uses
+                the smart native grid policy.
 
         Returns:
             ProbCurve: Fitted distribution object.
@@ -693,8 +697,12 @@ class VolCurve:
             raise ValueError("Interpolated slice missing resolved market parameters")
 
         from oipd.interface.probability import ProbCurve
+        from oipd.pipelines.probability.models import MaterializationSpec
 
-        return ProbCurve._from_vol_curve(self)
+        return ProbCurve._from_vol_curve(
+            self,
+            native_spec=MaterializationSpec(points=grid_points),
+        )
 
     def price(
         self,
@@ -1423,8 +1431,12 @@ class VolSurface:
         else:
             raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
 
-    def implied_distribution(self) -> ProbSurface:
+    def implied_distribution(self, grid_points: int | None = None) -> ProbSurface:
         """Return the risk-neutral distribution surface for all fitted expiries.
+
+        Args:
+            grid_points: Optional native probability grid size per slice.
+                ``None`` uses the smart native grid policy.
 
         Returns:
             ProbSurface: Surface with per-expiry distributions.
@@ -1438,7 +1450,7 @@ class VolSurface:
 
         from oipd.interface.probability import ProbSurface
 
-        return ProbSurface(vol_surface=self)
+        return ProbSurface(vol_surface=self, grid_points=grid_points)
 
     def atm_vol(self, t: float | str | date | pd.Timestamp) -> float:
         """Return At-The-Money (ATM) implied volatility at time t.

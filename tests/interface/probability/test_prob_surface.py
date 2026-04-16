@@ -74,6 +74,9 @@ def _assert_probcurve_contract_matches(
 
     for metadata_key in (
         "resolved_domain",
+        "default_view_domain",
+        "default_view_domain_source",
+        "default_view_quantiles",
         "domain_expansions",
         "tail_mass_beyond_upper",
     ):
@@ -86,12 +89,39 @@ def _assert_probcurve_contract_matches(
     )
 
 
-def _derive_direct_probability_arrays(vol_curve, *, points: int = 200):
+def _assert_direct_cdf_diagnostics_pass(metadata) -> None:
+    """Assert canonical direct-CDF metadata satisfies current thresholds.
+
+    Args:
+        metadata: Probability metadata emitted during materialization.
+    """
+    assert metadata["cdf_method"] == "call_price_first_derivative"
+    assert metadata["cdf_cleanup_policy"] == "minimal_epsilon_cleanup"
+    assert np.isfinite(metadata["raw_cdf_start"])
+    assert np.isfinite(metadata["raw_cdf_end"])
+    assert np.isfinite(metadata["raw_cdf_min"])
+    assert np.isfinite(metadata["raw_cdf_max"])
+    assert np.isfinite(metadata["raw_cdf_max_negative_step"])
+    assert np.isfinite(metadata["cdf_pdf_interval_max_error"])
+    assert np.isfinite(metadata["cdf_pdf_interval_mean_error"])
+    raw_boundary_tolerance = 1e-4
+    assert metadata["raw_cdf_is_monotone"]
+    assert metadata["raw_cdf_negative_step_count"] == 0
+    assert metadata["raw_cdf_min"] >= -raw_boundary_tolerance
+    assert metadata["raw_cdf_max"] <= 1.0 + raw_boundary_tolerance
+    assert abs(metadata["raw_cdf_start"]) <= raw_boundary_tolerance
+    assert abs(metadata["raw_cdf_end"] - 1.0) <= raw_boundary_tolerance
+    assert metadata["raw_cdf_max_negative_step"] >= -1e-10
+    assert metadata["cdf_pdf_interval_max_error"] <= 1e-2
+    assert metadata["cdf_pdf_interval_mean_error"] <= 2e-3
+
+
+def _derive_direct_probability_arrays(vol_curve, *, points: int | None = None):
     """Derive probability arrays through the stateless single-expiry pipeline.
 
     Args:
         vol_curve: Fitted public VolCurve object.
-        points: Native grid resolution for the direct derivation.
+        points: Optional native grid resolution for the direct derivation.
 
     Returns:
         tuple: Direct ``prices``, ``pdf_values``, ``cdf_values``, and metadata.
@@ -457,6 +487,7 @@ class TestProbSurfaceLazyMaterialization:
         np.testing.assert_allclose(surface_curve.prices, expected_prices)
         np.testing.assert_allclose(surface_curve.pdf_values, expected_pdf)
         np.testing.assert_allclose(surface_curve.cdf_values, expected_cdf)
+        _assert_direct_cdf_diagnostics_pass(surface_curve.metadata)
 
     def test_probsurface_snapshot_survives_parent_volsurface_refit(
         self,
@@ -667,7 +698,9 @@ class TestProbSurfaceSlice:
         pillar_expiry = prob_surface_with_native_resolution.expiries[0]
 
         surface_curve = prob_surface_with_native_resolution.slice(pillar_expiry)
-        direct_curve = fitted_vol_surface.slice(pillar_expiry).implied_distribution()
+        direct_curve = fitted_vol_surface.slice(pillar_expiry).implied_distribution(
+            grid_points=200,
+        )
 
         _assert_probcurve_contract_matches(surface_curve, direct_curve)
 
@@ -707,7 +740,7 @@ class TestProbSurfaceSlice:
         )
         direct_curve = fitted_vol_surface.slice(
             INTERIOR_INTERPOLATED_EXPIRY
-        ).implied_distribution()
+        ).implied_distribution(grid_points=200)
 
         _assert_probcurve_contract_matches(surface_curve, direct_curve)
 
@@ -718,7 +751,9 @@ class TestProbSurfaceSlice:
         pillar_expiry = prob_surface_with_native_resolution.expiries[0]
 
         surface_curve = prob_surface_with_native_resolution.slice(pillar_expiry)
-        direct_curve = fitted_vol_surface.slice(pillar_expiry).implied_distribution()
+        direct_curve = fitted_vol_surface.slice(pillar_expiry).implied_distribution(
+            grid_points=200,
+        )
 
         for metadata_key in (
             "raw_observed_domain",
@@ -896,7 +931,7 @@ class TestProbSurfaceDensityResults:
         )
 
     def test_density_results_defaults_to_daily_grid(self, prob_surface):
-        """Default export contains a daily grid spanning the fitted horizon."""
+        """Default export contains daily expiries with compact per-slice grids."""
         result = prob_surface.density_results()
         unique_expiries = pd.to_datetime(result["expiry"]).drop_duplicates()
         expected_days = (
@@ -905,6 +940,8 @@ class TestProbSurfaceDensityResults:
         assert unique_expiries.min() == min(prob_surface.expiries)
         assert unique_expiries.max() == max(prob_surface.expiries)
         assert len(unique_expiries) == expected_days
+        assert len(result) == expected_days * 200
+        assert (result.groupby("expiry").size() == 200).all()
 
     def test_density_results_step_grid_includes_off_step_pillars(self, prob_surface):
         """Off-step fitted pillars are preserved alongside stepped dates."""
@@ -965,6 +1002,40 @@ class TestProbSurfaceDensityResults:
         np.testing.assert_allclose(cached_curve.pdf_values, native_pdf)
         np.testing.assert_allclose(cached_curve.cdf_values, native_cdf)
         assert cached_curve.metadata == native_metadata
+
+    def test_density_results_full_domain_exports_native_pillar_rows(
+        self,
+        prob_surface,
+    ):
+        """full_domain=True with pillar export returns each native slice grid."""
+        expected_lengths = {
+            pd.Timestamp(expiry): len(prob_surface.slice(expiry).prices)
+            for expiry in prob_surface.expiries
+        }
+
+        result = prob_surface.density_results(full_domain=True, step_days=None)
+        observed_lengths = result.groupby("expiry").size()
+
+        assert set(pd.to_datetime(observed_lengths.index)) == set(expected_lengths)
+        for expiry, expected_length in expected_lengths.items():
+            assert observed_lengths.loc[expiry] == expected_length
+
+    def test_density_results_default_pillar_export_is_not_native_grid(
+        self,
+        prob_surface,
+    ):
+        """Default pillar export should use compact view rows, not native rows."""
+        pillar_expiry = prob_surface.expiries[0]
+        native_length = len(prob_surface.slice(pillar_expiry).prices)
+
+        result = prob_surface.density_results(
+            start=pillar_expiry,
+            end=pillar_expiry,
+            step_days=None,
+        )
+
+        assert len(result) == 200
+        assert len(result) != native_length
 
     def test_density_results_does_not_persist_daily_transient_slice_cache(
         self,

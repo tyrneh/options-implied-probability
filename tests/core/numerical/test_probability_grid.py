@@ -10,10 +10,16 @@ import pytest
 
 from oipd.market_inputs import MarketInputs, resolve_market
 from oipd.pipelines.probability.rnd_curve import (
+    DEFAULT_NATIVE_GRID_MAX_POINTS,
+    DEFAULT_NATIVE_GRID_MIN_POINTS,
     DEFAULT_PDF_TAIL_MASS_TOLERANCE,
+    DEFAULT_VIEW_DOMAIN_SOURCE,
+    DEFAULT_VIEW_QUANTILES,
     _build_strike_grid,
     _build_grid_with_spacing,
     _grid_spacing_from_initial_domain,
+    _resolve_native_grid_points,
+    _resolve_default_view_domain,
     resolve_pdf_domain,
 )
 
@@ -73,6 +79,130 @@ def test_build_strike_grid_uses_default_domain():
     np.testing.assert_allclose(grid[0], 80.0)
     np.testing.assert_allclose(grid[-1], 120.0)
     np.testing.assert_allclose(np.diff(grid), np.diff(grid)[0])
+
+
+def test_resolve_native_grid_points_small_domain_hits_min_cap() -> None:
+    """Auto native grid policy should not go below the minimum point cap."""
+    result = _resolve_native_grid_points(
+        (99.0, 101.0),
+        pricing_underlying=100.0,
+    )
+
+    assert result.policy == "auto"
+    assert result.points == DEFAULT_NATIVE_GRID_MIN_POINTS
+    assert result.hit_min_cap
+    assert not result.hit_max_cap
+    assert result.actual_step < 0.01
+
+
+def test_resolve_native_grid_points_wide_spy_domain_exceeds_legacy_default() -> None:
+    """Wide SPY-like domains should receive more than 200 native points."""
+    result = _resolve_native_grid_points(
+        (0.01, 1635.0),
+        pricing_underlying=500.0,
+        observed_strikes=pd.DataFrame({"strike": np.arange(450.0, 551.0, 5.0)}),
+    )
+
+    assert result.policy == "auto"
+    assert result.points > 200
+    assert result.points > DEFAULT_NATIVE_GRID_MIN_POINTS
+    assert result.observed_gap == pytest.approx(5.0)
+    assert result.target_step == pytest.approx(2.5)
+    assert result.actual_step <= result.target_step
+
+
+def test_resolve_native_grid_points_btc_domain_does_not_exceed_max_cap() -> None:
+    """BTC-like wide domains should be capped at the native-grid maximum."""
+    result = _resolve_native_grid_points(
+        (0.01, 2_000_000.0),
+        pricing_underlying=100_000.0,
+    )
+
+    assert result.policy == "auto"
+    assert result.points == DEFAULT_NATIVE_GRID_MAX_POINTS
+    assert result.hit_max_cap
+    assert not result.hit_min_cap
+
+
+def test_resolve_native_grid_points_fixed_grid_points_override_auto() -> None:
+    """Explicit fixed grid_points should resolve exactly to the requested size."""
+    result = _resolve_native_grid_points(
+        (0.01, 1635.0),
+        pricing_underlying=500.0,
+        grid_points=400,
+        observed_strikes=pd.DataFrame({"strike": [450.0, 455.0, 460.0]}),
+    )
+
+    assert result.policy == "fixed"
+    assert result.points == 400
+    assert result.target_step is None
+    assert not result.hit_min_cap
+    assert not result.hit_max_cap
+    assert result.observed_gap == pytest.approx(5.0)
+
+
+def test_resolve_default_view_domain_includes_observed_domain_and_anchors() -> None:
+    """Default view domain should stay native-bounded but include key anchors."""
+    prices = np.linspace(0.01, 200.0, 1001)
+    cdf_values = np.linspace(0.0, 1.0, prices.size)
+
+    metadata = _resolve_default_view_domain(
+        prices,
+        cdf_values,
+        observed_domain=(80.0, 120.0),
+        pricing_underlying=100.0,
+        spot_price=95.0,
+        forward_price=125.0,
+    )
+
+    view_low, view_high = metadata["default_view_domain"]
+    assert metadata["default_view_domain_source"] == DEFAULT_VIEW_DOMAIN_SOURCE
+    assert metadata["default_view_quantiles"] == DEFAULT_VIEW_QUANTILES
+    assert prices[0] <= view_low < view_high <= prices[-1]
+    assert view_low <= 80.0
+    assert view_high >= 120.0
+    assert view_low <= 95.0 <= view_high
+    assert view_low <= 100.0 <= view_high
+    assert view_low <= 125.0 <= view_high
+
+
+def test_resolve_default_view_domain_excludes_btc_like_far_tail() -> None:
+    """Compact view domain should avoid showing irrelevant wide right tails."""
+    prices = np.linspace(0.01, 2_000_000.0, 2500)
+    logistic_argument = np.clip((prices - 100_000.0) / 10_000.0, -50.0, 50.0)
+    cdf_values = 1.0 / (1.0 + np.exp(-logistic_argument))
+    cdf_values[0] = 0.0
+    cdf_values[-1] = 1.0
+
+    metadata = _resolve_default_view_domain(
+        prices,
+        cdf_values,
+        observed_domain=(90_000.0, 110_000.0),
+        pricing_underlying=100_000.0,
+        spot_price=100_000.0,
+        forward_price=101_000.0,
+    )
+
+    view_low, view_high = metadata["default_view_domain"]
+    assert prices[0] <= view_low < view_high <= prices[-1]
+    assert view_low <= 90_000.0
+    assert view_high >= 110_000.0
+    assert view_low <= 101_000.0 <= view_high
+    assert view_high < 500_000.0
+    assert view_high < prices[-1] * 0.5
+
+
+@pytest.mark.parametrize("bad_grid_points", [True, False, 4, 0, -1])
+def test_resolve_native_grid_points_rejects_bool_and_too_few_points(
+    bad_grid_points,
+) -> None:
+    """Explicit native grid_points should reject booleans and values below 5."""
+    with pytest.raises(ValueError, match="grid_points"):
+        _resolve_native_grid_points(
+            (0.01, 100.0),
+            pricing_underlying=100.0,
+            grid_points=bad_grid_points,
+        )
 
 
 def test_build_strike_grid_uses_observed_strikes_for_bounds():
