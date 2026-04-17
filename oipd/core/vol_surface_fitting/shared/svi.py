@@ -39,6 +39,34 @@ JW_SEED_DIRECTIONS: Tuple[Tuple[float, float, float, float, float], ...] = (
 _SVI_OPTION_KEYS = SVICalibrationOptions.field_names()
 logger = get_logger("oipd.svi")
 
+_BID_ASK_SPREAD_POSITIVITY_EPS = 10.0 * np.finfo(float).eps
+_INVERSE_SPREAD_WEIGHT_FLOOR = 1e-4
+# A bid/ask spread is treated as a reliable measurement-quality signal only
+# when enough aligned quotes are valid and the valid quotes cover enough of the
+# slice. If not, default vega+spread weighting falls back to volume liquidity.
+_MEASUREMENT_MIN_VALID_COUNT = 5
+_MEASUREMENT_MIN_COVERAGE = 0.50
+_NO_AUXILIARY_WEIGHTING_MODES = {"none", "off", "disabled"}
+_VEGA_ONLY_WEIGHTING_MODES = {"vega"}
+_MEASUREMENT_ONLY_WEIGHTING_MODES = {"spread", "measurement"}
+_VEGA_MEASUREMENT_WEIGHTING_MODES = {
+    "vega+spread",
+    "spread+vega",
+    "vega_spread",
+    "spread_vega",
+    "vega+measurement",
+    "measurement+vega",
+    "vega_measurement",
+    "measurement_vega",
+}
+_VEGA_VOLUME_WEIGHTING_MODES = {
+    "volume",
+    "vega+volume",
+    "volume+vega",
+    "vega_volume",
+    "volume_vega",
+}
+
 
 @dataclass(frozen=True)
 class SVIParameters:
@@ -814,6 +842,271 @@ def _initial_guess(k: np.ndarray, total_variance: np.ndarray) -> np.ndarray:
     return np.array([a0, b0, rho0, m0, sigma0], dtype=float)
 
 
+@dataclass(frozen=True)
+class _AuxiliaryWeightCandidates:
+    measurement_weights: np.ndarray | None
+    measurement_reliable: bool
+    bid_ask_valid_count: int
+    bid_ask_coverage: float
+    volume_weights: np.ndarray | None
+    volume_valid_count: int
+
+
+@dataclass(frozen=True)
+class _AuxiliaryWeightSelection:
+    source: str
+    fallback_reason: str
+
+
+@dataclass(frozen=True)
+class _SVIWeightingResult:
+    weights: np.ndarray
+    volume_used: bool
+    measurement_used: bool
+    auxiliary_source: str
+    fallback_reason: str
+    bid_ask_valid_count: int
+    bid_ask_coverage: float
+    volume_valid_count: int
+
+
+def _normalise_weighting_mode(mode: str) -> str:
+    return str(mode or "").strip().lower()
+
+
+def _measurement_weight_candidate(
+    reference_shape: tuple[int, ...],
+    bid_iv: np.ndarray | None,
+    ask_iv: np.ndarray | None,
+) -> tuple[np.ndarray | None, bool, int, float]:
+    """Build inverse-spread weights from aligned bid/ask IV arrays.
+
+    Bid/ask spread is preferred over volume as the auxiliary liquidity signal
+    when the quote quality is reliable enough: at least five positive spreads
+    and at least 50% valid coverage across the slice.
+    """
+
+    size = reference_shape[0] if reference_shape else 0
+    if bid_iv is None or ask_iv is None:
+        return None, False, 0, 0.0
+
+    bid_arr = np.asarray(bid_iv, dtype=float)
+    ask_arr = np.asarray(ask_iv, dtype=float)
+    if bid_arr.shape != reference_shape or ask_arr.shape != reference_shape:
+        raise ValueError("bid_iv and ask_iv must have the same shape as k")
+
+    spread = ask_arr - bid_arr
+    valid_mask = (
+        np.isfinite(bid_arr)
+        & np.isfinite(ask_arr)
+        & (spread > _BID_ASK_SPREAD_POSITIVITY_EPS)
+    )
+    valid_count = int(np.count_nonzero(valid_mask))
+    coverage = float(valid_count / size) if size > 0 else 0.0
+
+    if valid_count == 0:
+        return None, False, valid_count, coverage
+
+    measurement_weights = np.ones(reference_shape, dtype=float)
+    spread_safe = np.maximum(spread, _INVERSE_SPREAD_WEIGHT_FLOOR)
+    measurement_weights[valid_mask] = 1.0 / spread_safe[valid_mask]
+    reliable = (
+        valid_count >= _MEASUREMENT_MIN_VALID_COUNT
+        and coverage >= _MEASUREMENT_MIN_COVERAGE
+    )
+    return measurement_weights, reliable, valid_count, coverage
+
+
+def _volume_weight_candidate(
+    reference_shape: tuple[int, ...],
+    volumes: np.ndarray | None,
+) -> tuple[np.ndarray | None, int]:
+    """Build volume weights from the aligned numeric ``volumes`` array.
+
+    Upstream data frames use the singular ``volume`` column name; by the time
+    calibration is called, those values have been aligned to ``k`` and passed
+    as this plural ``volumes`` array. Volume is a fallback liquidity signal when
+    reliable bid/ask spread quality is unavailable.
+    """
+
+    if volumes is None:
+        return None, 0
+
+    vol_arr = np.asarray(volumes, dtype=float)
+    if vol_arr.shape != reference_shape:
+        raise ValueError("volumes must have the same shape as k")
+
+    valid_mask = np.isfinite(vol_arr) & (vol_arr > 0)
+    valid_count = int(np.count_nonzero(valid_mask))
+    if valid_count == 0:
+        return None, valid_count
+
+    fill_value = float(np.nanmedian(vol_arr[valid_mask]))
+    return np.where(valid_mask, vol_arr, fill_value), valid_count
+
+
+def _auxiliary_weight_candidates(
+    reference_shape: tuple[int, ...],
+    volumes: np.ndarray | None,
+    bid_iv: np.ndarray | None,
+    ask_iv: np.ndarray | None,
+) -> _AuxiliaryWeightCandidates:
+    measurement_weights, measurement_reliable, bid_ask_count, bid_ask_coverage = (
+        _measurement_weight_candidate(reference_shape, bid_iv, ask_iv)
+    )
+    volume_weights, volume_count = _volume_weight_candidate(reference_shape, volumes)
+    return _AuxiliaryWeightCandidates(
+        measurement_weights=measurement_weights,
+        measurement_reliable=measurement_reliable,
+        bid_ask_valid_count=bid_ask_count,
+        bid_ask_coverage=bid_ask_coverage,
+        volume_weights=volume_weights,
+        volume_valid_count=volume_count,
+    )
+
+
+def _select_auxiliary_weight_source(
+    mode_normalised: str,
+    candidates: _AuxiliaryWeightCandidates,
+) -> _AuxiliaryWeightSelection:
+    """Select the auxiliary residual-weight source for the requested mode.
+
+    In default vega+spread modes, reliable bid/ask spread is preferred. Volume
+    is used only as the fallback source when the measurement signal is missing
+    or fails the reliability thresholds.
+    """
+
+    measurement_usable = (
+        candidates.measurement_reliable and candidates.measurement_weights is not None
+    )
+    volume_usable = candidates.volume_weights is not None
+
+    if mode_normalised in _NO_AUXILIARY_WEIGHTING_MODES:
+        return _AuxiliaryWeightSelection("none", "weighting_mode_none")
+
+    if mode_normalised in _VEGA_ONLY_WEIGHTING_MODES:
+        return _AuxiliaryWeightSelection("none", "weighting_mode_vega")
+
+    if mode_normalised in _MEASUREMENT_ONLY_WEIGHTING_MODES:
+        if measurement_usable:
+            return _AuxiliaryWeightSelection("measurement", "")
+        return _AuxiliaryWeightSelection("none", "measurement_insufficient")
+
+    if mode_normalised in _VEGA_MEASUREMENT_WEIGHTING_MODES:
+        if measurement_usable:
+            return _AuxiliaryWeightSelection("measurement", "")
+        if volume_usable:
+            return _AuxiliaryWeightSelection("volume", "measurement_insufficient")
+        return _AuxiliaryWeightSelection("none", "measurement_insufficient")
+
+    if mode_normalised in _VEGA_VOLUME_WEIGHTING_MODES:
+        if volume_usable:
+            return _AuxiliaryWeightSelection("volume", "")
+        return _AuxiliaryWeightSelection("none", "volume_insufficient")
+
+    if measurement_usable:
+        return _AuxiliaryWeightSelection("measurement", "unknown_weighting_mode")
+    if volume_usable:
+        return _AuxiliaryWeightSelection("volume", "unknown_weighting_mode")
+    return _AuxiliaryWeightSelection("none", "unknown_weighting_mode")
+
+
+def _vega_component_weights(
+    k: np.ndarray,
+    total_variance: np.ndarray,
+    maturity_years: float,
+) -> np.ndarray | None:
+    total_var_arr = np.asarray(total_variance, dtype=float)
+    total_var_arr = np.maximum(total_var_arr, 1e-12)
+    iv = np.sqrt(total_var_arr / maturity_years)
+    sqrt_t = np.sqrt(max(maturity_years, 1e-12))
+
+    if not np.isfinite(sqrt_t):
+        return None
+
+    strikes = np.exp(np.asarray(k, dtype=float))
+    ln_fk = -np.log(np.maximum(strikes, 1e-12))
+    denom = np.maximum(iv * sqrt_t, 1e-12)
+    d1 = (ln_fk + 0.5 * (iv**2) * maturity_years) / denom
+    phi = np.exp(-0.5 * np.square(d1)) / np.sqrt(2 * np.pi)
+    return np.maximum(sqrt_t * phi, 1e-8)
+
+
+def _normalise_and_cap_weights(weights: np.ndarray, weight_cap: float) -> np.ndarray:
+    weights = np.asarray(weights, dtype=float).copy()
+    mean_weight = float(np.mean(weights))
+    if mean_weight > 0:
+        weights = weights / mean_weight
+
+    if np.isfinite(weight_cap) and weight_cap > 0:
+        weights = np.clip(weights, 1e-6, weight_cap)
+
+    return weights
+
+
+def _build_svi_weighting_result(
+    k: np.ndarray,
+    total_variance: np.ndarray,
+    maturity_years: float,
+    mode: str,
+    weight_cap: float,
+    volumes: np.ndarray | None = None,
+    bid_iv: np.ndarray | None = None,
+    ask_iv: np.ndarray | None = None,
+) -> _SVIWeightingResult:
+    size = k.shape[0]
+    neutral_weights = np.ones(size, dtype=float)
+    if size == 0 or maturity_years <= 0:
+        return _SVIWeightingResult(
+            weights=neutral_weights,
+            volume_used=False,
+            measurement_used=False,
+            auxiliary_source="none",
+            fallback_reason="invalid_weighting_input",
+            bid_ask_valid_count=0,
+            bid_ask_coverage=0.0,
+            volume_valid_count=0,
+        )
+
+    mode_normalised = _normalise_weighting_mode(mode)
+    candidates = _auxiliary_weight_candidates(k.shape, volumes, bid_iv, ask_iv)
+    selection = _select_auxiliary_weight_source(mode_normalised, candidates)
+
+    if mode_normalised in _NO_AUXILIARY_WEIGHTING_MODES:
+        weights = neutral_weights
+    elif (
+        mode_normalised in _MEASUREMENT_ONLY_WEIGHTING_MODES
+        and selection.source != "measurement"
+    ):
+        weights = neutral_weights
+    else:
+        if mode_normalised in _MEASUREMENT_ONLY_WEIGHTING_MODES:
+            weights = candidates.measurement_weights
+        else:
+            weights = _vega_component_weights(k, total_variance, maturity_years)
+            if weights is None:
+                weights = neutral_weights.copy()
+            if selection.source == "measurement":
+                weights = weights * candidates.measurement_weights
+            elif selection.source == "volume":
+                weights = weights * candidates.volume_weights
+
+        weights = _normalise_and_cap_weights(
+            np.asarray(weights, dtype=float), weight_cap
+        )
+
+    return _SVIWeightingResult(
+        weights=np.asarray(weights, dtype=float),
+        volume_used=selection.source == "volume",
+        measurement_used=selection.source == "measurement",
+        auxiliary_source=selection.source,
+        fallback_reason=selection.fallback_reason,
+        bid_ask_valid_count=candidates.bid_ask_valid_count,
+        bid_ask_coverage=candidates.bid_ask_coverage,
+        volume_valid_count=candidates.volume_valid_count,
+    )
+
+
 def _vega_based_weights(
     k: np.ndarray,
     total_variance: np.ndarray,
@@ -826,77 +1119,17 @@ def _vega_based_weights(
 ) -> tuple[np.ndarray, bool, bool]:
     """Construct weighting vector for the calibration objective."""
 
-    size = k.shape[0]
-    if size == 0 or maturity_years <= 0:
-        return np.ones(size, dtype=float), False, False
-
-    mode_normalised = mode.lower()
-    if mode_normalised in {"none", "off", "disabled"}:
-        return np.ones(size, dtype=float), False, False
-
-    total_var_arr = np.asarray(total_variance, dtype=float)
-    total_var_arr = np.maximum(total_var_arr, 1e-12)
-    iv = np.sqrt(total_var_arr / maturity_years)
-    sqrt_t = np.sqrt(max(maturity_years, 1e-12))
-
-    if not np.isfinite(sqrt_t):
-        return np.ones(size, dtype=float), False, False
-
-    strikes = np.exp(np.asarray(k, dtype=float))
-    ln_fk = -np.log(np.maximum(strikes, 1e-12))
-    denom = np.maximum(iv * sqrt_t, 1e-12)
-    d1 = (ln_fk + 0.5 * (iv**2) * maturity_years) / denom
-    phi = np.exp(-0.5 * np.square(d1)) / np.sqrt(2 * np.pi)
-    vega = sqrt_t * phi
-
-    weights = np.maximum(vega, 1e-8)
-    volume_used = False
-    measurement_used = False
-
-    measurement_weights: np.ndarray | None = None
-    if bid_iv is not None and ask_iv is not None:
-        bid_arr = np.asarray(bid_iv, dtype=float)
-        ask_arr = np.asarray(ask_iv, dtype=float)
-        if bid_arr.shape != weights.shape or ask_arr.shape != weights.shape:
-            raise ValueError("bid_iv and ask_iv must have the same shape as k")
-        spread = ask_arr - bid_arr
-        mask = np.isfinite(spread) & (spread > 0.0)
-        if mask.any():
-            spread_safe = np.maximum(spread, 1e-4)
-            measurement_weights = np.ones_like(weights)
-            measurement_weights[mask] = 1.0 / spread_safe[mask]
-            measurement_used = True
-
-    if volumes is not None:
-        vol_arr = np.asarray(volumes, dtype=float)
-        if vol_arr.shape != weights.shape:
-            raise ValueError("volumes must have the same shape as k")
-        valid_mask = np.isfinite(vol_arr) & (vol_arr > 0)
-        if valid_mask.any():
-            fill_value = float(np.nanmedian(vol_arr[valid_mask]))
-            vol_weights = np.where(valid_mask, vol_arr, fill_value)
-            weights *= vol_weights
-            volume_used = True
-
-    if mode_normalised in {"spread", "measurement"}:
-        if measurement_weights is None:
-            return np.ones(size, dtype=float), volume_used, False
-        weights = measurement_weights.copy()
-    elif mode_normalised in {"vega+spread", "spread+vega", "vega_spread"}:
-        if measurement_weights is not None:
-            weights = weights * measurement_weights
-        measurement_used = measurement_used and measurement_weights is not None
-    else:
-        measurement_used = measurement_used and mode_normalised != "vega"
-
-    mean_weight = float(np.mean(weights))
-    if mean_weight > 0:
-        weights = weights / mean_weight
-
-    if np.isfinite(weight_cap) and weight_cap > 0:
-        weights = np.clip(weights, 1e-6, weight_cap)
-
-    return weights, volume_used, measurement_used
+    result = _build_svi_weighting_result(
+        k,
+        total_variance,
+        maturity_years,
+        mode,
+        weight_cap,
+        volumes,
+        bid_iv,
+        ask_iv,
+    )
+    return result.weights, result.volume_used, result.measurement_used
 
 
 def _qe_split_seeds(
@@ -1175,11 +1408,15 @@ def calibrate_svi_parameters(
         maturity_years: Time to expiry in year fractions.
         config: Optional SVI calibration configuration overrides.
         bid_iv: Optional array of observed bid implied volatilities aligned with
-            ``k`` used by the bid/ask envelope penalty.
+            ``k`` used by the bid/ask envelope penalty and, when reliable, as
+            the preferred bid/ask spread weighting signal.
         ask_iv: Optional array of observed ask implied volatilities aligned with
-            ``k`` used by the bid/ask envelope penalty.
-        volumes: Optional array of trade volumes aligned with ``k`` used for
-            vega × volume weighting of residuals.
+            ``k`` used by the bid/ask envelope penalty and, when reliable, as
+            the preferred bid/ask spread weighting signal.
+        volumes: Optional numeric array of trade volumes aligned with ``k``.
+            Upstream data frames use the singular ``volume`` column name; this
+            argument is the extracted ``volumes`` array used as fallback
+            liquidity weighting when reliable bid/ask spread quality is absent.
 
     Returns:
         A tuple containing the calibrated :class:`SVIParameters` and an
@@ -1243,7 +1480,7 @@ def calibrate_svi_parameters(
     heuristic_guess = _initial_guess(k, total_variance)
     bounds = _build_bounds(k, maturity_years, options)
 
-    weights_array, volume_used, measurement_used = _vega_based_weights(
+    weighting_result = _build_svi_weighting_result(
         k,
         total_variance,
         maturity_years,
@@ -1253,6 +1490,7 @@ def calibrate_svi_parameters(
         bid_iv_arr,
         ask_iv_arr,
     )
+    weights_array = weighting_result.weights
     weights = np.asarray(weights_array, dtype=float)
     if weights.shape != k.shape:
         raise ValueError("weights must have the same shape as k")
@@ -1410,8 +1648,13 @@ def calibrate_svi_parameters(
         weights_min=float(weights.min()),
         weights_max=float(weights.max()),
         envelope_weight=float(envelope_weight),
-        weights_volume_used=bool(volume_used),
-        weights_measurement_used=bool(measurement_used),
+        weights_volume_used=bool(weighting_result.volume_used),
+        weights_measurement_used=bool(weighting_result.measurement_used),
+        weights_auxiliary_source=weighting_result.auxiliary_source,
+        weights_fallback_reason=weighting_result.fallback_reason,
+        weights_bid_ask_valid_count=weighting_result.bid_ask_valid_count,
+        weights_bid_ask_coverage=weighting_result.bid_ask_coverage,
+        weights_volume_valid_count=weighting_result.volume_valid_count,
         qe_seed_count=len(qe_seeds),
     )
     diagnostics.random_seed = random_seed if random_seed is not None else None
