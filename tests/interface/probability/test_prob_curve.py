@@ -43,6 +43,9 @@ def _assert_direct_cdf_diagnostics_pass(metadata):
     """
     assert metadata["cdf_method"] == "call_price_first_derivative"
     assert metadata["cdf_cleanup_policy"] == "minimal_epsilon_cleanup"
+    assert (
+        metadata["cdf_upper_tail_clip_policy"] == "clip_finite_monotone_small_overshoot"
+    )
     assert np.isfinite(metadata["raw_cdf_start"])
     assert np.isfinite(metadata["raw_cdf_end"])
     assert np.isfinite(metadata["raw_cdf_min"])
@@ -57,14 +60,20 @@ def _assert_direct_cdf_diagnostics_pass(metadata):
     assert metadata["native_grid_actual_step"] > 0.0
     assert metadata["native_grid_reference_price"] >= 1.0
     assert metadata["native_grid_domain_width"] > 0.0
-    raw_boundary_tolerance = 1e-4
+    raw_lower_boundary_tolerance = 1e-4
+    raw_upper_boundary_tolerance = metadata["cdf_upper_tail_clip_tolerance"]
+    raw_monotonicity_tolerance = 1e-6
     assert metadata["raw_cdf_is_monotone"]
     assert metadata["raw_cdf_negative_step_count"] == 0
-    assert metadata["raw_cdf_min"] >= -raw_boundary_tolerance
-    assert metadata["raw_cdf_max"] <= 1.0 + raw_boundary_tolerance
-    assert abs(metadata["raw_cdf_start"]) <= raw_boundary_tolerance
-    assert abs(metadata["raw_cdf_end"] - 1.0) <= raw_boundary_tolerance
-    assert metadata["raw_cdf_max_negative_step"] >= -1e-10
+    assert metadata["raw_cdf_min"] >= -raw_lower_boundary_tolerance
+    assert metadata["raw_cdf_max"] <= 1.0 + raw_upper_boundary_tolerance
+    assert abs(metadata["raw_cdf_start"]) <= raw_lower_boundary_tolerance
+    assert abs(metadata["raw_cdf_end"] - 1.0) <= raw_upper_boundary_tolerance
+    assert metadata["raw_cdf_max_negative_step"] >= -raw_monotonicity_tolerance
+    assert metadata["cdf_upper_tail_clip_tolerance"] == pytest.approx(1e-3)
+    assert metadata["cdf_upper_tail_max_excess"] <= raw_upper_boundary_tolerance
+    if metadata["cdf_upper_tail_clip_applied"]:
+        assert metadata["cdf_upper_tail_clip_count"] > 0
     assert metadata["cdf_pdf_interval_max_error"] <= 1e-2
     assert metadata["cdf_pdf_interval_mean_error"] <= 2e-3
 
@@ -530,6 +539,11 @@ class TestProbCurveProperties:
             "cdf_right_endpoint_snapped",
             "cdf_lower_clip_count",
             "cdf_upper_clip_count",
+            "cdf_upper_tail_clip_policy",
+            "cdf_upper_tail_clip_applied",
+            "cdf_upper_tail_clip_tolerance",
+            "cdf_upper_tail_max_excess",
+            "cdf_upper_tail_clip_count",
             "cdf_pdf_interval_max_error",
             "cdf_pdf_interval_mean_error",
         ):

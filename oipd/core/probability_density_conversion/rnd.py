@@ -13,6 +13,7 @@ from oipd.core.errors import InvalidInputError
 from .finite_diff import finite_diff_first_derivative, finite_diff_second_derivative
 
 CDF_EPSILON = 1e-5
+CDF_UPPER_TAIL_CLIP_TOLERANCE = 1e-3
 MONOTONICITY_EPSILON = 1e-6
 NEAR_ZERO_STRIKE_ABS = 0.01
 NEAR_ZERO_STRIKE_REL = 1e-6
@@ -169,17 +170,18 @@ def _fail_if_direct_cdf_violates_thresholds(
         diagnostics: Scalar diagnostics computed from ``cdf_values``.
 
     Raises:
-        InvalidInputError: If the raw CDF is non-finite, materially outside
-            ``[0, 1]``, or materially non-monotone.
+        InvalidInputError: If the raw CDF is non-finite, materially below
+            zero, materially non-monotone, or materially above one beyond the
+            documented small upper-tail clipping tolerance.
     """
     if not np.all(np.isfinite(cdf_values)):
         raise InvalidInputError("Direct CDF contains non-finite values.")
     if float(diagnostics["min"]) < -CDF_EPSILON:
         raise InvalidInputError("Direct CDF is materially below zero.")
-    if float(diagnostics["max"]) > 1.0 + CDF_EPSILON:
-        raise InvalidInputError("Direct CDF is materially above one.")
     if float(diagnostics["min_step"]) < -MONOTONICITY_EPSILON:
         raise InvalidInputError("Direct CDF is materially non-monotone.")
+    if float(diagnostics["max"]) > 1.0 + CDF_UPPER_TAIL_CLIP_TOLERANCE:
+        raise InvalidInputError("Direct CDF is materially above one.")
 
 
 def _minimal_direct_cdf_cleanup(
@@ -188,7 +190,7 @@ def _minimal_direct_cdf_cleanup(
     *,
     reference_price: float | None = None,
 ) -> tuple[np.ndarray, dict[str, float | int | bool | str]]:
-    """Apply only epsilon-level cleanup to a raw direct CDF.
+    """Apply bounded numerical cleanup to a raw direct CDF.
 
     Args:
         strikes: Strike grid aligned with ``raw_cdf_values``.
@@ -198,7 +200,9 @@ def _minimal_direct_cdf_cleanup(
 
     Returns:
         tuple[np.ndarray, dict[str, float | int | bool | str]]: Cleaned CDF
-        values plus diagnostics and cleanup flags.
+        values plus diagnostics and cleanup flags. Cleanup is limited to tiny
+        endpoint dust and explicit clipping of finite, monotone upper-tail
+        overshoots no larger than ``CDF_UPPER_TAIL_CLIP_TOLERANCE``.
 
     Raises:
         InvalidInputError: If the raw CDF has meaningful bound, finiteness, or
@@ -227,6 +231,7 @@ def _minimal_direct_cdf_cleanup(
     upper_clip_mask = cleaned > 1.0
     lower_clip_count = int(np.count_nonzero(lower_clip_mask))
     upper_clip_count = int(np.count_nonzero(upper_clip_mask))
+    upper_tail_max_excess = max(0.0, float(diagnostics["max"]) - 1.0)
     cleaned[lower_clip_mask] = 0.0
     cleaned[upper_clip_mask] = 1.0
 
@@ -241,6 +246,11 @@ def _minimal_direct_cdf_cleanup(
         "cdf_right_endpoint_snapped": right_endpoint_snapped,
         "cdf_lower_clip_count": lower_clip_count,
         "cdf_upper_clip_count": upper_clip_count,
+        "cdf_upper_tail_clip_policy": "clip_finite_monotone_small_overshoot",
+        "cdf_upper_tail_clip_applied": bool(upper_clip_count > 0),
+        "cdf_upper_tail_clip_tolerance": CDF_UPPER_TAIL_CLIP_TOLERANCE,
+        "cdf_upper_tail_max_excess": upper_tail_max_excess,
+        "cdf_upper_tail_clip_count": upper_clip_count,
         "cdf_near_zero_strike_threshold": near_zero_threshold,
         "raw_cdf_start": diagnostics["start"],
         "raw_cdf_end": diagnostics["end"],

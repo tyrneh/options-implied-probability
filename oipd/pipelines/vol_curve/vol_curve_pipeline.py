@@ -59,8 +59,7 @@ def fit_vol_curve_internal(
     suppress_price_warning: bool = False,
     suppress_staleness_warning: bool = False,
 ) -> Tuple[Any, Dict[str, Any]]:
-    """
-    Fit a volatility curve to a single slice of options data.
+    """Fit a volatility curve to a single slice of options data.
 
     This function performs vol-only fitting without computing the risk-neutral
     distribution (RND). RND computation is deferred to ``implied_distribution()``.
@@ -71,7 +70,6 @@ def fit_vol_curve_internal(
         pricing_engine: 'black76' or 'bs'.
         price_method: Column to use for pricing ('mid', 'last', etc.).
         max_staleness_days: Filter out quotes older than this.
-        max_staleness_days: Filter out quotes older than this.
         solver: IV solver method.
         method: Volatility fitting method (e.g., 'svi').
         method_options: Options for the fitting method.
@@ -79,9 +77,13 @@ def fit_vol_curve_internal(
         suppress_staleness_warning: If True, suppress warning when filtering stale quotes.
 
     Returns:
-        Tuple containing:
-        - The fitted volatility curve object (callable).
-        - A dictionary of metadata (residuals, parameters, etc.).
+        Tuple containing the fitted volatility curve object and metadata.
+
+    Raises:
+        CalculationError: If maturity, parity forward inference, price selection,
+            or implied-volatility extraction fails.
+        ValueError: If input cleaning, parity preprocessing, or numerical inputs are
+            structurally invalid.
     """
     valuation_timestamp = resolved_market.valuation_timestamp
 
@@ -128,6 +130,8 @@ def fit_vol_curve_internal(
     parity_adjusted, forward_price = apply_put_call_parity(
         cleaned_options, effective_spot, resolved_market
     )
+    parity_report = parity_adjusted.attrs.get("parity_report")
+    forward_price_source = None
 
     # For Black-76, use forward price; for BS, use spot
     if pricing_engine == "black76":
@@ -137,6 +141,7 @@ def fit_vol_curve_internal(
             )
         else:
             underlying_for_iv = forward_price
+            forward_price_source = "put_call_parity"
     else:
         underlying_for_iv = effective_spot
 
@@ -209,6 +214,15 @@ def fit_vol_curve_internal(
     if method == "svi":
 
         def _align_iv_series(iv_df: Optional[pd.DataFrame]) -> np.ndarray | None:
+            """Align observed IV values to the fitted strike order.
+
+            Args:
+                iv_df: Observed IV table with ``strike`` and ``iv`` columns.
+
+            Returns:
+                IV array in fitted strike order, or ``None`` when no finite IVs
+                are available.
+            """
             if iv_df is None or iv_df.empty:
                 return None
             joined = (
@@ -265,6 +279,10 @@ def fit_vol_curve_internal(
         "risk_free_rate_continuous": effective_r,
         **fit_metadata,
     }
+    if parity_report is not None:
+        metadata["parity_report"] = parity_report
+    if forward_price_source is not None:
+        metadata["forward_price_source"] = forward_price_source
 
     return vol_curve, metadata
 

@@ -177,6 +177,15 @@ vol_surface.fit(chain, market)  # chain contains multiple expiries
 prob_surface = vol_surface.implied_distribution()
 ```
 
+### 2.4 Black-76 forward inference metadata
+
+For Black-76 fits, OIPD infers the stored `forward_price` from same-strike
+put-call parity across valid call/put pairs. Internally retained fit diagnostics
+include a `parity_report` with pair counts, confidence, outlier counts, and the
+strikes used or excluded during the forward estimate. The public diagnostics
+surface for this report is still stabilizing, so treat it as debugging metadata
+rather than a stable user-facing API.
+
 ## 3. Surface Objects and `slice(...)`
 
 Both surface objects support *slicing*:

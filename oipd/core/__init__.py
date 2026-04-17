@@ -25,6 +25,7 @@ from oipd.core.data_processing.parity import (
     apply_put_call_parity_to_quotes,
     detect_parity_opportunity,
     infer_forward_from_atm,
+    infer_forward_from_put_call_parity,
     preprocess_with_parity,
 )
 from oipd.core.data_processing import filter_stale_options, select_price_column
@@ -49,6 +50,7 @@ _BASE_EXPORTS = [
     "AVAILABLE_SURFACE_FITS",
     "preprocess_with_parity",
     "infer_forward_from_atm",
+    "infer_forward_from_put_call_parity",
     "apply_put_call_parity_to_quotes",
     "apply_put_call_parity",
     "detect_parity_opportunity",

@@ -163,6 +163,25 @@ class TestVolSurfaceFit:
         vs.fit(multi_expiry_chain, market_inputs)
         assert len(vs.expiries) == 2
 
+    def test_fitted_slice_metadata_carries_parity_report(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Exact fitted surface slices should expose parity diagnostics.
+
+        Args:
+            multi_expiry_chain: Multi-expiry row-format option chain.
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+
+        fitted_slice = vs.slice(vs.expiries[0])
+
+        assert fitted_slice._metadata["parity_report"]["valid_pair_count"] >= 3
+        assert fitted_slice._metadata["forward_price_source"] == "put_call_parity"
+
     def test_fit_with_horizon_filter(self, multi_expiry_chain, market_inputs):
         """fit() respects horizon parameter."""
         from oipd import VolSurface

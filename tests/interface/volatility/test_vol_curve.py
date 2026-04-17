@@ -57,6 +57,116 @@ def market_inputs():
     )
 
 
+def _black76_parity_chain_with_stale_last_prices(
+    *,
+    mid_forward: float = 100.0,
+    last_forward: float = 110.0,
+) -> pd.DataFrame:
+    """Create row-format options whose mids and last prices imply different forwards.
+
+    Args:
+        mid_forward: Forward price encoded by coherent bid/ask mid pairs.
+        last_forward: Stale forward price encoded by ``last_price`` pairs.
+
+    Returns:
+        Option chain with five same-strike call/put pairs.
+    """
+    from oipd.pricing.black76 import black76_call_price
+
+    strikes = np.array([90.0, 95.0, 100.0, 105.0, 110.0])
+    expiry = pd.Timestamp("2025-03-21")
+    risk_free_rate = 0.05
+    time_to_expiry_years = 79.0 / 365.0
+    discount_factor = np.exp(-risk_free_rate * time_to_expiry_years)
+    sigma = 0.30
+
+    call_mid = np.asarray(
+        black76_call_price(
+            mid_forward,
+            strikes,
+            sigma,
+            time_to_expiry_years,
+            risk_free_rate,
+        ),
+        dtype=float,
+    )
+    put_mid = call_mid - discount_factor * (mid_forward - strikes)
+    call_last = np.asarray(
+        black76_call_price(
+            last_forward,
+            strikes,
+            sigma,
+            time_to_expiry_years,
+            risk_free_rate,
+        ),
+        dtype=float,
+    )
+    put_last = call_last - discount_factor * (last_forward - strikes)
+
+    calls = pd.DataFrame(
+        {
+            "strike": strikes,
+            "last_price": call_last,
+            "bid": call_mid * 0.99,
+            "ask": call_mid * 1.01,
+            "option_type": ["C"] * len(strikes),
+            "expiry": [expiry] * len(strikes),
+        }
+    )
+    puts = pd.DataFrame(
+        {
+            "strike": strikes,
+            "last_price": put_last,
+            "bid": put_mid * 0.99,
+            "ask": put_mid * 1.01,
+            "option_type": ["P"] * len(strikes),
+            "expiry": [expiry] * len(strikes),
+        }
+    )
+
+    return pd.concat([calls, puts], ignore_index=True)
+
+
+def _black76_wide_call_put_chain(*, forward_price: float = 100.0) -> pd.DataFrame:
+    """Create wide-format call/put prices for public VolCurve fitting.
+
+    Args:
+        forward_price: Forward price encoded by explicit call/put columns.
+
+    Returns:
+        One row per strike with ``call_price`` and ``put_price`` columns.
+    """
+    from oipd.pricing.black76 import black76_call_price
+
+    strikes = np.array([90.0, 95.0, 100.0, 105.0, 110.0])
+    expiry = pd.Timestamp("2025-03-21")
+    risk_free_rate = 0.05
+    time_to_expiry_years = 79.0 / 365.0
+    discount_factor = np.exp(-risk_free_rate * time_to_expiry_years)
+    sigma = 0.30
+
+    call_prices = np.asarray(
+        black76_call_price(
+            forward_price,
+            strikes,
+            sigma,
+            time_to_expiry_years,
+            risk_free_rate,
+        ),
+        dtype=float,
+    )
+    put_prices = call_prices - discount_factor * (forward_price - strikes)
+
+    return pd.DataFrame(
+        {
+            "strike": strikes,
+            "call_price": call_prices,
+            "put_price": put_prices,
+            "expiry": [expiry] * len(strikes),
+        }
+    )
+
+
 @pytest.fixture
 def same_day_intraday_chain():
     """Single-expiry chain whose expiry is later on the valuation day."""
@@ -161,6 +271,139 @@ class TestVolCurveFit:
         vc.fit(sample_option_chain, market_inputs)
         assert vc.forward_price is not None
         assert vc.forward_price > 0
+
+    def test_black76_fit_metadata_includes_parity_report(
+        self, sample_option_chain, market_inputs
+    ):
+        """Black-76 fit metadata should expose parity diagnostics.
+
+        Args:
+            sample_option_chain: Row-format same-expiry option chain.
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolCurve
+
+        vc = VolCurve()
+        vc.fit(sample_option_chain, market_inputs)
+
+        parity_report = vc._metadata["parity_report"]
+        assert parity_report["valid_pair_count"] >= 3
+        assert parity_report["pairs_used_count"] >= 1
+
+    def test_black76_forward_price_metadata_marks_put_call_parity_source(
+        self, sample_option_chain, market_inputs
+    ):
+        """Black-76 metadata should label parity-derived stored forwards.
+
+        Args:
+            sample_option_chain: Row-format same-expiry option chain.
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolCurve
+
+        vc = VolCurve()
+        vc.fit(sample_option_chain, market_inputs)
+
+        assert vc._metadata["forward_price_source"] == "put_call_parity"
+
+    def test_last_price_fit_still_infers_forward_from_bid_ask_mids(self, market_inputs):
+        """Forward inference should prefer coherent mids over stale last prices.
+
+        Args:
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolCurve
+
+        chain = _black76_parity_chain_with_stale_last_prices(
+            mid_forward=100.0,
+            last_forward=110.0,
+        )
+
+        vc = VolCurve(price_method="last")
+        vc.fit(chain, market_inputs)
+
+        assert vc._metadata["forward_price"] == pytest.approx(100.0)
+        assert vc._metadata["forward_price"] != pytest.approx(110.0)
+        assert vc._metadata["forward_price_source"] == "put_call_parity"
+
+    def test_fit_accepts_bid_ask_only_row_format(self, market_inputs):
+        """Public fit should accept bid/ask-only parity row data.
+
+        Args:
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolCurve
+
+        chain = _black76_parity_chain_with_stale_last_prices(
+            mid_forward=100.0,
+            last_forward=110.0,
+        ).drop(columns=["last_price"])
+
+        vc = VolCurve()
+        vc.fit(chain, market_inputs)
+
+        assert vc._metadata["forward_price"] == pytest.approx(100.0)
+        assert vc._metadata["forward_price_source"] == "put_call_parity"
+        assert vc._metadata["parity_report"]["valid_pair_count"] == 5
+
+    def test_fit_accepts_wide_call_put_price_format(self, market_inputs):
+        """Public fit should accept explicit wide call/put price data.
+
+        Args:
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolCurve
+
+        chain = _black76_wide_call_put_chain(forward_price=100.0)
+
+        vc = VolCurve(price_method="last")
+        vc.fit(chain, market_inputs)
+
+        assert vc._metadata["forward_price"] == pytest.approx(100.0)
+        assert vc._metadata["forward_price_source"] == "put_call_parity"
+        assert vc._metadata["parity_report"]["valid_pair_count"] == 5
+
+    def test_black76_fit_zero_valid_pairs_fails_with_parity_message(
+        self, market_inputs
+    ):
+        """Black-76 public fit should fail clearly when parity has no valid pairs.
+
+        Args:
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolCurve
+
+        chain = pd.DataFrame(
+            {
+                "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
+                "call_price": [1.0, 1.0, 1.0, 1.0, 1.0],
+                "put_price": [200.0, 200.0, 200.0, 200.0, 200.0],
+                "expiry": [pd.Timestamp("2025-03-21")] * 5,
+            }
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Put-call parity preprocessing could not infer a forward",
+        ):
+            VolCurve().fit(chain, market_inputs)
+
+    def test_bs_fit_does_not_mark_spot_forward_as_parity_sourced(
+        self, sample_option_chain, market_inputs
+    ):
+        """BS metadata should not label stored spot/effective spot as parity forward.
+
+        Args:
+            sample_option_chain: Row-format same-expiry option chain.
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolCurve
+
+        vc = VolCurve(pricing_engine="bs")
+        vc.fit(sample_option_chain, market_inputs)
+
+        assert "parity_report" in vc._metadata
+        assert "forward_price_source" not in vc._metadata
 
     def test_fit_populates_atm_vol(self, sample_option_chain, market_inputs):
         """fit() populates ATM volatility."""

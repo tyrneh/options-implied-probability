@@ -359,7 +359,7 @@ def test_cdf_from_price_curve_rejects_meaningful_upper_bound_violation() -> None
     call_prices = _quadratic_call_prices_for_linear_raw_cdf(
         strikes,
         slope=0.25,
-        offset=2e-5,
+        offset=1.5e-3,
     )
 
     with pytest.raises(InvalidInputError, match="materially above one"):
@@ -370,6 +370,25 @@ def test_cdf_from_price_curve_rejects_meaningful_upper_bound_violation() -> None
             time_to_expiry_years=1.0,
             reference_price=1.0,
         )
+
+
+def test_minimal_direct_cdf_cleanup_clips_small_monotone_upper_overshoot() -> None:
+    """Small finite monotone upper-tail overshoots should be clipped visibly."""
+    strikes = np.linspace(0.0, 4.0, 5)
+    raw_cdf_values = np.array([0.0, 0.25, 0.50, 0.90, 1.0007045269])
+
+    cleaned, diagnostics = _minimal_direct_cdf_cleanup(
+        strikes,
+        raw_cdf_values,
+        reference_price=1.0,
+    )
+
+    assert cleaned[-1] == 1.0
+    assert np.all((0.0 <= cleaned) & (cleaned <= 1.0))
+    assert diagnostics["cdf_upper_tail_clip_applied"]
+    assert diagnostics["cdf_upper_tail_clip_tolerance"] == pytest.approx(1e-3)
+    assert diagnostics["cdf_upper_tail_max_excess"] == pytest.approx(0.0007045269)
+    assert diagnostics["cdf_upper_tail_clip_count"] == 1
 
 
 def test_minimal_direct_cdf_cleanup_rejects_monotonicity_violation() -> None:

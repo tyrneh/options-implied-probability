@@ -667,7 +667,8 @@ def _build_cdf_diagnostics(
 
     Returns:
         dict[str, Any]: Metadata fields describing CDF method, raw diagnostics,
-        cleanup decisions, and PDF/CDF interval consistency.
+        cleanup decisions including upper-tail clipping, and PDF/CDF interval
+        consistency.
     """
     diagnostics = cdf_result.diagnostics
     interval_diagnostics = _cdf_pdf_interval_diagnostics(
@@ -693,6 +694,11 @@ def _build_cdf_diagnostics(
         "cdf_right_endpoint_snapped": diagnostics["cdf_right_endpoint_snapped"],
         "cdf_lower_clip_count": diagnostics["cdf_lower_clip_count"],
         "cdf_upper_clip_count": diagnostics["cdf_upper_clip_count"],
+        "cdf_upper_tail_clip_policy": diagnostics["cdf_upper_tail_clip_policy"],
+        "cdf_upper_tail_clip_applied": diagnostics["cdf_upper_tail_clip_applied"],
+        "cdf_upper_tail_clip_tolerance": diagnostics["cdf_upper_tail_clip_tolerance"],
+        "cdf_upper_tail_max_excess": diagnostics["cdf_upper_tail_max_excess"],
+        "cdf_upper_tail_clip_count": diagnostics["cdf_upper_tail_clip_count"],
         "cdf_near_zero_strike_threshold": diagnostics["cdf_near_zero_strike_threshold"],
         "cdf_pdf_interval_max_error": interval_diagnostics["max_error"],
         "cdf_pdf_interval_mean_error": interval_diagnostics["mean_error"],

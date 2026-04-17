@@ -59,30 +59,33 @@ class AbstractReader(ABC):
         raise NotImplementedError("`_ingest_data` method has not been implemented")
 
     def _clean_data(self, raw_data: DataFrame) -> DataFrame:
-        """Default cleaning implementation.
+        """Clean raw options data into canonical numeric columns.
 
-        It verifies that required columns exist and converts them to proper numeric types.
-        Optional columns (bid, ask) are handled gracefully if missing.
-        Handles common data issues like missing values (dashes, empty strings) and
-        comma-separated numbers (e.g., "1,200"). It also supports strike strings that
-        end with an option designator (e.g., "70.00C" or "21.00p") by stripping the
-        trailing letter and, if missing, deriving an `option_type` column.
-
-        Arguments:
-            raw_data: the raw data ingested from the data source.
+        Args:
+            raw_data: Raw options data ingested from a source.
 
         Returns:
-            A DataFrame with required columns cleaned and optional columns added if missing.
-        """
-        # Define required vs optional columns
-        required_columns = {"strike", "last_price"}
-        optional_columns = {"bid", "ask", "last_trade_date"}
-        all_expected = required_columns | optional_columns
+            DataFrame with required columns validated, numeric quote columns
+            coerced, optional missing bid/ask metadata filled with ``NaN``, and
+            ``option_type`` normalized when present.
 
-        # Check for required columns only
+        Raises:
+            ValueError: If ``strike`` is missing or no supported quote shape is
+                present. Supported quote shapes are ``last_price``, bid/ask, or
+                explicit wide ``call_price``/``put_price`` columns.
+        """
+        required_columns = {"strike"}
+        optional_columns = {"bid", "ask", "last_trade_date"}
+
         missing_required = required_columns - set(raw_data.columns)
         if missing_required:
             raise ValueError(f"Data is missing required columns: {missing_required}")
+
+        if not self._has_supported_price_columns(raw_data):
+            raise ValueError(
+                "Data is missing required price columns: provide last_price, "
+                "bid/ask, or call_price/put_price."
+            )
 
         # Check which optional columns are present
         present_optional = optional_columns & set(raw_data.columns)
@@ -145,8 +148,9 @@ class AbstractReader(ABC):
                 )
                 raw_data["strike"] = strike_as_string
 
-        # Clean all present columns (required + present optional)
-        columns_to_clean = required_columns | present_optional
+        price_columns = {"last_price", "mid", "bid", "ask", "call_price", "put_price"}
+        present_price_columns = price_columns & set(raw_data.columns)
+        columns_to_clean = required_columns | present_optional | present_price_columns
 
         for col in columns_to_clean:
             # Handle string columns that might have commas in numbers
@@ -182,22 +186,35 @@ class AbstractReader(ABC):
 
         return raw_data
 
-    def _validate_data(self, cleaned_data: DataFrame) -> DataFrame:
-        """Common validation logic for all readers.
+    def _has_supported_price_columns(self, raw_data: DataFrame) -> bool:
+        """Check whether a DataFrame has one supported quote-price shape.
 
-        Validates that data meets minimum requirements for options processing:
-        - Strike prices must not contain NaN values
-        - Strike prices must be positive
-        - Last prices must not be negative (NaN values allowed, filtered downstream)
-
-        Arguments:
-            cleaned_data: DataFrame after column cleaning
+        Args:
+            raw_data: Raw options data to inspect.
 
         Returns:
-            Validated and sorted DataFrame
+            ``True`` when the data has ``last_price``, both bid/ask columns, or
+            explicit wide ``call_price``/``put_price`` columns.
+        """
+        columns = set(raw_data.columns)
+        return (
+            "last_price" in columns
+            or {"bid", "ask"}.issubset(columns)
+            or {"call_price", "put_price"}.issubset(columns)
+        )
+
+    def _validate_data(self, cleaned_data: DataFrame) -> DataFrame:
+        """Validate canonical option data after cleaning.
+
+        Args:
+            cleaned_data: DataFrame after column cleaning.
+
+        Returns:
+            Validated and strike-sorted DataFrame.
 
         Raises:
-            ValueError: If validation fails
+            ValueError: If strikes are missing/non-positive or present quote
+                prices are negative.
         """
         # Check for NaN values in strike column (required)
         if cleaned_data["strike"].isna().any():
@@ -207,11 +224,11 @@ class AbstractReader(ABC):
         if (cleaned_data["strike"] <= 0).any():
             raise ValueError("Options data contains non-positive strike prices")
 
-        # Check for negative prices (only for valid numeric values)
-        # NaN and non-numeric values are allowed and will be filtered downstream
-        if "last_price" in cleaned_data.columns:
-            # Convert to numeric, treating non-numeric values as NaN
-            numeric_prices = pd.to_numeric(cleaned_data["last_price"], errors="coerce")
+        price_columns = ["last_price", "mid", "bid", "ask", "call_price", "put_price"]
+        for price_column in price_columns:
+            if price_column not in cleaned_data.columns:
+                continue
+            numeric_prices = pd.to_numeric(cleaned_data[price_column], errors="coerce")
             valid_prices = numeric_prices.notna()
             if valid_prices.any() and (numeric_prices.loc[valid_prices] < 0).any():
                 raise ValueError("Options data contains negative prices")

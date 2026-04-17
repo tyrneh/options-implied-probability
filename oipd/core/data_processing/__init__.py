@@ -17,6 +17,7 @@ from .parity import (  # noqa: F401
     apply_put_call_parity_to_quotes,
     detect_parity_opportunity,
     infer_forward_from_atm,
+    infer_forward_from_put_call_parity,
     preprocess_with_parity,
 )
 from .selection import filter_stale_options, select_price_column  # noqa: F401
@@ -26,6 +27,7 @@ __all__ = [
     "detect_parity_opportunity",
     "apply_put_call_parity_to_quotes",
     "infer_forward_from_atm",
+    "infer_forward_from_put_call_parity",
     "preprocess_with_parity",
     "filter_stale_options",
     "select_price_column",
