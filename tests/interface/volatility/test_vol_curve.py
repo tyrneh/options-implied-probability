@@ -172,6 +172,35 @@ class TestVolCurveFit:
         assert np.isfinite(atm_vol)
         assert atm_vol > 0
 
+    def test_fit_prefers_reliable_bid_ask_weights_over_volume(
+        self, sample_option_chain, market_inputs
+    ):
+        """SVI fit metadata reports bid/ask measurement weighting over volume."""
+        from oipd import VolCurve
+
+        chain = sample_option_chain[sample_option_chain["option_type"] == "C"].copy()
+        chain["volume"] = np.linspace(100.0, 500.0, len(chain))
+
+        vc = VolCurve(method="svi", pricing_engine="bs")
+        vc.method_options = {
+            "random_seed": 42,
+            "global_solver": "none",
+            "n_starts": 0,
+        }
+        vc.fit(chain, market_inputs)
+
+        metadata = vc._metadata
+        assert metadata is not None
+        assert "volume" in metadata["observed_iv"].columns
+
+        diagnostics = metadata["diagnostics"]
+        assert diagnostics.weights_measurement_used is True
+        assert diagnostics.weights_volume_used is False
+        assert diagnostics.weights_auxiliary_source == "measurement"
+        assert diagnostics.weights_bid_ask_valid_count >= 5
+        assert diagnostics.weights_bid_ask_coverage >= 0.50
+        assert diagnostics.weights_volume_valid_count >= 5
+
     def test_fit_with_column_mapping(self, market_inputs):
         """fit() works with custom column mapping."""
         from oipd import VolCurve

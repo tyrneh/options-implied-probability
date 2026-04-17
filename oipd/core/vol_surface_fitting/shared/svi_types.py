@@ -29,12 +29,17 @@ class SVICalibrationOptions:
         n_starts: Number of additional multi-start seeds to try.
         random_seed: Seed forwarded to stochastic components of the calibration.
         weighting_mode: Weighting scheme applied to residuals (e.g. ``"vega"``).
+            In default ``"vega+spread"`` mode, reliable bid/ask spread is
+            preferred and volume is used only as the fallback liquidity signal.
         weight_cap: Upper cap applied to the residual weights.
         huber_delta: Optional manual transition scale for the Huber loss in total variance.
         huber_beta: Fraction of the typical slice variance used when ``huber_delta`` is inferred.
         huber_delta_floor: Minimum allowed value for the inferred Huber delta.
         envelope_weight: Penalty weight for breaching the bid/ask implied-volatility envelope.
-        volume_column: Optional column name used when extracting volumes from input frames.
+        volume_column: Optional override for the dataframe column used when
+            extracting liquidity. The canonical input column is ``volume``;
+            calibration receives the extracted, strike-aligned numeric array as
+            ``volumes``.
     """
 
     max_iter: int = 200
@@ -156,6 +161,11 @@ class SVICalibrationDiagnostics:
     residual_mean: float | None = None
     envelope_violations_pct: float | None = None
     trial_records: list[SVITrialRecord] = field(default_factory=list)
+    weights_auxiliary_source: str = "none"
+    weights_fallback_reason: str = ""
+    weights_bid_ask_valid_count: int = 0
+    weights_bid_ask_coverage: float = 0.0
+    weights_volume_valid_count: int = 0
 
     def add_trial_record(self, record: SVITrialRecord) -> None:
         """Append a trial record to the diagnostics trace.

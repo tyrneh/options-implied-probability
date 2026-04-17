@@ -5,6 +5,14 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4] - 2026-04-17
+### Fixed
+- Updated SVI residual weighting so reliable bid/ask spread data takes precedence over volume. Volume is now used only as a fallback liquidity signal when bid/ask spread coverage is unavailable or unreliable, avoiding accidental double-weighting by both bid/ask and volume.
+
+### Added
+- Added SVI diagnostics for the selected auxiliary weight source, fallback reason, bid/ask spread coverage, and valid volume count.
+- Added non-mutating golden-master drift comparison tooling that generates temporary candidates without updating committed golden files.
+
 ## [2.0.3]
 ### Changed
 - Finalized the maturity contract around three explicit fields:
