@@ -67,6 +67,7 @@ experiments = [
     "PyYAML>=6.0",
     "Pillow>=10.0.0",
     "pyarrow>=15.0.0",
+    "databento>=0.55.0",
 ]
 
 
@@ -95,7 +96,7 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "experiments/tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
