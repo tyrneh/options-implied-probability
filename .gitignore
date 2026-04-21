@@ -124,7 +124,8 @@ AGENTS.md
 .agent/
 .conductor/
 ce-docs/
-ce-docs/*
+analysis_artifacts/
+diagnostics/
 
 # Spyder project settings
 .spyderproject

@@ -5,6 +5,12 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Changed
+- Temporarily disabled the default bid/ask relative-spread gate for put-call
+  parity forward inference. Explicit `max_bid_ask_relative_spread` values still
+  enforce a ceiling for callers that opt into one.
+
 ## [2.0.4] - 2026-04-17
 ### Added
 - Added lazy probability materialization for `ProbCurve` and `ProbSurface`.

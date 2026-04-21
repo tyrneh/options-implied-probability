@@ -1112,8 +1112,27 @@ class TestPreprocessWithParity:
         assert pair["call_relative_spread"] == pytest.approx(0.25)
         assert pair["put_relative_spread"] == pytest.approx(0.25)
 
-    def test_wide_bid_ask_rejected_without_last_fallback(self):
-        """Wide bid/ask spreads should reject midquote forward inference."""
+    def test_wide_bid_ask_accepted_by_default_when_spread_gate_disabled(self):
+        """Wide bid/ask spreads should be accepted by the default midquote path."""
+        df = _row_quote_pair(
+            call_mid=4.0,
+            put_mid=2.0,
+            relative_spread=0.50,
+        )
+
+        with pytest.warns(UserWarning, match="1 valid pair.*low_single_pair"):
+            result = preprocess_with_parity(df, 100.0, 1.0)
+        report = result.attrs["parity_report"]
+        pair = report["pairs"][0]
+
+        assert detect_parity_opportunity(df) is True
+        assert result["F_used"].iloc[0] == pytest.approx(102.0)
+        assert pair["price_source"] == "mid"
+        assert pair["call_relative_spread"] == pytest.approx(0.50)
+        assert pair["put_relative_spread"] == pytest.approx(0.50)
+
+    def test_explicit_bid_ask_spread_gate_rejects_wide_mids(self):
+        """An explicit spread ceiling should still reject too-wide midquotes."""
         df = _row_quote_pair(
             call_mid=4.0,
             put_mid=2.0,
@@ -1121,11 +1140,15 @@ class TestPreprocessWithParity:
         )
 
         with pytest.raises(ValueError, match="No valid put-call parity pairs"):
-            infer_forward_from_put_call_parity(df, 100.0, 1.0)
-        assert detect_parity_opportunity(df) is False
+            infer_forward_from_put_call_parity(
+                df,
+                100.0,
+                1.0,
+                max_bid_ask_relative_spread=0.25,
+            )
 
     def test_wide_bid_ask_uses_valid_last_price_fallback(self):
-        """Wide bid/ask pairs may still use coherent liquid last prices."""
+        """An explicit spread ceiling should allow liquid last-price fallback."""
         df = _row_quote_pair(
             call_mid=20.0,
             put_mid=1.0,
@@ -1137,11 +1160,15 @@ class TestPreprocessWithParity:
         )
 
         with pytest.warns(UserWarning, match="1 valid pair.*low_single_pair"):
-            result = preprocess_with_parity(df, 100.0, 1.0)
+            result = preprocess_with_parity(
+                df,
+                100.0,
+                1.0,
+                max_bid_ask_relative_spread=0.25,
+            )
         report = result.attrs["parity_report"]
         pair = report["pairs"][0]
 
-        assert detect_parity_opportunity(df) is True
         assert result["F_used"].iloc[0] == pytest.approx(102.0)
         assert pair["price_source"] == "last_price"
         assert pair["volume_filter_status"] == "passed"
