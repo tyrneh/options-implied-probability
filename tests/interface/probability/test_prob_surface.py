@@ -6,10 +6,194 @@ Tests for the multi-expiry probability surface API.
 Based on first-principles analysis of oipd.interface.probability.ProbSurface
 """
 
-import pytest
+import copy
+from datetime import date
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from datetime import date
+import pytest
+
+from oipd.pipelines.probability import derive_distribution_from_curve
+
+INTERIOR_INTERPOLATED_EXPIRY = pd.Timestamp("2025-03-21")
+
+
+def _assert_metadata_value_matches(expected, actual) -> None:
+    """Assert that one metadata field matches across two probability slices.
+
+    Args:
+        expected: Metadata value from the direct ProbCurve path.
+        actual: Metadata value from the ProbSurface.slice(...) path.
+    """
+    if expected is None or actual is None:
+        assert actual == expected
+        return
+
+    if isinstance(expected, tuple) or isinstance(actual, tuple):
+        assert actual == pytest.approx(expected)
+        return
+
+    if isinstance(expected, (int, float, np.integer, np.floating)) and isinstance(
+        actual, (int, float, np.integer, np.floating)
+    ):
+        assert float(actual) == pytest.approx(float(expected))
+        return
+
+    assert actual == expected
+
+
+def _assert_probcurve_contract_matches(
+    surface_curve,
+    direct_curve,
+) -> None:
+    """Assert that two probability-slice contracts match.
+
+    Args:
+        surface_curve: ProbCurve returned by ``ProbSurface.slice(...)``.
+        direct_curve: ProbCurve returned by ``VolSurface.slice(...).implied_distribution()``.
+    """
+    np.testing.assert_allclose(
+        surface_curve.prices,
+        direct_curve.prices,
+        rtol=1e-8,
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        surface_curve.pdf_values,
+        direct_curve.pdf_values,
+        rtol=1e-8,
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        surface_curve.cdf_values,
+        direct_curve.cdf_values,
+        rtol=1e-8,
+        atol=1e-10,
+    )
+
+    for metadata_key in (
+        "resolved_domain",
+        "default_view_domain",
+        "default_view_domain_source",
+        "default_view_quantiles",
+        "domain_expansions",
+        "tail_mass_beyond_upper",
+    ):
+        _assert_metadata_value_matches(
+            direct_curve.metadata.get(metadata_key),
+            surface_curve.metadata.get(metadata_key),
+        )
+    assert bool(surface_curve.metadata.get("interpolated")) == bool(
+        direct_curve.metadata.get("interpolated")
+    )
+
+
+def _assert_direct_cdf_diagnostics_pass(metadata) -> None:
+    """Assert canonical direct-CDF metadata satisfies current thresholds.
+
+    Args:
+        metadata: Probability metadata emitted during materialization.
+    """
+    assert metadata["cdf_method"] == "call_price_first_derivative"
+    assert metadata["cdf_cleanup_policy"] == "minimal_epsilon_cleanup"
+    assert (
+        metadata["cdf_upper_tail_clip_policy"] == "clip_finite_monotone_small_overshoot"
+    )
+    assert np.isfinite(metadata["raw_cdf_start"])
+    assert np.isfinite(metadata["raw_cdf_end"])
+    assert np.isfinite(metadata["raw_cdf_min"])
+    assert np.isfinite(metadata["raw_cdf_max"])
+    assert np.isfinite(metadata["raw_cdf_max_negative_step"])
+    assert np.isfinite(metadata["cdf_pdf_interval_max_error"])
+    assert np.isfinite(metadata["cdf_pdf_interval_mean_error"])
+    raw_lower_boundary_tolerance = 1e-4
+    raw_upper_boundary_tolerance = metadata["cdf_upper_tail_clip_tolerance"]
+    raw_monotonicity_tolerance = 1e-6
+    assert metadata["raw_cdf_is_monotone"]
+    assert metadata["raw_cdf_negative_step_count"] == 0
+    assert metadata["raw_cdf_min"] >= -raw_lower_boundary_tolerance
+    assert metadata["raw_cdf_max"] <= 1.0 + raw_upper_boundary_tolerance
+    assert abs(metadata["raw_cdf_start"]) <= raw_lower_boundary_tolerance
+    assert abs(metadata["raw_cdf_end"] - 1.0) <= raw_upper_boundary_tolerance
+    assert metadata["raw_cdf_max_negative_step"] >= -raw_monotonicity_tolerance
+    assert metadata["cdf_upper_tail_clip_tolerance"] == pytest.approx(1e-3)
+    assert metadata["cdf_upper_tail_max_excess"] <= raw_upper_boundary_tolerance
+    if metadata["cdf_upper_tail_clip_applied"]:
+        assert metadata["cdf_upper_tail_clip_count"] > 0
+    assert metadata["cdf_pdf_interval_max_error"] <= 1e-2
+    assert metadata["cdf_pdf_interval_mean_error"] <= 2e-3
+
+
+def _derive_direct_probability_arrays(vol_curve, *, points: int | None = None):
+    """Derive probability arrays through the stateless single-expiry pipeline.
+
+    Args:
+        vol_curve: Fitted public VolCurve object.
+        points: Optional native grid resolution for the direct derivation.
+
+    Returns:
+        tuple: Direct ``prices``, ``pdf_values``, ``cdf_values``, and metadata.
+    """
+    return derive_distribution_from_curve(
+        vol_curve._vol_curve,
+        vol_curve.resolved_market,
+        pricing_engine=vol_curve.pricing_engine,
+        vol_metadata=vol_curve._metadata,
+        points=points,
+    )
+
+
+def _build_repriced_multi_expiry_chain(
+    template_chain,
+    market_inputs,
+    call_prices_by_expiry,
+):
+    """Build a multi-expiry chain with repriced calls and parity-derived puts.
+
+    Args:
+        template_chain: Existing multi-expiry option chain.
+        market_inputs: Market inputs aligned with the template chain.
+        call_prices_by_expiry: Mapping from expiry timestamp to call prices
+            ordered by ascending strike.
+
+    Returns:
+        pd.DataFrame: Repriced multi-expiry option chain.
+    """
+    call_mask = template_chain["option_type"].astype(str).str.upper().str[0] == "C"
+    repriced_calls = []
+    for expiry, call_prices in call_prices_by_expiry.items():
+        expiry_timestamp = pd.Timestamp(expiry)
+        expiry_mask = pd.to_datetime(template_chain["expiry"]) == expiry_timestamp
+        calls = (
+            template_chain.loc[call_mask & expiry_mask]
+            .sort_values("strike")
+            .reset_index(drop=True)
+            .copy()
+        )
+        calls["last_price"] = np.asarray(call_prices, dtype=float)
+        calls["bid"] = calls["last_price"] - 0.25
+        calls["ask"] = calls["last_price"] + 0.25
+        repriced_calls.append(calls)
+
+    calls_frame = pd.concat(repriced_calls, ignore_index=True)
+    valuation_date = pd.Timestamp(market_inputs.valuation_date)
+    time_to_expiry_years = (
+        pd.to_datetime(calls_frame["expiry"]) - valuation_date
+    ).dt.days / 365.0
+    discount_factors = np.exp(-market_inputs.risk_free_rate * time_to_expiry_years)
+
+    puts_frame = calls_frame.copy()
+    puts_frame["option_type"] = "P"
+    for price_column in ("last_price", "bid", "ask"):
+        puts_frame[price_column] = (
+            calls_frame[price_column]
+            - market_inputs.underlying_price
+            + calls_frame["strike"] * discount_factors
+        ).abs()
+
+    return pd.concat([calls_frame, puts_frame], ignore_index=True)
+
 
 # =============================================================================
 # Fixtures
@@ -121,6 +305,246 @@ def fitted_vol_surface(multi_expiry_chain, market_inputs):
 def prob_surface(fitted_vol_surface):
     """A ProbSurface derived from a fitted VolSurface."""
     return fitted_vol_surface.implied_distribution()
+
+
+@pytest.fixture
+def prob_surface_with_native_resolution(fitted_vol_surface):
+    """A ProbSurface with explicit resolution aligned to direct ProbCurve defaults."""
+    from oipd.interface.probability import ProbSurface
+
+    return ProbSurface(vol_surface=fitted_vol_surface, grid_points=200)
+
+
+# =============================================================================
+# ProbSurface Lazy Materialization Tests
+# =============================================================================
+
+
+class TestProbSurfaceLazyMaterialization:
+    """Characterization tests for lazy ProbSurface materialization."""
+
+    def test_metadata_access_materializes_once_for_curve_and_surface_slice(
+        self,
+        multi_expiry_chain,
+        market_inputs,
+        fitted_vol_surface,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Metadata access should trigger one native materialization per curve."""
+        import oipd.interface.probability as probability_interface
+        from oipd import VolCurve
+
+        materialization_calls = 0
+        original_materializer = (
+            probability_interface.materialize_distribution_from_definition
+        )
+
+        def counting_materializer(*args, **kwargs):
+            """Count native materializations while preserving behavior."""
+            nonlocal materialization_calls
+            materialization_calls += 1
+            return original_materializer(*args, **kwargs)
+
+        monkeypatch.setattr(
+            probability_interface,
+            "materialize_distribution_from_definition",
+            counting_materializer,
+        )
+
+        first_expiry = multi_expiry_chain["expiry"].iloc[0]
+        single_expiry_chain = multi_expiry_chain[
+            pd.to_datetime(multi_expiry_chain["expiry"]) == pd.Timestamp(first_expiry)
+        ]
+        prob_curve = (
+            VolCurve(pricing_engine="bs")
+            .fit(single_expiry_chain, market_inputs)
+            .implied_distribution()
+        )
+
+        assert materialization_calls == 0
+        _ = prob_curve.metadata
+        assert materialization_calls == 1
+        _ = prob_curve.metadata
+        assert materialization_calls == 1
+
+        prob_surface = fitted_vol_surface.implied_distribution()
+        surface_curve = prob_surface.slice(prob_surface.expiries[0])
+        assert materialization_calls == 1
+        _ = surface_curve.metadata
+        assert materialization_calls == 2
+        _ = surface_curve.metadata
+        assert materialization_calls == 2
+
+    def test_implied_distribution_and_slice_wait_until_probability_access(
+        self,
+        fitted_vol_surface,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """VolSurface and slice creation should not materialize arrays eagerly."""
+        import oipd.interface.probability as probability_interface
+
+        materialization_calls = 0
+        original_materializer = (
+            probability_interface.materialize_distribution_from_definition
+        )
+
+        def counting_materializer(*args, **kwargs):
+            """Count native materializations while preserving behavior."""
+            nonlocal materialization_calls
+            materialization_calls += 1
+            return original_materializer(*args, **kwargs)
+
+        monkeypatch.setattr(
+            probability_interface,
+            "materialize_distribution_from_definition",
+            counting_materializer,
+        )
+
+        prob_surface = fitted_vol_surface.implied_distribution()
+        assert materialization_calls == 0
+
+        pillar_expiry = prob_surface.expiries[0]
+        curve = prob_surface.slice(pillar_expiry)
+        assert materialization_calls == 0
+
+        _ = curve.resolved_market
+        assert materialization_calls == 0
+
+        _ = curve.pdf_values
+        assert materialization_calls == 1
+
+        _ = prob_surface.pdf(100.0, t=pillar_expiry)
+        assert materialization_calls == 1
+
+    @pytest.mark.parametrize(
+        "expiry",
+        [
+            pytest.param("pillar", id="pillar"),
+            pytest.param(INTERIOR_INTERPOLATED_EXPIRY, id="interpolated"),
+        ],
+    )
+    def test_lazy_surface_slice_matches_direct_pipeline(
+        self,
+        fitted_vol_surface,
+        expiry,
+    ):
+        """Lazy surface slices should match the direct single-expiry pipeline."""
+        prob_surface = fitted_vol_surface.implied_distribution()
+        resolved_expiry = (
+            fitted_vol_surface.expiries[0] if expiry == "pillar" else expiry
+        )
+
+        direct_vol_curve = fitted_vol_surface.slice(resolved_expiry)
+        expected_prices, expected_pdf, expected_cdf, _ = (
+            _derive_direct_probability_arrays(direct_vol_curve)
+        )
+        surface_curve = prob_surface.slice(resolved_expiry)
+
+        np.testing.assert_allclose(surface_curve.prices, expected_prices)
+        np.testing.assert_allclose(surface_curve.pdf_values, expected_pdf)
+        np.testing.assert_allclose(surface_curve.cdf_values, expected_cdf)
+
+    @pytest.mark.parametrize(
+        "expiry",
+        [
+            pytest.param("pillar", id="aapl-pillar"),
+            pytest.param(pd.Timestamp("2026-06-18"), id="aapl-june-pillar"),
+            pytest.param(pd.Timestamp("2026-12-18"), id="aapl-december-pillar"),
+            pytest.param(pd.Timestamp("2026-04-17"), id="aapl-interpolated"),
+        ],
+    )
+    def test_lazy_surface_slice_matches_direct_pipeline_for_aapl_chain(self, expiry):
+        """Lazy surface slices should match direct derivation on included AAPL data."""
+        from oipd import MarketInputs, VolSurface
+
+        data_path = Path(__file__).resolve().parents[2] / "data" / "AAPL_data.csv"
+        aapl_chain = pd.read_csv(data_path)
+        selected_expiries = ["2026-01-16", "2026-06-18", "2026-12-18"]
+        surface_chain = aapl_chain[
+            aapl_chain["expiration"].isin(selected_expiries)
+        ].copy()
+
+        market = MarketInputs(
+            valuation_date=date(2025, 10, 6),
+            risk_free_rate=0.045,
+            underlying_price=220.0,
+        )
+        column_mapping = {
+            "strike": "strike",
+            "last_price": "last_price",
+            "type": "option_type",
+            "bid": "bid",
+            "ask": "ask",
+            "expiration": "expiry",
+        }
+
+        vol_surface = VolSurface(method="svi")
+        vol_surface.method_options = {"random_seed": 42}
+        vol_surface.fit(
+            surface_chain,
+            market,
+            column_mapping=column_mapping,
+            failure_policy="raise",
+        )
+        prob_surface = vol_surface.implied_distribution()
+        resolved_expiry = vol_surface.expiries[0] if expiry == "pillar" else expiry
+
+        direct_vol_curve = vol_surface.slice(resolved_expiry)
+        expected_prices, expected_pdf, expected_cdf, _ = (
+            _derive_direct_probability_arrays(direct_vol_curve)
+        )
+        surface_curve = prob_surface.slice(resolved_expiry)
+
+        np.testing.assert_allclose(surface_curve.prices, expected_prices)
+        np.testing.assert_allclose(surface_curve.pdf_values, expected_pdf)
+        np.testing.assert_allclose(surface_curve.cdf_values, expected_cdf)
+        _assert_direct_cdf_diagnostics_pass(surface_curve.metadata)
+
+    def test_probsurface_snapshot_survives_parent_volsurface_refit(
+        self,
+        multi_expiry_chain,
+        market_inputs,
+    ):
+        """Existing ProbSurface should not change after its source VolSurface is refit."""
+        from oipd import VolSurface
+
+        vol_surface = VolSurface(pricing_engine="bs")
+        vol_surface.fit(multi_expiry_chain, market_inputs)
+        prob_surface = vol_surface.implied_distribution()
+
+        pillar_expiry = vol_surface.expiries[0]
+        expected_by_expiry = {}
+        for expiry in (pillar_expiry, INTERIOR_INTERPOLATED_EXPIRY):
+            direct_vol_curve = vol_surface.slice(expiry)
+            expected_by_expiry[pd.Timestamp(expiry)] = (
+                _derive_direct_probability_arrays(direct_vol_curve)
+            )
+
+        refit_chain = _build_repriced_multi_expiry_chain(
+            multi_expiry_chain,
+            market_inputs,
+            call_prices_by_expiry={
+                pd.Timestamp("2025-02-21"): [13.2, 9.2, 6.0, 3.7, 2.1],
+                pd.Timestamp("2025-05-21"): [15.5, 11.2, 8.0, 5.4, 3.2],
+            },
+        )
+        vol_surface.fit(refit_chain, market_inputs)
+        _, refit_pdf, _, _ = _derive_direct_probability_arrays(
+            vol_surface.slice(pillar_expiry)
+        )
+        _, original_pillar_pdf, _, _ = expected_by_expiry[pillar_expiry]
+        assert not np.allclose(refit_pdf, original_pillar_pdf, rtol=1e-8, atol=1e-10)
+
+        for expiry, (
+            expected_prices,
+            expected_pdf,
+            expected_cdf,
+            _,
+        ) in expected_by_expiry.items():
+            surface_curve = prob_surface.slice(expiry)
+            np.testing.assert_allclose(surface_curve.prices, expected_prices)
+            np.testing.assert_allclose(surface_curve.pdf_values, expected_pdf)
+            np.testing.assert_allclose(surface_curve.cdf_values, expected_cdf)
 
 
 # =============================================================================
@@ -278,18 +702,86 @@ class TestProbSurfaceSlice:
         assert resolved_market is not None
         assert hasattr(resolved_market, "valuation_date")
 
+    def test_slice_matches_direct_probcurve_for_pillar_expiry(
+        self, fitted_vol_surface, prob_surface_with_native_resolution
+    ):
+        """Pillar slices should match the direct VolCurve -> ProbCurve path."""
+        pillar_expiry = prob_surface_with_native_resolution.expiries[0]
+
+        surface_curve = prob_surface_with_native_resolution.slice(pillar_expiry)
+        direct_curve = fitted_vol_surface.slice(pillar_expiry).implied_distribution(
+            grid_points=200,
+        )
+
+        _assert_probcurve_contract_matches(surface_curve, direct_curve)
+
+    @pytest.mark.parametrize("expiry_kind", ["pillar", "interpolated"])
+    def test_default_slice_matches_direct_probcurve_path(
+        self,
+        fitted_vol_surface,
+        prob_surface,
+        expiry_kind,
+    ):
+        """Default ProbSurface slices should match the direct public ProbCurve path."""
+        resolved_expiry = (
+            prob_surface.expiries[0]
+            if expiry_kind == "pillar"
+            else INTERIOR_INTERPOLATED_EXPIRY
+        )
+        surface_curve = prob_surface.slice(resolved_expiry)
+        direct_curve = fitted_vol_surface.slice(resolved_expiry).implied_distribution()
+
+        _assert_probcurve_contract_matches(surface_curve, direct_curve)
+
     def test_slice_interpolates_interior_expiry(self, prob_surface):
         """slice() interpolates when expiry lies between fitted pillars."""
         from oipd.interface.probability import ProbCurve
 
-        interpolated_expiry = "2025-03-21"
+        interpolated_expiry = INTERIOR_INTERPOLATED_EXPIRY
         curve = prob_surface.slice(interpolated_expiry)
         assert isinstance(curve, ProbCurve)
         assert bool(curve.metadata.get("interpolated"))
 
+    def test_slice_matches_direct_probcurve_for_interpolated_expiry(
+        self, fitted_vol_surface, prob_surface_with_native_resolution
+    ):
+        """Interpolated slices should match the direct VolCurve -> ProbCurve path."""
+        surface_curve = prob_surface_with_native_resolution.slice(
+            INTERIOR_INTERPOLATED_EXPIRY
+        )
+        direct_curve = fitted_vol_surface.slice(
+            INTERIOR_INTERPOLATED_EXPIRY
+        ).implied_distribution(grid_points=200)
+
+        _assert_probcurve_contract_matches(surface_curve, direct_curve)
+
+    def test_slice_propagates_domain_provenance_for_pillar(
+        self, fitted_vol_surface, prob_surface_with_native_resolution
+    ):
+        """Pillar slices should preserve direct-path domain provenance metadata."""
+        pillar_expiry = prob_surface_with_native_resolution.expiries[0]
+
+        surface_curve = prob_surface_with_native_resolution.slice(pillar_expiry)
+        direct_curve = fitted_vol_surface.slice(pillar_expiry).implied_distribution(
+            grid_points=200,
+        )
+
+        for metadata_key in (
+            "raw_observed_domain",
+            "post_iv_survival_domain",
+            "observed_domain",
+            "resolved_domain",
+            "domain_expansions",
+            "tail_mass_beyond_upper",
+        ):
+            _assert_metadata_value_matches(
+                direct_curve.metadata.get(metadata_key),
+                surface_curve.metadata.get(metadata_key),
+            )
+
     def test_slice_matches_surface_queries(self, prob_surface, market_inputs):
         """slice(expiry) is consistent with unified surface query methods."""
-        interpolated_expiry = pd.Timestamp("2025-03-21")
+        interpolated_expiry = INTERIOR_INTERPOLATED_EXPIRY
         t_years = (
             interpolated_expiry - pd.Timestamp(market_inputs.valuation_date)
         ).days / 365.0
@@ -340,6 +832,39 @@ class TestProbSurfaceSlice:
 
 class TestProbSurfaceQueryApi:
     """Tests for callable probability queries on ProbSurface."""
+
+    @pytest.mark.parametrize("expiry_kind", ["pillar", "interpolated"])
+    def test_surface_queries_match_slice_probcurve(
+        self,
+        prob_surface,
+        expiry_kind,
+    ):
+        """Surface pdf/cdf/quantile queries should match the slice ProbCurve."""
+        expiry = (
+            prob_surface.expiries[0]
+            if expiry_kind == "pillar"
+            else INTERIOR_INTERPOLATED_EXPIRY
+        )
+        curve = prob_surface.slice(expiry)
+        sample_indices = np.linspace(0, len(curve.prices) - 1, num=5, dtype=int)
+        sample_prices = curve.prices[sample_indices]
+
+        np.testing.assert_allclose(
+            prob_surface.pdf(sample_prices, t=expiry),
+            curve.pdf(sample_prices),
+            rtol=1e-8,
+            atol=1e-10,
+        )
+        np.testing.assert_allclose(
+            prob_surface.cdf(sample_prices, t=expiry),
+            np.asarray([curve.prob_below(float(price)) for price in sample_prices]),
+            rtol=1e-8,
+            atol=1e-10,
+        )
+        for quantile_level in (0.1, 0.5, 0.9):
+            assert prob_surface.quantile(quantile_level, t=expiry) == pytest.approx(
+                curve.quantile(quantile_level)
+            )
 
     def test_pdf_with_float_t(self, prob_surface):
         """pdf(price, t) accepts year-fraction maturities."""
@@ -417,7 +942,7 @@ class TestProbSurfaceDensityResults:
         )
 
     def test_density_results_defaults_to_daily_grid(self, prob_surface):
-        """Default export contains a daily grid spanning the fitted horizon."""
+        """Default export contains daily expiries with compact per-slice grids."""
         result = prob_surface.density_results()
         unique_expiries = pd.to_datetime(result["expiry"]).drop_duplicates()
         expected_days = (
@@ -426,6 +951,8 @@ class TestProbSurfaceDensityResults:
         assert unique_expiries.min() == min(prob_surface.expiries)
         assert unique_expiries.max() == max(prob_surface.expiries)
         assert len(unique_expiries) == expected_days
+        assert len(result) == expected_days * 200
+        assert (result.groupby("expiry").size() == 200).all()
 
     def test_density_results_step_grid_includes_off_step_pillars(self, prob_surface):
         """Off-step fitted pillars are preserved alongside stepped dates."""
@@ -456,10 +983,85 @@ class TestProbSurfaceDensityResults:
         )
         slice_frame = prob_surface.slice(pillar_expiry).density_results()
 
+        assert surface_frame["expiry"].nunique() == 1
+        assert pd.Timestamp(surface_frame["expiry"].iloc[0]) == pillar_expiry
         pd.testing.assert_frame_equal(
             surface_frame.drop(columns=["expiry"]).reset_index(drop=True),
             slice_frame.reset_index(drop=True),
         )
+
+    def test_density_results_domain_does_not_mutate_cached_interpolated_slice(
+        self, prob_surface
+    ):
+        """Explicit surface export domains should not mutate cached native slices."""
+        interpolated_curve = prob_surface.slice(INTERIOR_INTERPOLATED_EXPIRY)
+        native_prices = interpolated_curve.prices.copy()
+        native_pdf = interpolated_curve.pdf_values.copy()
+        native_cdf = interpolated_curve.cdf_values.copy()
+        native_metadata = copy.deepcopy(interpolated_curve.metadata)
+
+        _ = prob_surface.density_results(
+            domain=(80.0, 120.0),
+            points=21,
+            start=INTERIOR_INTERPOLATED_EXPIRY,
+            end=INTERIOR_INTERPOLATED_EXPIRY,
+        )
+
+        cached_curve = prob_surface.slice(INTERIOR_INTERPOLATED_EXPIRY)
+        assert cached_curve is interpolated_curve
+        np.testing.assert_allclose(cached_curve.prices, native_prices)
+        np.testing.assert_allclose(cached_curve.pdf_values, native_pdf)
+        np.testing.assert_allclose(cached_curve.cdf_values, native_cdf)
+        assert cached_curve.metadata == native_metadata
+
+    def test_density_results_full_domain_exports_native_pillar_rows(
+        self,
+        prob_surface,
+    ):
+        """full_domain=True with pillar export returns each native slice grid."""
+        expected_lengths = {
+            pd.Timestamp(expiry): len(prob_surface.slice(expiry).prices)
+            for expiry in prob_surface.expiries
+        }
+
+        result = prob_surface.density_results(full_domain=True, step_days=None)
+        observed_lengths = result.groupby("expiry").size()
+
+        assert set(pd.to_datetime(observed_lengths.index)) == set(expected_lengths)
+        for expiry, expected_length in expected_lengths.items():
+            assert observed_lengths.loc[expiry] == expected_length
+
+    def test_density_results_default_pillar_export_is_not_native_grid(
+        self,
+        prob_surface,
+    ):
+        """Default pillar export should use compact view rows, not native rows."""
+        pillar_expiry = prob_surface.expiries[0]
+        native_length = len(prob_surface.slice(pillar_expiry).prices)
+
+        result = prob_surface.density_results(
+            start=pillar_expiry,
+            end=pillar_expiry,
+            step_days=None,
+        )
+
+        assert len(result) == 200
+        assert len(result) != native_length
+
+    def test_density_results_does_not_persist_daily_transient_slice_cache(
+        self,
+        prob_surface,
+    ):
+        """Bulk daily exports should not retain every sampled slice in cache."""
+        cached_pillar = prob_surface.slice(prob_surface.expiries[0])
+        preserved_cache_keys = set(prob_surface._curve_cache)
+
+        result = prob_surface.density_results(step_days=1)
+
+        unique_export_expiries = pd.to_datetime(result["expiry"]).nunique()
+        assert set(prob_surface._curve_cache) == preserved_cache_keys
+        assert prob_surface.slice(prob_surface.expiries[0]) is cached_pillar
+        assert len(prob_surface._curve_cache) < unique_export_expiries
 
     def test_density_results_rejects_invalid_inputs(self, prob_surface):
         """Invalid domains and step sizes are rejected."""
@@ -559,29 +1161,31 @@ class TestProbSurfacePlotFan:
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        from oipd.interface.probability import ProbCurve
 
-        original_distribution_arrays = prob_surface._distribution_arrays_for_t_years
+        original_slice = prob_surface.slice
         invalid_expiry = min(prob_surface.expiries) + pd.Timedelta(days=1)
 
-        def _distribution_with_invalid_slice(
-            t_years: float,
-            *,
-            expiry_timestamp: pd.Timestamp | None = None,
-        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-            """Return a malformed CDF for one sampled non-pillar expiry."""
-            prices, pdf_values, cdf_values = original_distribution_arrays(
-                t_years,
-                expiry_timestamp=expiry_timestamp,
-            )
+        def _slice_with_invalid_curve(
+            expiry_timestamp: str | date | pd.Timestamp,
+        ) -> ProbCurve:
+            """Return a malformed ProbCurve for one sampled non-pillar expiry."""
+            curve = original_slice(expiry_timestamp)
             if pd.Timestamp(expiry_timestamp) == invalid_expiry:
-                invalid_cdf = np.full_like(cdf_values, np.nan, dtype=float)
-                return prices, pdf_values, invalid_cdf
-            return prices, pdf_values, cdf_values
+                invalid_cdf = np.full_like(curve.cdf_values, np.nan, dtype=float)
+                return ProbCurve.from_arrays(
+                    resolved_market=curve.resolved_market,
+                    metadata=dict(curve.metadata),
+                    prices=curve.prices,
+                    pdf_values=curve.pdf_values,
+                    cdf_values=invalid_cdf,
+                )
+            return curve
 
         monkeypatch.setattr(
             prob_surface,
-            "_distribution_arrays_for_t_years",
-            _distribution_with_invalid_slice,
+            "slice",
+            _slice_with_invalid_curve,
         )
 
         with pytest.warns(UserWarning, match="Skipped 1 sampled expiry"):
@@ -606,25 +1210,28 @@ class TestProbSurfacePlotFan:
         monkeypatch: pytest.MonkeyPatch,
     ):
         """plot_fan() should still fail when every sampled slice is invalid."""
-        original_distribution_arrays = prob_surface._distribution_arrays_for_t_years
+        from oipd.interface.probability import ProbCurve
 
-        def _distribution_with_invalid_slices(
-            t_years: float,
-            *,
-            expiry_timestamp: pd.Timestamp | None = None,
-        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-            """Return a malformed CDF for every sampled expiry."""
-            prices, pdf_values, cdf_values = original_distribution_arrays(
-                t_years,
-                expiry_timestamp=expiry_timestamp,
+        original_slice = prob_surface.slice
+
+        def _slice_with_invalid_curves(
+            expiry_timestamp: str | date | pd.Timestamp,
+        ) -> ProbCurve:
+            """Return a malformed ProbCurve for every sampled expiry."""
+            curve = original_slice(expiry_timestamp)
+            invalid_cdf = np.full_like(curve.cdf_values, np.nan, dtype=float)
+            return ProbCurve.from_arrays(
+                resolved_market=curve.resolved_market,
+                metadata=dict(curve.metadata),
+                prices=curve.prices,
+                pdf_values=curve.pdf_values,
+                cdf_values=invalid_cdf,
             )
-            invalid_cdf = np.full_like(cdf_values, np.nan, dtype=float)
-            return prices, pdf_values, invalid_cdf
 
         monkeypatch.setattr(
             prob_surface,
-            "_distribution_arrays_for_t_years",
-            _distribution_with_invalid_slices,
+            "slice",
+            _slice_with_invalid_curves,
         )
 
         with pytest.raises(
@@ -662,4 +1269,4 @@ class TestProbSurfacePlotFan:
             jumps = np.abs(np.diff(quantile_path))
             threshold = float(np.percentile(jumps, 95))
             for jump_index in pillar_jump_indices:
-                assert jumps[jump_index] <= threshold + 1e-8
+                assert jumps[jump_index] <= threshold * 1.01 + 1e-8

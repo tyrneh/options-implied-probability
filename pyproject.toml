@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oipd"
-version = "2.0.3"
+version = "2.0.4"
 readme = "README.md"
 authors = [
   { name="Henry Tian", email="tyrneh@gmail.com" },
@@ -62,6 +62,14 @@ dev = [
     "build>=1.0.0",
 ]
 
+# Experiment runners and YAML-based reproducibility configs
+experiments = [
+    "PyYAML>=6.0",
+    "Pillow>=10.0.0",
+    "pyarrow>=15.0.0",
+    "databento>=0.55.0",
+]
+
 
 
 [project.urls]
@@ -88,7 +96,7 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "experiments/tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"

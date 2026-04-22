@@ -177,6 +177,15 @@ vol_surface.fit(chain, market)  # chain contains multiple expiries
 prob_surface = vol_surface.implied_distribution()
 ```
 
+### 2.4 Black-76 forward inference metadata
+
+For Black-76 fits, OIPD infers the stored `forward_price` from same-strike
+put-call parity across valid call/put pairs. Internally retained fit diagnostics
+include a `parity_report` with pair counts, confidence, outlier counts, and the
+strikes used or excluded during the forward estimate. The public diagnostics
+surface for this report is still stabilizing, so treat it as debugging metadata
+rather than a stable user-facing API.
+
 ## 3. Surface Objects and `slice(...)`
 
 Both surface objects support *slicing*:
@@ -220,7 +229,7 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Parameters** | `params` | Fitted coeffs (SVI `a, b...`). | `params` (dict) | Dict of `{expiry: params}`. |
 | **Slicing** | | | `slice(expiry)` | Extract a `VolCurve` snapshot. |
 | **Expiries** | `expiries` (1-tuple) | Single expiry date. | `expiries` (list) | List of fitted expiry dates. |
-| **Distributions** | `implied_distribution()` | Get `ProbCurve` (RND). | `implied_distribution()` | Get `ProbSurface` (RND Surface). |
+| **Distributions** | `implied_distribution(grid_points=None)` | Get `ProbCurve` (RND). `grid_points=None` uses the smart native grid policy. | `implied_distribution(grid_points=None)` | Get `ProbSurface` (RND Surface). `grid_points=None` uses the smart native grid policy for each materialized slice. |
 | **Visualization (2D curve)** | `plot()` | Plot fitted smile vs market. | `plot()` | Overlayed IV smiles. |
 | **Visualization (3D surface)** | | | `plot_3d()` | Isometric 3D volatility surface. `expiry_range` accepts date-like bounds and is converted to continuous `time_to_expiry_days` internally. |
 | **Term Structure** | | | `plot_term_structure()` | Interpolated ATM-forward IV term structure vs days to expiry. |
@@ -230,7 +239,7 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | Feature / Action | `ProbCurve` (Single Expiry) | Description (Curve) | `ProbSurface` (Multi Expiry) | Description (Surface) |
 | :--- | :--- | :--- | :--- | :--- |
 | **Construction (Convenience)** | `from_chain(chain, market, ...)` | One-line constructor: fits SVI on a single-expiry chain, then builds `ProbCurve`. | `from_chain(chain, market, ...)` | One-line constructor: fits SVI across expiries, then builds `ProbSurface`. |
-| **Construction (From Vol)** | via `VolCurve.implied_distribution()` | Build a `ProbCurve` from a fitted `VolCurve`. | via `VolSurface.implied_distribution()` | Build a `ProbSurface` from a fitted `VolSurface`. |
+| **Construction (From Vol)** | via `VolCurve.implied_distribution(grid_points=None)` | Build a `ProbCurve` from a fitted `VolCurve`; `grid_points` controls native numerical resolution. | via `VolSurface.implied_distribution(grid_points=None)` | Build a `ProbSurface` from a fitted `VolSurface`; `grid_points` controls native numerical resolution for materialized slices. |
 | **Density (PDF)** | `pdf(S)` | Probability density at price $S$. | `pdf(S, t)` | Probability density at price $S$ for a given maturity `t`. |
 | **Callable Alias** | `__call__(S)` | Alias for `pdf(S)`. | `__call__(S, t)` | Alias for `pdf(S, t)`. |
 | **CDF** | `prob_below(S)` | Cumulative distribution function at price $S$. | `cdf(S, t)` | CDF at price $S$ for maturity `t`. |
@@ -238,7 +247,24 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Quantile** | `quantile(q)` | Inverse CDF (price at probability $q$). | `quantile(q, t)` | Direct surface quantile query at maturity `t` (also available via `slice(expiry).quantile(q)`). |
 | **Moments** | `mean()`, `variance()`, `skew()`, `kurtosis()` | Distribution moments. | `slice(expiry).mean()` etc. | Moments for a selected expiry. |
 | **Grid Access** | `prices`, `pdf_values`, `cdf_values` | Cached evaluation grid for plots and queries. | `slice(expiry).prices` etc. | Grid for a selected expiry. |
-| **Data Export** | `density_results(domain=None, points=200)` | DataFrame with `price`, `pdf`, and `cdf`; uses the native fitted grid by default or resamples to an explicit export grid. | `density_results(domain=None, points=200, start=None, end=None, step_days=1)` | Long-format export on a daily grid by default; omitted `start`/`end` use the first/last fitted pillar and fitted pillars are always preserved. |
-| **Visualization (2D)** | `plot(kind=...)` | PDF/CDF plot for one expiry. | `plot_fan()` | Fixed multi-band fan chart over expiries with four shaded bands, a dashed median, and dots at fitted expiry pillars. |
+| **Data Export** | `density_results(domain=None, points=200, full_domain=False)` | DataFrame with `price`, `pdf`, and `cdf`; defaults to a compact `default_view_domain` with 200 rows. Use `full_domain=True` for native full-domain arrays or `domain=(a, b)` for an explicit export range. | `density_results(domain=None, points=200, start=None, end=None, step_days=1, full_domain=False)` | Long-format export on a daily grid by default, with 200 compact rows per expiry. Use `full_domain=True` to export native full-domain arrays for each slice. |
+| **Visualization (2D)** | `plot(kind=..., points=800, full_domain=False, xlim=None)` | PDF/CDF plot for one expiry. Defaults to the compact view domain; `full_domain=True` plots the native full domain, and `xlim=(a, b)` explicitly controls the visible plot range. | `plot_fan()` | Fixed multi-band fan chart over expiries with four shaded bands, a dashed median, and dots at fitted expiry pillars. |
 | **Metadata / Expiries** | `resolved_market`, `metadata` | Market snapshot + fit metadata. | `expiries` | Available expiry dates. |
 | **Slicing** | | | `slice(expiry)` | Extract a `ProbCurve` snapshot. |
+
+Probability views now separate the native numerical grid from display/export
+resolution:
+
+- `grid_points` controls native probability materialization: stored `prices`,
+  `pdf_values`, and `cdf_values`. The default is `grid_points=None`, which uses
+  a smart grid policy based on domain width, spot/forward scale, and observed
+  strike spacing.
+- `points` controls view/export/plot resolution. It does not change the fitted
+  native probability arrays.
+- `density_results()` defaults to the compact `default_view_domain` with
+  `points=200`, so wide probability tails do not automatically create very
+  large or very sparse DataFrames.
+- `density_results(full_domain=True)` returns the native full-domain arrays
+  exactly when `domain` is omitted.
+- `density_results(domain=(a, b), points=N)` uses the explicit export range and
+  row count regardless of `full_domain`.

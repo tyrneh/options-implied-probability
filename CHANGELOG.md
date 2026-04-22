@@ -5,6 +5,39 @@ All notable changes to **oipd** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Changed
+- Temporarily disabled the default bid/ask relative-spread gate for put-call
+  parity forward inference. Explicit `max_bid_ask_relative_spread` values still
+  enforce a ceiling for callers that opt into one.
+
+## [2.0.4] - 2026-04-17
+### Added
+- Added lazy probability materialization for `ProbCurve` and `ProbSurface`.
+- Added smart native probability grids: `grid_points=None` now auto-sizes from the full-domain width, spot/forward scale, and observed strike spacing.
+- Added separate view/export controls: `points` controls `density_results()` and `plot()` resolution, while `grid_points` controls native numerical resolution.
+- Added `full_domain=True` for explicit full native-domain probability exports and plots.
+- Added SVI diagnostics for the selected auxiliary weight source, fallback reason, bid/ask spread coverage, and valid volume count.
+- Added put-call parity diagnostics for candidate, valid, selected, used, outlier, and not-selected forward pairs, including quote source, bid/ask spread, and lowercase volume metadata.
+- Added non-mutating golden-master drift comparison tooling that generates temporary candidates without updating committed golden files.
+- Added an optional `experiments` dependency extra for reproducible experiment runners and YAML configs.
+
+### Changed
+- Probability CDFs now use the direct first-derivative call-price formula with minimal numerical cleanup instead of integrating the PDF.
+- `density_results()` now defaults to a compact view domain with 200 rows; use `full_domain=True` for full native-grid output.
+- `plot()` now defaults to a dense display grid over the compact view domain, avoiding jagged PDFs when the native domain is wide.
+- Black-76 parity forward inference now validates all same-strike call/put candidates, selects only the nearest-ATM subset by strike distance, and applies median/MAD filtering only within that selected subset.
+- Parity forward inference now prefers coherent bid/ask mids with a relative-spread filter and falls back to both-leg `last_price` only when lowercase `volume` is available or explicitly unavailable.
+- DataFrame ingestion now supports bid/ask-only and wide `call_price`/`put_price` option data without requiring a `last_price` column.
+
+### Fixed
+- Updated SVI residual weighting so reliable bid/ask spread data takes precedence over volume. Volume is now used only as a fallback liquidity signal when bid/ask spread coverage is unavailable or unreliable, avoiding accidental double-weighting by both bid/ask and volume.
+- Fixed parity preprocessing so far-from-ATM valid pairs no longer influence the implied forward merely because they passed quote validation.
+- Preserved canonical lowercase `volume` through parity conversion for downstream weighting while ignoring legacy uppercase `Volume`.
+
+### Removed
+- Removed the old integrated-PDF CDF path and legacy normalized surface-CDF helpers.
+
 ## [2.0.3]
 ### Changed
 - Finalized the maturity contract around three explicit fields:

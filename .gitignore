@@ -122,6 +122,10 @@ PRDs/
 .codex/*
 AGENTS.md
 .agent/
+.conductor/
+ce-docs/
+analysis_artifacts/
+diagnostics/
 
 # Spyder project settings
 .spyderproject

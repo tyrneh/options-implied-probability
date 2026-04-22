@@ -163,6 +163,25 @@ class TestVolSurfaceFit:
         vs.fit(multi_expiry_chain, market_inputs)
         assert len(vs.expiries) == 2
 
+    def test_fitted_slice_metadata_carries_parity_report(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Exact fitted surface slices should expose parity diagnostics.
+
+        Args:
+            multi_expiry_chain: Multi-expiry row-format option chain.
+            market_inputs: Market inputs used for the fit.
+        """
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+
+        fitted_slice = vs.slice(vs.expiries[0])
+
+        assert fitted_slice._metadata["parity_report"]["valid_pair_count"] >= 3
+        assert fitted_slice._metadata["forward_price_source"] == "put_call_parity"
+
     def test_fit_with_horizon_filter(self, multi_expiry_chain, market_inputs):
         """fit() respects horizon parameter."""
         from oipd import VolSurface
@@ -447,12 +466,15 @@ class TestVolSurfaceInterpolation:
         metadata = interpolated_curve._metadata
 
         assert metadata is not None
+        assert metadata["interpolated"] is True
         for key in (
             "expiry",
             "time_to_expiry_years",
             "time_to_expiry_days",
             "forward_price",
             "at_money_vol",
+            "interpolated_from_expiries",
+            "domain_hint_source",
         ):
             assert key in metadata
 
@@ -469,6 +491,53 @@ class TestVolSurfaceInterpolation:
         assert metadata["calendar_days_to_expiry"] == resolved.calendar_days_to_expiry
         assert float(metadata["forward_price"]) > 0.0
         assert float(metadata["at_money_vol"]) > 0.0
+        assert metadata["interpolated_from_expiries"] == vs.expiries
+        assert metadata["domain_hint_source"] == "bracketing_pillars"
+
+    def test_interpolated_bs_slice_preserves_spot_market_semantics(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """BS interpolated slices should preserve spot in resolved market state."""
+        from oipd import MarketInputs, VolSurface
+
+        market_with_dividend = MarketInputs(
+            valuation_date=market_inputs.valuation_date,
+            underlying_price=market_inputs.underlying_price,
+            risk_free_rate=market_inputs.risk_free_rate,
+            dividend_schedule=pd.DataFrame(
+                {"ex_date": [pd.Timestamp("2025-02-01")], "amount": [1.0]}
+            ),
+        )
+
+        vs = VolSurface(pricing_engine="bs")
+        vs.fit(multi_expiry_chain, market_with_dividend)
+
+        interpolated_curve = vs.slice("2025-03-21")
+        metadata = interpolated_curve._metadata
+        resolved_market = interpolated_curve.resolved_market
+
+        assert metadata["interpolated"] is True
+        assert resolved_market.source_meta["interpolated"] is True
+        assert resolved_market.source_meta["expiry"] == metadata["expiry"]
+        assert resolved_market.source_meta["forward_price"] == pytest.approx(
+            metadata["forward_price"]
+        )
+        assert (
+            resolved_market.source_meta["interpolated_from_expiries"]
+            == metadata["interpolated_from_expiries"]
+        )
+        assert (
+            resolved_market.source_meta["domain_hint_source"]
+            == metadata["domain_hint_source"]
+        )
+        assert resolved_market.underlying_price == pytest.approx(
+            market_with_dividend.underlying_price
+        )
+        assert resolved_market.dividend_schedule is not None
+        pd.testing.assert_frame_equal(
+            resolved_market.dividend_schedule.reset_index(drop=True),
+            market_with_dividend.dividend_schedule.reset_index(drop=True),
+        )
 
 
 # =============================================================================
@@ -723,6 +792,44 @@ class TestVolSurfaceImpliedDistribution:
         vs.fit(multi_expiry_chain, market_inputs)
         prob_surface = vs.implied_distribution()
         assert len(prob_surface.expiries) == len(vs.expiries)
+
+    def test_implied_distribution_grid_points_controls_slice_resolution(
+        self,
+        multi_expiry_chain,
+        market_inputs,
+    ):
+        """grid_points controls native probability resolution for surface slices."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        prob_surface = vs.implied_distribution(grid_points=500)
+        curve = prob_surface.slice(prob_surface.expiries[0])
+
+        assert len(curve.prices) == 500
+        assert curve.metadata["native_grid_policy"] == "fixed"
+        assert curve.metadata["native_grid_points"] == 500
+
+    @pytest.mark.parametrize(
+        "bad_grid_points",
+        [True, False, 4, 0, -1, 4.5, "500", object()],
+    )
+    def test_implied_distribution_rejects_invalid_grid_points_immediately(
+        self,
+        multi_expiry_chain,
+        market_inputs,
+        bad_grid_points,
+    ):
+        """VolSurface should reject invalid grid_points before returning ProbSurface."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market_inputs)
+        with pytest.raises(
+            ValueError,
+            match="grid_points must be at least 5 for finite differences",
+        ):
+            vs.implied_distribution(grid_points=bad_grid_points)
 
 
 # =============================================================================

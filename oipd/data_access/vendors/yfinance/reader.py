@@ -8,10 +8,9 @@ Implements :class:`Reader`, compatible with the generic *vendor* registry.
 import pickle
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple
 
 import pandas as pd
-import numpy as np
 
 try:
     import yfinance as yf
@@ -31,6 +30,9 @@ class YFinanceError(Exception):
     pass
 
 
+_RAW_UNDERLYING_PRICE_ADJUSTMENT = "raw"
+
+
 # -----------------------------------------------------------------------------
 # Simple file-based cache (unchanged)
 # -----------------------------------------------------------------------------
@@ -47,18 +49,23 @@ class _YFinanceCache:
 
     def get(
         self, ticker: str, expiry: str
-    ) -> Optional[Tuple[pd.DataFrame, float, datetime]]:
+    ) -> Optional[Tuple[pd.DataFrame, float, datetime, str]]:
         p = self._path(ticker, expiry)
         if not p.exists():
             return None
         try:
             with open(p, "rb") as f:
                 data = pickle.load(f)
+            price_adjustment = data.get("underlying_price_adjustment")
+            if price_adjustment != _RAW_UNDERLYING_PRICE_ADJUSTMENT:
+                p.unlink(missing_ok=True)
+                return None
             if datetime.now() - data["timestamp"] < self.ttl:
                 return (
                     data["options_data"],
                     data["underlying_price"],
                     data["timestamp"],
+                    price_adjustment,
                 )
         except Exception:
             p.unlink(missing_ok=True)
@@ -74,6 +81,9 @@ class _YFinanceCache:
                         "timestamp": timestamp,
                         "options_data": df,
                         "underlying_price": price,
+                        "underlying_price_adjustment": (
+                            _RAW_UNDERLYING_PRICE_ADJUSTMENT
+                        ),
                     },
                     f,
                 )
@@ -122,9 +132,10 @@ class Reader(AbstractReader):
         if self._cache:
             hit = self._cache.get(ticker, expiry)
             if hit is not None:
-                df, price, asof = hit
+                df, price, asof, price_adjustment = hit
                 df.attrs["underlying_price"] = price
                 df.attrs["asof"] = asof
+                df.attrs["underlying_price_adjustment"] = price_adjustment
 
                 # Apply column mapping to cached data
                 column_mapping = {
@@ -152,12 +163,7 @@ class Reader(AbstractReader):
             raise YFinanceError(f"yfinance failed for ticker {ticker}: {exc}") from exc
 
         # current price -------------------------------------------------------
-        price = tk.info.get("currentPrice") or tk.info.get("regularMarketPrice")
-        if price is None:
-            hist = tk.history(period="1d")
-            if hist.empty:
-                raise YFinanceError("Unable to fetch current price")
-            price = float(hist["Close"].iloc[-1])
+        price = self._fetch_raw_underlying_price(tk)
 
         # option chain --------------------------------------------------------
         try:
@@ -202,6 +208,7 @@ class Reader(AbstractReader):
 
         # Set metadata on final DataFrame
         final_df.attrs["underlying_price"] = price
+        final_df.attrs["underlying_price_adjustment"] = _RAW_UNDERLYING_PRICE_ADJUSTMENT
         final_df.attrs["asof"] = datetime.now()
         dividend_yield = self._extract_dividend_yield(tk.info)
         final_df.attrs["dividend_yield"] = dividend_yield
@@ -234,6 +241,39 @@ class Reader(AbstractReader):
         if len(df) < 5:
             raise ValueError("Need at least 5 strikes for a meaningful smile")
         return df.reset_index(drop=True)
+
+    def _fetch_raw_underlying_price(self, ticker_object) -> float:
+        """Fetch the unadjusted underlying price from a yfinance ticker.
+
+        Args:
+            ticker_object: ``yfinance.Ticker`` instance.
+
+        Returns:
+            Raw/current underlying price as a float.
+
+        Raises:
+            YFinanceError: If yfinance does not return a usable raw price.
+        """
+
+        info = ticker_object.info or {}
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        if price is not None:
+            return float(price)
+
+        history = ticker_object.history(
+            period="1d",
+            auto_adjust=False,
+            back_adjust=False,
+            actions=False,
+        )
+        if history.empty:
+            raise YFinanceError("Unable to fetch current price")
+
+        raw_close = pd.to_numeric(history["Close"], errors="coerce").dropna()
+        if raw_close.empty:
+            raise YFinanceError("Unable to fetch raw current price")
+
+        return float(raw_close.iloc[-1])
 
     # ---------- options data helpers ----------------------------------------
     def _combine_options_data(

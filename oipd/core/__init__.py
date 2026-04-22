@@ -1,9 +1,10 @@
 from oipd.core.probability_density_conversion import (
-    calculate_cdf_from_pdf,
     calculate_quartiles,
+    cdf_from_price_curve,
     finite_diff_second_derivative,
     pdf_from_price_curve,
     price_curve_from_iv,
+    raw_cdf_from_price_curve,
 )
 from oipd.core.errors import CalculationError, InvalidInputError, OIPDError
 from oipd.core.data_processing.iv import (
@@ -24,13 +25,15 @@ from oipd.core.data_processing.parity import (
     apply_put_call_parity_to_quotes,
     detect_parity_opportunity,
     infer_forward_from_atm,
+    infer_forward_from_put_call_parity,
     preprocess_with_parity,
 )
 from oipd.core.data_processing import filter_stale_options, select_price_column
 
 _BASE_EXPORTS = [
-    "calculate_cdf_from_pdf",
     "calculate_quartiles",
+    "cdf_from_price_curve",
+    "raw_cdf_from_price_curve",
     "finite_diff_second_derivative",
     "pdf_from_price_curve",
     "price_curve_from_iv",
@@ -47,6 +50,7 @@ _BASE_EXPORTS = [
     "AVAILABLE_SURFACE_FITS",
     "preprocess_with_parity",
     "infer_forward_from_atm",
+    "infer_forward_from_put_call_parity",
     "apply_put_call_parity_to_quotes",
     "apply_put_call_parity",
     "detect_parity_opportunity",

@@ -6,7 +6,6 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
-from oipd.core.errors import CalculationError
 from oipd.core.vol_surface_fitting.shared.svi import (
     DEFAULT_SVI_OPTIONS,
     calibrate_svi_parameters,
@@ -41,8 +40,14 @@ def fit_svi_slice(
         maturity_years: Time to expiry in years used for calibration.
         options: Optional base calibration options.
         bid_iv: Optional bid implied volatility quotes aligning with ``strikes``.
+            Reliable bid/ask spread is the preferred auxiliary weighting signal.
         ask_iv: Optional ask implied volatility quotes aligning with ``strikes``.
-        volumes: Optional trade volumes aligning with ``strikes``.
+            Reliable bid/ask spread is the preferred auxiliary weighting signal.
+        volumes: Optional numeric trade-volume array aligned with ``strikes``.
+            Upstream data frames use the singular ``volume`` column name; this
+            plural ``volumes`` argument is the aligned array passed to SVI
+            calibration as fallback liquidity weighting when reliable bid/ask
+            spread quality is unavailable.
         **overrides: Additional SVI option overrides applied on top of
             ``options``.
 

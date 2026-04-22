@@ -26,6 +26,26 @@ from oipd.core.utils import (
 )
 
 
+def _extract_strike_domain(options_data: pd.DataFrame) -> tuple[float, float] | None:
+    """Return the finite strike domain for one options table when available.
+
+    Args:
+        options_data: Option rows that may contain a ``strike`` column.
+
+    Returns:
+        tuple[float, float] | None: Minimum and maximum strike when available.
+    """
+    if "strike" not in options_data.columns or options_data.empty:
+        return None
+
+    strike_values = options_data["strike"].to_numpy(dtype=float)
+    strike_values = strike_values[np.isfinite(strike_values)]
+    if strike_values.size == 0:
+        return None
+
+    return float(np.min(strike_values)), float(np.max(strike_values))
+
+
 def fit_vol_curve_internal(
     options_data: pd.DataFrame,
     resolved_market: ResolvedMarket,
@@ -39,8 +59,7 @@ def fit_vol_curve_internal(
     suppress_price_warning: bool = False,
     suppress_staleness_warning: bool = False,
 ) -> Tuple[Any, Dict[str, Any]]:
-    """
-    Fit a volatility curve to a single slice of options data.
+    """Fit a volatility curve to a single slice of options data.
 
     This function performs vol-only fitting without computing the risk-neutral
     distribution (RND). RND computation is deferred to ``implied_distribution()``.
@@ -51,7 +70,6 @@ def fit_vol_curve_internal(
         pricing_engine: 'black76' or 'bs'.
         price_method: Column to use for pricing ('mid', 'last', etc.).
         max_staleness_days: Filter out quotes older than this.
-        max_staleness_days: Filter out quotes older than this.
         solver: IV solver method.
         method: Volatility fitting method (e.g., 'svi').
         method_options: Options for the fitting method.
@@ -59,9 +77,13 @@ def fit_vol_curve_internal(
         suppress_staleness_warning: If True, suppress warning when filtering stale quotes.
 
     Returns:
-        Tuple containing:
-        - The fitted volatility curve object (callable).
-        - A dictionary of metadata (residuals, parameters, etc.).
+        Tuple containing the fitted volatility curve object and metadata.
+
+    Raises:
+        CalculationError: If maturity, parity forward inference, price selection,
+            or implied-volatility extraction fails.
+        ValueError: If input cleaning, parity preprocessing, or numerical inputs are
+            structurally invalid.
     """
     valuation_timestamp = resolved_market.valuation_timestamp
 
@@ -108,6 +130,8 @@ def fit_vol_curve_internal(
     parity_adjusted, forward_price = apply_put_call_parity(
         cleaned_options, effective_spot, resolved_market
     )
+    parity_report = parity_adjusted.attrs.get("parity_report")
+    forward_price_source = None
 
     # For Black-76, use forward price; for BS, use spot
     if pricing_engine == "black76":
@@ -117,6 +141,7 @@ def fit_vol_curve_internal(
             )
         else:
             underlying_for_iv = forward_price
+            forward_price_source = "put_call_parity"
     else:
         underlying_for_iv = effective_spot
 
@@ -150,12 +175,7 @@ def fit_vol_curve_internal(
     strikes = options_with_iv["strike"].to_numpy(dtype=float)
     ivs = options_with_iv["iv"].to_numpy(dtype=float)
 
-    # Extract volume array if available
-    volume_array: np.ndarray | None = None
-    if "volume" in options_with_iv.columns:
-        volume_array = options_with_iv["volume"].to_numpy(dtype=float)
-        if not np.isfinite(volume_array).any() or np.all(volume_array <= 0):
-            volume_array = None
+    volume_array = _extract_volume_array(options_with_iv)
 
     # 8. Compute observed bid/ask/last IVs for plotting AND for SVI calibration
     observed_bid_iv = _compute_observed_iv(
@@ -194,6 +214,15 @@ def fit_vol_curve_internal(
     if method == "svi":
 
         def _align_iv_series(iv_df: Optional[pd.DataFrame]) -> np.ndarray | None:
+            """Align observed IV values to the fitted strike order.
+
+            Args:
+                iv_df: Observed IV table with ``strike`` and ``iv`` columns.
+
+            Returns:
+                IV array in fitted strike order, or ``None`` when no finite IVs
+                are available.
+            """
             if iv_df is None or iv_df.empty:
                 return None
             joined = (
@@ -238,6 +267,8 @@ def fit_vol_curve_internal(
         "forward_price": underlying_for_iv,
         "pricing_engine": pricing_engine,
         "method": method,
+        "raw_observed_domain": _extract_strike_domain(cleaned_options),
+        "post_iv_survival_domain": _extract_strike_domain(options_with_iv),
         "observed_iv": options_with_iv,
         "observed_iv_bid": observed_bid_iv,
         "observed_iv_ask": observed_ask_iv,
@@ -248,6 +279,10 @@ def fit_vol_curve_internal(
         "risk_free_rate_continuous": effective_r,
         **fit_metadata,
     }
+    if parity_report is not None:
+        metadata["parity_report"] = parity_report
+    if forward_price_source is not None:
+        metadata["forward_price_source"] = forward_price_source
 
     return vol_curve, metadata
 
@@ -291,6 +326,29 @@ def _compute_observed_iv(
     if "option_type" in iv_df.columns:
         columns.append("option_type")
     return iv_df.loc[:, columns]
+
+
+def _extract_volume_array(options_with_iv: pd.DataFrame) -> Optional[np.ndarray]:
+    """Return valid per-strike volume values for SVI weighting.
+
+    Args:
+        options_with_iv: IV-ready options data after parity preprocessing and
+            price selection.
+
+    Returns:
+        Optional volume array aligned with ``options_with_iv`` rows. Returns
+        ``None`` when no positive finite volume information is available.
+    """
+
+    if "volume" not in options_with_iv.columns:
+        return None
+
+    volume_array = pd.to_numeric(options_with_iv["volume"], errors="coerce").to_numpy(
+        dtype=float
+    )
+    if not np.isfinite(volume_array).any() or np.all(volume_array <= 0):
+        return None
+    return volume_array
 
 
 def compute_fitted_smile(
