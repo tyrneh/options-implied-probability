@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Literal, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,7 @@ from oipd.core.vol_surface_fitting.shared.ssvi import (
 )
 
 REMOVED_DAY_COUNT_COLUMN = "days" "_to_expiry"
+CdfViolationPolicy = Literal["warn", "raise"]
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,40 @@ class RebuiltSlice:
 
     vol_curve: Callable[[Iterable[float] | np.ndarray], np.ndarray]
     data: pd.DataFrame
+
+
+def _cdf_diagnostic_columns(
+    diagnostics: Mapping[str, float | int | bool | str],
+) -> dict[str, float | int | bool | str]:
+    """Return CDF repair diagnostics as scalar DataFrame columns.
+
+    Args:
+        diagnostics: Direct-CDF diagnostics emitted by the core converter.
+
+    Returns:
+        dict[str, float | int | bool | str]: Scalar diagnostics that pandas can
+        broadcast across a rebuilt slice's rows.
+    """
+    return {
+        "cdf_violation_policy": diagnostics["cdf_violation_policy"],
+        "cdf_monotonicity_repair_applied": diagnostics[
+            "cdf_monotonicity_repair_applied"
+        ],
+        "cdf_monotonicity_repair_tolerance": diagnostics[
+            "cdf_monotonicity_repair_tolerance"
+        ],
+        "cdf_total_negative_variation_tolerance": diagnostics[
+            "cdf_total_negative_variation_tolerance"
+        ],
+        "cdf_monotonicity_severity": diagnostics["cdf_monotonicity_severity"],
+        "raw_cdf_is_monotone": diagnostics["raw_cdf_is_monotone"],
+        "raw_cdf_negative_step_count": diagnostics["raw_cdf_negative_step_count"],
+        "raw_cdf_max_negative_step": diagnostics["raw_cdf_max_negative_step"],
+        "raw_cdf_total_negative_variation": diagnostics[
+            "raw_cdf_total_negative_variation"
+        ],
+        "raw_cdf_worst_step_strike": diagnostics["raw_cdf_worst_step_strike"],
+    }
 
 
 @dataclass
@@ -51,6 +86,7 @@ class RebuiltSurface:
     strike_grids: dict[float, np.ndarray]
     days_map: dict[float, int]
     time_days_map: dict[float, float]
+    cdf_violation_policy: CdfViolationPolicy
     _cache: dict[float, RebuiltSlice]
 
     def available_time_to_expiry_days(self) -> tuple[float, ...]:
@@ -155,6 +191,7 @@ class RebuiltSurface:
             min_strike=float(prices[0]),
             max_strike=float(prices[-1]),
             reference_price=forward,
+            cdf_violation_policy=self.cdf_violation_policy,
         )
         cdf = cdf_result.cdf_values
 
@@ -168,6 +205,7 @@ class RebuiltSurface:
                 "time_to_expiry_years": maturity,
                 "time_to_expiry_days": time_to_expiry_days,
                 "calendar_days_to_expiry": calendar_days_to_expiry,
+                **_cdf_diagnostic_columns(cdf_result.diagnostics),
             }
         )
 
@@ -310,6 +348,7 @@ def rebuild_slice_from_svi(
     time_to_expiry_years: float | None = None,
     risk_free_rate: float,
     strike_grid: Sequence[float] | None = None,
+    cdf_violation_policy: CdfViolationPolicy = "warn",
 ) -> RebuiltSlice:
     """Rebuild a volatility smile and RND slice from stored SVI parameters.
 
@@ -326,6 +365,9 @@ def rebuild_slice_from_svi(
         strike_grid: Sequence[float], optional
             Strike grid on which to evaluate the smile. When omitted a symmetric
             grid around ``forward_price`` is generated.
+        cdf_violation_policy: Direct-CDF monotonicity violation policy.
+            ``"warn"`` repairs and warns; ``"raise"`` fails on material
+            violations.
 
     Returns:
         RebuiltSlice: Object containing the analytic volatility curve callable
@@ -412,6 +454,7 @@ def rebuild_slice_from_svi(
         min_strike=float(prices[0]),
         max_strike=float(prices[-1]),
         reference_price=forward_price,
+        cdf_violation_policy=cdf_violation_policy,
     )
     cdf = cdf_result.cdf_values
 
@@ -425,6 +468,7 @@ def rebuild_slice_from_svi(
             "time_to_expiry_years": maturity_years,
             "time_to_expiry_days": time_days,
             "calendar_days_to_expiry": calendar_days,
+            **_cdf_diagnostic_columns(cdf_result.diagnostics),
         }
     )
 
@@ -437,6 +481,7 @@ def rebuild_surface_from_ssvi(
     forward_prices: Mapping[float, float],
     risk_free_rate: float,
     strike_grids: Mapping[float, Sequence[float]] | None = None,
+    cdf_violation_policy: CdfViolationPolicy = "warn",
 ) -> RebuiltSurface:
     """Rebuild per-maturity slices from stored SSVI parameters.
 
@@ -454,6 +499,9 @@ def rebuild_surface_from_ssvi(
         strike_grids: Mapping[float, Sequence[float]] | None
             Optional per-maturity strike grids. When omitted, each slice uses a
             symmetric grid spanning 50%–150% of its forward.
+        cdf_violation_policy: Direct-CDF monotonicity violation policy used for
+            each rebuilt slice. ``"warn"`` repairs and warns; ``"raise"``
+            fails on material violations.
 
     Returns:
         RebuiltSurface: Bundle containing reconstructed slices keyed by maturity.
@@ -533,6 +581,7 @@ def rebuild_surface_from_ssvi(
         strike_grids=strike_lookup,
         days_map=days_lookup,
         time_days_map=time_days_lookup,
+        cdf_violation_policy=cdf_violation_policy,
         _cache={},
     )
 

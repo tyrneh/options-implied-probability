@@ -186,6 +186,69 @@ strikes used or excluded during the forward estimate. The public diagnostics
 surface for this report is still stabilizing, so treat it as debugging metadata
 rather than a stable user-facing API.
 
+### 2.5 Warning diagnostics
+
+OIPD tries to keep notebooks readable. When a public operation sees multiple
+related issues, it emits one summarized warning per broad category instead of
+printing one long warning per row, expiry, or numerical repair.
+
+The detailed audit trail is stored on every public curve and surface object:
+
+```python
+surface = ProbSurface.from_chain(chain, market)
+fig = surface.plot_fan()  # may emit one concise ModelRiskWarning or WorkflowWarning
+
+surface.warning_diagnostics.summary
+surface.warning_diagnostics.events
+```
+
+Each event has stable fields:
+
+```python
+event = surface.warning_diagnostics.events[0]
+event.category     # e.g. "model_risk"
+event.event_type   # e.g. "cdf_repair"
+event.severity     # "info", "warning", or "severe"
+event.message
+event.details      # compact JSON-like audit facts
+```
+
+The broad warning classes live in `oipd.warnings` and are standard
+`UserWarning` subclasses, so you can filter them with Python's `warnings`
+module:
+
+```python
+import warnings
+
+from oipd.warnings import DataQualityWarning, ModelRiskWarning, WorkflowWarning
+
+warnings.simplefilter("always", ModelRiskWarning)
+warnings.simplefilter("error", WorkflowWarning)
+```
+
+The warning taxonomy is:
+
+- `DataQualityWarning`: input quote issues such as stale rows or fallback prices
+- `ModelRiskWarning`: fitted-model or probability-shape issues such as CDF repair
+- `NumericalWarning`: numerical fragility or instability
+- `WorkflowWarning`: best-effort continuation, such as skipped expiries
+
+Probability CDF validation is controlled by `cdf_violation_policy`. The default
+is `"warn"`: OIPD repairs material direct-CDF monotonicity violations, emits a
+summarized `ModelRiskWarning`, and records a `cdf_repair` event. Use `"raise"`
+for stricter workflows:
+
+```python
+prob = ProbSurface.from_chain(
+    chain,
+    market,
+    cdf_violation_policy="raise",
+)
+```
+
+With `"raise"`, strict CDF violations propagate as errors instead of being
+converted into repair diagnostics or fan-chart skipped-expiry warnings.
+
 ## 3. Surface Objects and `slice(...)`
 
 Both surface objects support *slicing*:

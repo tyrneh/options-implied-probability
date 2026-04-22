@@ -30,6 +30,22 @@ def test_rebuild_slice_accepts_time_to_expiry_days():
     assert rebuilt.data["time_to_expiry_days"].iloc[0] == pytest.approx(30.4)
     assert rebuilt.data["time_to_expiry_years"].iloc[0] == pytest.approx(30.4 / 365.0)
     assert rebuilt.data["calendar_days_to_expiry"].iloc[0] == 30
+    assert rebuilt.data["cdf_violation_policy"].iloc[0] == "warn"
+    assert "cdf_monotonicity_repair_applied" in rebuilt.data.columns
+    assert "raw_cdf_total_negative_variation" in rebuilt.data.columns
+
+
+def test_rebuild_slice_accepts_raise_cdf_violation_policy():
+    """Rebuild helper should expose strict CDF policy for research workflows."""
+    rebuilt = rebuild_slice_from_svi(
+        SVI_PARAMS,
+        forward_price=100.0,
+        time_to_expiry_days=30.4,
+        risk_free_rate=0.01,
+        cdf_violation_policy="raise",
+    )
+
+    assert rebuilt.data["cdf_violation_policy"].iloc[0] == "raise"
 
 
 def test_rebuild_slice_rejects_days_to_expiry_kwarg():
@@ -81,6 +97,8 @@ def test_rebuild_surface_accepts_time_to_expiry_days_column():
     assert not rebuilt.data.empty
     assert rebuilt.data["time_to_expiry_days"].iloc[0] == pytest.approx(45.0)
     assert rebuilt.data["time_to_expiry_years"].iloc[0] == pytest.approx(45.0 / 365.0)
+    assert rebuilt.data["cdf_violation_policy"].iloc[0] == "warn"
+    assert "cdf_monotonicity_repair_applied" in rebuilt.data.columns
 
 
 def test_rebuilt_surface_slice_rejects_days_to_expiry_kwarg():
@@ -125,6 +143,29 @@ def test_rebuild_surface_accepts_time_to_expiry_years_column_without_day_alias()
     )
 
     assert surface.available_time_to_expiry_days() == pytest.approx((30.0, 60.0))
+
+
+def test_rebuild_surface_accepts_raise_cdf_violation_policy():
+    """Surface rebuild should carry strict CDF policy into cached slices."""
+    ssvi_params = pd.DataFrame(
+        {
+            "time_to_expiry_years": [30.0 / 365.0, 60.0 / 365.0],
+            "theta": [0.04, 0.06],
+            "rho": [-0.2, -0.2],
+            "eta": [0.5, 0.5],
+            "gamma": [0.4, 0.4],
+            "alpha": [0.0, 0.0],
+        }
+    )
+    surface = rebuild_surface_from_ssvi(
+        ssvi_params,
+        forward_prices={30.0 / 365.0: 100.0, 60.0 / 365.0: 101.0},
+        risk_free_rate=0.01,
+        cdf_violation_policy="raise",
+    )
+
+    rebuilt = surface.slice(time_to_expiry_years=30.0 / 365.0)
+    assert rebuilt.data["cdf_violation_policy"].iloc[0] == "raise"
 
 
 def test_rebuild_surface_rejects_legacy_maturity_snapshot_column():

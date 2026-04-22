@@ -64,6 +64,30 @@ You can think about the lifecycle in three steps:
 
 If you're familiar with scikit-learn, this is the same mental model: configure an estimator, call `fit`, then inspect outputs.
 
+OIPD also records structured warning diagnostics on fitted objects. Public
+operations emit one concise warning per broad category, and detailed events are
+available through `.warning_diagnostics.events` and
+`.warning_diagnostics.summary`. The broad warning classes are importable from
+`oipd.warnings`:
+
+```python
+from oipd.warnings import (
+    DataQualityWarning,
+    ModelRiskWarning,
+    NumericalWarning,
+    WorkflowWarning,
+)
+
+surface = ProbSurface.from_chain(chain_surface, surface_market)
+surface.plot_fan()
+surface.warning_diagnostics.summary
+```
+
+For probability CDF validation, `cdf_violation_policy="warn"` is the default:
+material CDF repairs warn and record diagnostics. Use
+`cdf_violation_policy="raise"` when you want strict CDF violations to propagate
+as errors.
+
 Conceptual flow:
 
 ```text

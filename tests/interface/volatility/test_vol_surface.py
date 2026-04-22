@@ -207,11 +207,15 @@ class TestVolSurfaceFit:
     def test_fit_default_skip_warn_skips_failed_expiries(
         self, mixed_quality_multi_expiry_chain, market_inputs
     ):
-        """Default policy skips failed slices and emits aggregate warning."""
+        """Default policy skips failed slices and emits a workflow summary warning."""
         from oipd import VolSurface
+        from oipd.warnings import WorkflowWarning
 
         vs = VolSurface()
-        with pytest.warns(UserWarning, match="Skipped .* expiries during surface fit"):
+        with pytest.warns(
+            WorkflowWarning,
+            match=r"VolSurface\.fit recorded 1 workflow warning event",
+        ):
             vs.fit(mixed_quality_multi_expiry_chain, market_inputs)
         assert len(vs.expiries) == 2
         assert pd.Timestamp("2025-07-21") not in vs.expiries

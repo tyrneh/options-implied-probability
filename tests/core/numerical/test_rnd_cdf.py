@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 from scipy.stats import norm
 
 from oipd.core.errors import InvalidInputError
 from oipd.core.probability_density_conversion.rnd import (
+    CDF_SEVERE_MONOTONICITY_EPSILON,
+    CDF_TOTAL_NEGATIVE_VARIATION_EPSILON,
     cdf_from_price_curve,
     direct_cdf_diagnostics,
     _minimal_direct_cdf_cleanup,
@@ -391,14 +395,152 @@ def test_minimal_direct_cdf_cleanup_clips_small_monotone_upper_overshoot() -> No
     assert diagnostics["cdf_upper_tail_clip_count"] == 1
 
 
-def test_minimal_direct_cdf_cleanup_rejects_monotonicity_violation() -> None:
-    """Direct CDF should fail instead of repairing material downward steps."""
+def test_minimal_direct_cdf_cleanup_warns_and_repairs_monotonicity_violation() -> None:
+    """Warn policy should repair material downward CDF steps and continue."""
     strikes = np.linspace(0.0, 4.0, 5)
-    raw_cdf_values = np.array([0.0, 0.5, 0.49, 0.75, 1.0])
+    raw_cdf_values = np.array([0.0, 0.5, 0.49995, 0.75, 1.0])
 
-    with pytest.raises(InvalidInputError, match="materially non-monotone"):
+    with pytest.warns(UserWarning, match="monotonicity violation repaired"):
+        cleaned, diagnostics = _minimal_direct_cdf_cleanup(
+            strikes,
+            raw_cdf_values,
+            reference_price=1.0,
+        )
+
+    assert np.all(np.diff(cleaned) >= 0.0)
+    assert cleaned[2] == pytest.approx(0.5)
+    assert diagnostics["cdf_violation_policy"] == "warn"
+    assert diagnostics["cdf_monotonicity_repair_applied"]
+    assert diagnostics["cdf_monotonicity_repair_tolerance"] == pytest.approx(5e-6)
+    assert diagnostics["cdf_monotonicity_severity"] == "material"
+    assert diagnostics["raw_cdf_negative_step_count"] == 1
+    assert diagnostics["raw_cdf_max_negative_step"] == pytest.approx(-5e-5)
+    assert diagnostics["raw_cdf_total_negative_variation"] == pytest.approx(5e-5)
+    assert diagnostics["raw_cdf_worst_step_strike"] == pytest.approx(2.0)
+    assert diagnostics["cdf_total_negative_variation_tolerance"] == pytest.approx(
+        CDF_TOTAL_NEGATIVE_VARIATION_EPSILON
+    )
+
+
+def test_cdf_from_price_curve_can_suppress_verbose_repair_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct CDF repair diagnostics remain available when warnings are suppressed."""
+    import oipd.core.probability_density_conversion.rnd as rnd
+
+    strikes = np.linspace(0.0, 4.0, 5)
+    raw_cdf_values = np.array([0.0, 0.5, 0.49995, 0.75, 1.0])
+
+    def fake_first_derivative(
+        call_prices: np.ndarray,
+        strike_values: np.ndarray,
+    ) -> np.ndarray:
+        """Return a synthetic first derivative that implies raw CDF damage."""
+        return raw_cdf_values - 1.0
+
+    monkeypatch.setattr(rnd, "finite_diff_first_derivative", fake_first_derivative)
+
+    with pytest.warns(UserWarning, match="monotonicity violation repaired"):
+        default_result = cdf_from_price_curve(
+            strikes,
+            np.zeros_like(strikes),
+            risk_free_rate=0.0,
+            time_to_expiry_years=1.0,
+            reference_price=1.0,
+        )
+
+    with warnings.catch_warnings(record=True) as recorded_warnings:
+        warnings.simplefilter("always")
+        suppressed_result = cdf_from_price_curve(
+            strikes,
+            np.zeros_like(strikes),
+            risk_free_rate=0.0,
+            time_to_expiry_years=1.0,
+            reference_price=1.0,
+            emit_warning=False,
+        )
+
+    assert recorded_warnings == []
+    assert default_result.diagnostics["cdf_monotonicity_repair_applied"]
+    assert suppressed_result.diagnostics["cdf_monotonicity_repair_applied"]
+    assert suppressed_result.diagnostics["cdf_monotonicity_severity"] == "material"
+
+
+def test_minimal_direct_cdf_cleanup_warns_on_cumulative_negative_variation() -> None:
+    """Repeated sub-threshold downward steps should trigger warning repair."""
+    strikes = np.linspace(0.0, 1.0, 80)
+    raw_cdf_values = []
+    current_cdf_value = 0.10
+    for _ in range(40):
+        raw_cdf_values.append(current_cdf_value)
+        current_cdf_value += 1.0e-5
+        raw_cdf_values.append(current_cdf_value)
+        current_cdf_value -= 4.0e-6
+    raw_cdf_values_array = np.asarray(raw_cdf_values, dtype=float)
+
+    with pytest.warns(UserWarning, match="total_negative_variation"):
+        cleaned, diagnostics = _minimal_direct_cdf_cleanup(
+            strikes,
+            raw_cdf_values_array,
+            reference_price=1.0,
+        )
+
+    assert np.all(np.diff(cleaned) >= 0.0)
+    assert diagnostics["raw_cdf_negative_step_count"] == 0
+    assert diagnostics["raw_cdf_total_negative_variation"] > (
+        CDF_TOTAL_NEGATIVE_VARIATION_EPSILON
+    )
+    assert diagnostics["cdf_monotonicity_repair_applied"]
+    assert diagnostics["cdf_monotonicity_severity"] == "material"
+
+
+def test_minimal_direct_cdf_cleanup_raise_rejects_material_violation() -> None:
+    """Raise policy should fail on any material downward CDF step."""
+    strikes = np.linspace(0.0, 4.0, 5)
+    raw_cdf_values = np.array(
+        [0.0, 0.5, 0.5 - (0.5 * CDF_SEVERE_MONOTONICITY_EPSILON), 0.75, 1.0]
+    )
+
+    with pytest.raises(
+        InvalidInputError,
+        match="policy='raise'.*max_negative_step=-5e-05",
+    ):
         _minimal_direct_cdf_cleanup(
             strikes,
             raw_cdf_values,
             reference_price=1.0,
+            cdf_violation_policy="raise",
+        )
+
+
+def test_minimal_direct_cdf_cleanup_rejects_nonfinite_under_warn_policy() -> None:
+    """Non-finite direct CDF values should fail even when repair is requested."""
+    strikes = np.linspace(0.0, 4.0, 5)
+    raw_cdf_values = np.array([0.0, 0.25, np.nan, 0.75, 1.0])
+
+    with pytest.raises(InvalidInputError, match="non-finite"):
+        _minimal_direct_cdf_cleanup(
+            strikes,
+            raw_cdf_values,
+            reference_price=1.0,
+            cdf_violation_policy="warn",
+        )
+
+
+def test_minimal_direct_cdf_cleanup_rejects_monotonicity_violation() -> None:
+    """Raise policy should fail instead of repairing severe downward steps."""
+    strikes = np.linspace(0.0, 4.0, 5)
+    raw_cdf_values = np.array(
+        [0.0, 0.5, 0.5 - (2.0 * CDF_SEVERE_MONOTONICITY_EPSILON), 0.75, 1.0]
+    )
+
+    with pytest.raises(
+        InvalidInputError,
+        match="Severe.*policy='raise'.*worst_step_strike=2",
+    ):
+        _minimal_direct_cdf_cleanup(
+            strikes,
+            raw_cdf_values,
+            reference_price=1.0,
+            cdf_violation_policy="raise",
         )

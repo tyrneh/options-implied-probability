@@ -96,7 +96,7 @@ def select_price_column(
     price_method: Literal["last", "mid"],
     *,
     emit_warning: bool = True,
-) -> tuple[pd.DataFrame, bool]:
+) -> tuple[pd.DataFrame, int]:
     """Select the appropriate option price column based on user preference.
 
     Args:
@@ -107,10 +107,11 @@ def select_price_column(
             the last traded price.
 
     Returns:
-        tuple[DataFrame, bool]: A tuple containing:
+        tuple[DataFrame, int]: A tuple containing:
             - DataFrame with a ``price`` column populated according to the requested
               pricing convention and filtered for positive prices.
-            - Boolean flag indicating if missing mid prices were filled with last_price.
+            - Count of rows whose missing mid/bid/ask price was filled with
+              ``last_price``.
 
     Raises:
         CalculationError: When the requested pricing convention cannot be
@@ -118,28 +119,20 @@ def select_price_column(
     """
 
     data = options_data.copy()
-    was_filled = False
+    fallback_candidate_mask = pd.Series(False, index=data.index)
 
     if price_method == "mid":
         if "mid" in data.columns:
             data["price"] = data["mid"]
+            fallback_candidate_mask = data["price"].isna()
         elif "bid" in data.columns and "ask" in data.columns:
             mid = (data["bid"] + data["ask"]) / 2
-            mask = data["bid"].notna() & data["ask"].notna()
-            if mask.any():
-                data["price"] = np.where(mask, mid, data["last_price"])
-                if not mask.all():
-                    warnings.warn(
-                        "Using last_price for rows with missing bid/ask",
-                        UserWarning,
-                    )
+            quoted_mid_mask = data["bid"].notna() & data["ask"].notna()
+            fallback_candidate_mask = ~quoted_mid_mask
+            if quoted_mid_mask.any():
+                data["price"] = mid
             else:
-                warnings.warn(
-                    "Requested price_method='mid' but bid/ask data not available. "
-                    "Falling back to price_method='last'",
-                    UserWarning,
-                )
-                data["price"] = data["last_price"]
+                data["price"] = np.nan
         else:
             raise CalculationError(
                 "Requested price_method='mid' but bid/ask data not available. "
@@ -151,22 +144,33 @@ def select_price_column(
     if "price" not in data.columns:
         raise CalculationError("Failed to determine option price column")
 
-    if data["price"].isna().any() and "last_price" in data.columns:
-        missing_mask = data["price"].isna()
-        filled_count = int(missing_mask.sum())
-        if filled_count > 0:
-            data.loc[missing_mask, "price"] = data.loc[missing_mask, "last_price"]
-            was_filled = filled_count  # Return count instead of bool
-            if emit_warning:
-                warnings.warn(
-                    f"Filled {filled_count} missing mid prices with last_price due to unavailable bid/ask",
-                    UserWarning,
-                )
-    else:
-        was_filled = 0
+    successful_fallback_mask = pd.Series(False, index=data.index)
+    if price_method == "mid" and fallback_candidate_mask.any():
+        if "last_price" not in data.columns:
+            raise CalculationError(
+                "Requested price_method='mid' but fallback last_price is unavailable."
+            )
+        last_price_values = pd.to_numeric(data["last_price"], errors="coerce")
+        successful_fallback_mask = (
+            fallback_candidate_mask
+            & np.isfinite(last_price_values)
+            & (last_price_values > 0)
+        )
+        data.loc[successful_fallback_mask, "price"] = data.loc[
+            successful_fallback_mask, "last_price"
+        ]
 
-    data = data[data["price"] > 0].copy()
-    return data, was_filled
+    survivor_mask = pd.to_numeric(data["price"], errors="coerce") > 0
+    filled_count = int((successful_fallback_mask & survivor_mask).sum())
+
+    if filled_count > 0 and emit_warning:
+        warnings.warn(
+            f"Filled {filled_count} missing mid prices with last_price due to unavailable bid/ask",
+            UserWarning,
+        )
+
+    data = data[survivor_mask].copy()
+    return data, filled_count
 
 
 __all__ = [

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence, Tuple
-import warnings
 
 import numpy as np
 from scipy import optimize, special
@@ -1850,10 +1849,6 @@ def calibrate_svi_parameters(
         diagnostics.status = "warning"
         diagnostics.butterfly_warning = float(min_g)
         logger.warning("SVI calibration butterfly violation: min_g=%.3e", min_g)
-        warnings.warn(
-            f"SVI calibration violates butterfly condition: min_g={min_g:.3e}",
-            UserWarning,
-        )
 
     final_model = svi_total_variance(k, params)
     residual_final = final_model - total_variance
