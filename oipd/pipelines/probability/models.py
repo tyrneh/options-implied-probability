@@ -47,10 +47,14 @@ class MaterializationSpec:
             full-domain behavior.
         points: Requested native grid resolution. ``None`` uses the smart
             native grid policy.
+        cdf_violation_policy: Direct-CDF monotonicity violation policy. ``"warn"``
+            repairs material downward steps and emits a warning, while
+            ``"raise"`` fails on any material monotonicity violation.
     """
 
     domain: tuple[float, float] | None = None
     points: int | None = None
+    cdf_violation_policy: str = "warn"
 
     def __post_init__(self) -> None:
         """Validate cheap materialization policy inputs."""
@@ -60,6 +64,8 @@ class MaterializationSpec:
             raise ValueError("grid_points must be at least 5 for finite differences.")
         if self.points is not None and self.points < 5:
             raise ValueError("grid_points must be at least 5 for finite differences.")
+        if self.cdf_violation_policy not in {"raise", "warn"}:
+            raise ValueError("cdf_violation_policy must be either 'raise' or 'warn'.")
 
 
 @dataclass(frozen=True)

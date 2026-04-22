@@ -52,9 +52,7 @@ def test_yfinance_history_fallback_requests_raw_close(monkeypatch) -> None:
         SimpleNamespace(Ticker=lambda ticker: FakeTicker()),
     )
 
-    result = yfinance_reader.Reader(cache_enabled=False)._ingest_data(
-        "SPY:2025-04-17"
-    )
+    result = yfinance_reader.Reader(cache_enabled=False)._ingest_data("SPY:2025-04-17")
 
     assert history_calls == [
         {"period": "1d", "auto_adjust": False, "back_adjust": False, "actions": False}

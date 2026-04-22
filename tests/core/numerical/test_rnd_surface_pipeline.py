@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from datetime import date
 
 import numpy as np
@@ -138,15 +139,15 @@ def test_build_fan_quantile_summary_frame_uses_daily_sampling(
     assert np.all(np.diff(quantile_matrix, axis=1) >= -1e-8)
 
 
-def test_build_fan_quantile_summary_frame_skips_invalid_slice_and_warns(
+def test_build_fan_quantile_summary_frame_skips_invalid_slice_with_report(
     fitted_surface: VolSurface,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invalid sampled slices are skipped with one aggregate warning."""
+    """Invalid sampled slices are skipped with one aggregate attrs report."""
     prob_surface = fitted_surface.implied_distribution()
     from oipd.interface.probability import ProbCurve
 
-    original_slice = prob_surface.slice
+    original_slice = prob_surface._internal_slice
     invalid_expiry = min(prob_surface.expiries) + pd.Timedelta(days=1)
 
     def _slice_with_invalid_curve(
@@ -167,11 +168,12 @@ def test_build_fan_quantile_summary_frame_skips_invalid_slice_and_warns(
 
     monkeypatch.setattr(
         prob_surface,
-        "slice",
+        "_internal_slice",
         _slice_with_invalid_curve,
     )
 
-    with pytest.warns(UserWarning, match="Skipped 1 sampled expiry"):
+    with warnings.catch_warnings(record=True) as recorded_warnings:
+        warnings.simplefilter("always")
         frame = build_fan_quantile_summary_frame(prob_surface)
 
     unique_expiries = pd.to_datetime(frame["expiry"])
@@ -182,10 +184,54 @@ def test_build_fan_quantile_summary_frame_skips_invalid_slice_and_warns(
     assert len(frame) == expected_days - 1
     assert invalid_expiry not in set(unique_expiries)
     assert frame["is_pillar"].sum() == len(fitted_surface.expiries)
+    assert recorded_warnings == []
+    assert frame.attrs["fan_skip_report"]["skipped_count"] == 1
+    assert frame.attrs["fan_skip_report"]["skipped_expiries"] == [
+        invalid_expiry.isoformat()
+    ]
 
     quantile_columns = ["p10", "p20", "p30", "p40", "p50", "p60", "p70", "p80", "p90"]
     quantile_matrix = frame[quantile_columns].to_numpy(dtype=float)
     assert np.all(np.diff(quantile_matrix, axis=1) >= -1e-8)
+
+
+def test_build_fan_quantile_summary_frame_skips_calculation_error_with_report(
+    fitted_surface: VolSurface,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CalculationError sampled slices are skipped with a reason report."""
+    from oipd.core.errors import CalculationError
+
+    prob_surface = fitted_surface.implied_distribution()
+    original_slice = prob_surface._internal_slice
+    invalid_expiry = min(prob_surface.expiries) + pd.Timedelta(days=1)
+
+    def _slice_with_calculation_error(
+        expiry_timestamp: str | date | pd.Timestamp,
+    ):
+        """Raise CalculationError for one sampled non-pillar expiry."""
+        if pd.Timestamp(expiry_timestamp) == invalid_expiry:
+            raise CalculationError("synthetic CDF materialization failure")
+        return original_slice(expiry_timestamp)
+
+    monkeypatch.setattr(
+        prob_surface,
+        "_internal_slice",
+        _slice_with_calculation_error,
+    )
+
+    with warnings.catch_warnings(record=True) as recorded_warnings:
+        warnings.simplefilter("always")
+        frame = build_fan_quantile_summary_frame(prob_surface)
+
+    unique_expiries = pd.to_datetime(frame["expiry"])
+    assert invalid_expiry not in set(unique_expiries)
+    assert recorded_warnings == []
+    assert frame.attrs["fan_skip_report"]["skipped_count"] == 1
+    assert (
+        "CalculationError: synthetic CDF"
+        in frame.attrs["fan_skip_report"]["reason_summary"]
+    )
 
 
 def test_build_fan_quantile_summary_frame_raises_when_all_slices_invalid(
@@ -196,7 +242,7 @@ def test_build_fan_quantile_summary_frame_raises_when_all_slices_invalid(
     prob_surface = fitted_surface.implied_distribution()
     from oipd.interface.probability import ProbCurve
 
-    original_slice = prob_surface.slice
+    original_slice = prob_surface._internal_slice
 
     def _slice_with_invalid_curves(
         expiry_timestamp: str | date | pd.Timestamp,
@@ -214,7 +260,7 @@ def test_build_fan_quantile_summary_frame_raises_when_all_slices_invalid(
 
     monkeypatch.setattr(
         prob_surface,
-        "slice",
+        "_internal_slice",
         _slice_with_invalid_curves,
     )
 

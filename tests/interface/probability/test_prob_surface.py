@@ -97,6 +97,9 @@ def _assert_direct_cdf_diagnostics_pass(metadata) -> None:
     """
     assert metadata["cdf_method"] == "call_price_first_derivative"
     assert metadata["cdf_cleanup_policy"] == "minimal_epsilon_cleanup"
+    assert metadata["cdf_violation_policy"] == "warn"
+    assert metadata["cdf_monotonicity_repair_tolerance"] == pytest.approx(5e-6)
+    assert metadata["cdf_total_negative_variation_tolerance"] == pytest.approx(1e-4)
     assert (
         metadata["cdf_upper_tail_clip_policy"] == "clip_finite_monotone_small_overshoot"
     )
@@ -109,7 +112,7 @@ def _assert_direct_cdf_diagnostics_pass(metadata) -> None:
     assert np.isfinite(metadata["cdf_pdf_interval_mean_error"])
     raw_lower_boundary_tolerance = 1e-4
     raw_upper_boundary_tolerance = metadata["cdf_upper_tail_clip_tolerance"]
-    raw_monotonicity_tolerance = 1e-6
+    raw_monotonicity_tolerance = 5e-6
     assert metadata["raw_cdf_is_monotone"]
     assert metadata["raw_cdf_negative_step_count"] == 0
     assert metadata["raw_cdf_min"] >= -raw_lower_boundary_tolerance
@@ -414,7 +417,7 @@ class TestProbSurfaceLazyMaterialization:
         assert materialization_calls == 1
 
         _ = prob_surface.pdf(100.0, t=pillar_expiry)
-        assert materialization_calls == 1
+        assert materialization_calls == 2
 
     @pytest.mark.parametrize(
         "expiry",
@@ -443,6 +446,33 @@ class TestProbSurfaceLazyMaterialization:
         np.testing.assert_allclose(surface_curve.prices, expected_prices)
         np.testing.assert_allclose(surface_curve.pdf_values, expected_pdf)
         np.testing.assert_allclose(surface_curve.cdf_values, expected_cdf)
+
+    def test_implied_distribution_propagates_raise_cdf_policy_to_interpolated_slice(
+        self,
+        fitted_vol_surface,
+    ):
+        """VolSurface.implied_distribution() should carry policy to slices."""
+        prob_surface = fitted_vol_surface.implied_distribution(
+            cdf_violation_policy="raise",
+        )
+        surface_curve = prob_surface.slice(INTERIOR_INTERPOLATED_EXPIRY)
+
+        assert surface_curve.metadata["cdf_violation_policy"] == "raise"
+
+    def test_probsurface_constructor_propagates_raise_cdf_policy(
+        self,
+        fitted_vol_surface,
+    ):
+        """Direct ProbSurface construction should carry policy to slices."""
+        from oipd.interface.probability import ProbSurface
+
+        prob_surface = ProbSurface(
+            vol_surface=fitted_vol_surface,
+            cdf_violation_policy="raise",
+        )
+        surface_curve = prob_surface.slice(prob_surface.expiries[0])
+
+        assert surface_curve.metadata["cdf_violation_policy"] == "raise"
 
     @pytest.mark.parametrize(
         "expiry",
@@ -573,6 +603,21 @@ class TestProbSurfaceFromChain:
         )
         assert isinstance(prob, ProbSurface)
 
+    def test_from_chain_propagates_raise_cdf_policy(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """from_chain() should carry the requested CDF policy to slices."""
+        from oipd import ProbSurface
+
+        prob = ProbSurface.from_chain(
+            multi_expiry_chain,
+            market_inputs,
+            cdf_violation_policy="raise",
+        )
+
+        curve = prob.slice(prob.expiries[0])
+        assert curve.metadata["cdf_violation_policy"] == "raise"
+
     def test_from_chain_rejects_single_expiry(self, multi_expiry_chain, market_inputs):
         """from_chain() raises when only one expiry is provided."""
         from oipd import ProbSurface
@@ -589,8 +634,12 @@ class TestProbSurfaceFromChain:
     ):
         """Default policy skips failed slices and still returns ProbSurface."""
         from oipd import ProbSurface
+        from oipd.warnings import WorkflowWarning
 
-        with pytest.warns(UserWarning, match="Skipped .* expiries during surface fit"):
+        with pytest.warns(
+            WorkflowWarning,
+            match=r"VolSurface\.fit recorded 1 workflow warning event",
+        ):
             prob = ProbSurface.from_chain(
                 mixed_quality_multi_expiry_chain, market_inputs
             )
@@ -1162,8 +1211,9 @@ class TestProbSurfacePlotFan:
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         from oipd.interface.probability import ProbCurve
+        from oipd.warnings import WorkflowWarning
 
-        original_slice = prob_surface.slice
+        original_slice = prob_surface._internal_slice
         invalid_expiry = min(prob_surface.expiries) + pd.Timedelta(days=1)
 
         def _slice_with_invalid_curve(
@@ -1184,11 +1234,11 @@ class TestProbSurfacePlotFan:
 
         monkeypatch.setattr(
             prob_surface,
-            "slice",
+            "_internal_slice",
             _slice_with_invalid_curve,
         )
 
-        with pytest.warns(UserWarning, match="Skipped 1 sampled expiry"):
+        with pytest.warns(WorkflowWarning, match="warning event"):
             fig = prob_surface.plot_fan()
 
         ax = fig.axes[0]
@@ -1201,6 +1251,10 @@ class TestProbSurfacePlotFan:
         last_expiry = max(prob_surface.expiries)
         expected_points = (last_expiry - first_expiry).days + 1
         assert len(median_lines[0].get_xdata()) == expected_points - 1
+        events = prob_surface.warning_diagnostics.events
+        assert len(events) == 1
+        assert events[0].event_type == "skipped_expiry"
+        assert events[0].details["skipped_count"] == 1
 
         plt.close(fig)
 
@@ -1212,7 +1266,7 @@ class TestProbSurfacePlotFan:
         """plot_fan() should still fail when every sampled slice is invalid."""
         from oipd.interface.probability import ProbCurve
 
-        original_slice = prob_surface.slice
+        original_slice = prob_surface._internal_slice
 
         def _slice_with_invalid_curves(
             expiry_timestamp: str | date | pd.Timestamp,
@@ -1230,7 +1284,7 @@ class TestProbSurfacePlotFan:
 
         monkeypatch.setattr(
             prob_surface,
-            "slice",
+            "_internal_slice",
             _slice_with_invalid_curves,
         )
 

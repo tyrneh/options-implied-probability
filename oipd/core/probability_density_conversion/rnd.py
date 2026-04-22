@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Literal, Mapping, Optional, Tuple, cast
 
 import numpy as np
 from scipy.interpolate import interp1d
@@ -14,9 +15,13 @@ from .finite_diff import finite_diff_first_derivative, finite_diff_second_deriva
 
 CDF_EPSILON = 1e-5
 CDF_UPPER_TAIL_CLIP_TOLERANCE = 1e-3
-MONOTONICITY_EPSILON = 1e-6
+CDF_MONOTONICITY_EPSILON = 5e-6
+CDF_SEVERE_MONOTONICITY_EPSILON = 1e-4
+CDF_TOTAL_NEGATIVE_VARIATION_EPSILON = 1e-4
+MONOTONICITY_EPSILON = CDF_MONOTONICITY_EPSILON
 NEAR_ZERO_STRIKE_ABS = 0.01
 NEAR_ZERO_STRIKE_REL = 1e-6
+CdfViolationPolicy = Literal["warn", "raise"]
 
 
 @dataclass(frozen=True)
@@ -158,10 +163,116 @@ def _resolve_near_zero_strike_threshold(
     return max(NEAR_ZERO_STRIKE_ABS, NEAR_ZERO_STRIKE_REL * reference)
 
 
+def _validate_cdf_violation_policy(
+    cdf_violation_policy: str,
+) -> CdfViolationPolicy:
+    """Validate the direct-CDF monotonicity violation policy.
+
+    Args:
+        cdf_violation_policy: Requested policy for material monotonicity
+            violations. Supported values are ``"raise"`` and ``"warn"``.
+
+    Returns:
+        CdfViolationPolicy: Validated policy value.
+
+    Raises:
+        InvalidInputError: If the policy is not supported.
+    """
+    if cdf_violation_policy not in {"raise", "warn"}:
+        raise InvalidInputError(
+            "cdf_violation_policy must be either 'raise' or 'warn'."
+        )
+    return cast(CdfViolationPolicy, cdf_violation_policy)
+
+
+def _cdf_monotonicity_severity(
+    *,
+    max_negative_step: float,
+    total_negative_variation: float,
+) -> str:
+    """Classify raw-CDF monotonicity damage for diagnostics.
+
+    Args:
+        max_negative_step: Most negative adjacent CDF step. Non-negative values
+            indicate no downward movement.
+        total_negative_variation: Sum of all downward CDF movement magnitudes.
+
+    Returns:
+        str: ``"none"``, ``"material"``, or ``"severe"``.
+    """
+    if max_negative_step < -CDF_SEVERE_MONOTONICITY_EPSILON:
+        return "severe"
+    if (
+        max_negative_step < -CDF_MONOTONICITY_EPSILON
+        or total_negative_variation > CDF_TOTAL_NEGATIVE_VARIATION_EPSILON
+    ):
+        return "material"
+    return "none"
+
+
+def _raw_cdf_worst_step_strike(
+    strikes: np.ndarray,
+    *,
+    diagnostics: Mapping[str, float | int | bool],
+) -> float:
+    """Return the strike at the right side of the worst raw-CDF step.
+
+    Args:
+        strikes: Strike grid aligned with raw CDF values.
+        diagnostics: Raw CDF diagnostics including ``worst_step_index``.
+
+    Returns:
+        float: Strike at the right endpoint of the worst downward step, or
+        ``nan`` when no downward step is present.
+    """
+    worst_step_index = int(diagnostics["worst_step_index"])
+    if worst_step_index >= 0 and worst_step_index + 1 < strikes.size:
+        return float(strikes[worst_step_index + 1])
+    return float("nan")
+
+
+def _format_cdf_monotonicity_message(
+    *,
+    policy: CdfViolationPolicy,
+    severity: str,
+    max_negative_step: float,
+    total_negative_variation: float,
+    worst_step_strike: float,
+    action: str,
+) -> str:
+    """Build a monotonicity policy message with numeric diagnostics.
+
+    Args:
+        policy: CDF monotonicity policy in force.
+        severity: Monotonicity severity diagnostic.
+        max_negative_step: Most negative adjacent CDF step.
+        total_negative_variation: Sum of all downward CDF movement magnitudes.
+        worst_step_strike: Strike at the right side of the worst downward step.
+        action: Human-readable action applied by the caller.
+
+    Returns:
+        str: Warning or error message suitable for users and tests.
+    """
+    prefix = (
+        "Severe direct CDF monotonicity violation"
+        if severity == "severe"
+        else "Direct CDF monotonicity violation"
+    )
+    return (
+        f"{prefix} {action}; policy={policy!r}, "
+        f"max_negative_step={max_negative_step:.12g}, "
+        f"total_negative_variation={total_negative_variation:.12g}, "
+        f"worst_step_strike={worst_step_strike:.12g}, "
+        f"step_tolerance={CDF_MONOTONICITY_EPSILON:.12g}, "
+        f"total_negative_variation_tolerance="
+        f"{CDF_TOTAL_NEGATIVE_VARIATION_EPSILON:.12g}."
+    )
+
+
 def _fail_if_direct_cdf_violates_thresholds(
     cdf_values: np.ndarray,
     *,
-    diagnostics: dict[str, float | int | bool],
+    diagnostics: Mapping[str, float | int | bool],
 ) -> None:
     """Reject raw direct CDF values with meaningful numerical violations.
 
@@ -171,15 +282,13 @@ def _fail_if_direct_cdf_violates_thresholds(
 
     Raises:
         InvalidInputError: If the raw CDF is non-finite, materially below
-            zero, materially non-monotone, or materially above one beyond the
-            documented small upper-tail clipping tolerance.
+            zero or materially above one beyond the documented small upper-tail
+            clipping tolerance.
     """
     if not np.all(np.isfinite(cdf_values)):
         raise InvalidInputError("Direct CDF contains non-finite values.")
     if float(diagnostics["min"]) < -CDF_EPSILON:
         raise InvalidInputError("Direct CDF is materially below zero.")
-    if float(diagnostics["min_step"]) < -MONOTONICITY_EPSILON:
-        raise InvalidInputError("Direct CDF is materially non-monotone.")
     if float(diagnostics["max"]) > 1.0 + CDF_UPPER_TAIL_CLIP_TOLERANCE:
         raise InvalidInputError("Direct CDF is materially above one.")
 
@@ -189,6 +298,8 @@ def _minimal_direct_cdf_cleanup(
     raw_cdf_values: np.ndarray,
     *,
     reference_price: float | None = None,
+    cdf_violation_policy: str = "warn",
+    emit_warning: bool = True,
 ) -> tuple[np.ndarray, dict[str, float | int | bool | str]]:
     """Apply bounded numerical cleanup to a raw direct CDF.
 
@@ -197,6 +308,14 @@ def _minimal_direct_cdf_cleanup(
         raw_cdf_values: Unrepaired direct first-derivative CDF values.
         reference_price: Optional spot or forward used to decide whether the
             left strike is effectively zero.
+        cdf_violation_policy: Policy for material monotonicity violations.
+            ``"warn"`` repairs via ``np.maximum.accumulate`` and emits a
+            ``UserWarning``. ``"raise"`` raises for any material downward step
+            or cumulative negative variation.
+        emit_warning: Whether to emit the direct core warning when
+            ``cdf_violation_policy="warn"`` repairs monotonicity. Interface
+            pipelines may pass ``False`` to collect diagnostics and emit one
+            higher-level summary warning instead.
 
     Returns:
         tuple[np.ndarray, dict[str, float | int | bool | str]]: Cleaned CDF
@@ -208,19 +327,66 @@ def _minimal_direct_cdf_cleanup(
         InvalidInputError: If the raw CDF has meaningful bound, finiteness, or
             monotonicity violations.
     """
+    validated_policy = _validate_cdf_violation_policy(cdf_violation_policy)
+    strike_values = np.asarray(strikes, dtype=float)
     values = np.asarray(raw_cdf_values, dtype=float)
     diagnostics = direct_cdf_diagnostics(
         values,
-        tolerance=MONOTONICITY_EPSILON,
+        tolerance=CDF_MONOTONICITY_EPSILON,
     )
-    _fail_if_direct_cdf_violates_thresholds(values, diagnostics=diagnostics)
+    _fail_if_direct_cdf_violates_thresholds(
+        values,
+        diagnostics=diagnostics,
+    )
 
     cleaned = values.copy()
+    monotonicity_severity = _cdf_monotonicity_severity(
+        max_negative_step=float(diagnostics["max_negative_step"]),
+        total_negative_variation=float(diagnostics["total_negative_variation"]),
+    )
+    monotonicity_repair_applied = False
+    worst_step_strike = _raw_cdf_worst_step_strike(
+        strike_values,
+        diagnostics=diagnostics,
+    )
+    if monotonicity_severity != "none":
+        if validated_policy == "raise":
+            raise InvalidInputError(
+                _format_cdf_monotonicity_message(
+                    policy=validated_policy,
+                    severity=monotonicity_severity,
+                    max_negative_step=float(diagnostics["max_negative_step"]),
+                    total_negative_variation=float(
+                        diagnostics["total_negative_variation"]
+                    ),
+                    worst_step_strike=worst_step_strike,
+                    action="detected",
+                )
+            )
+        if validated_policy == "warn":
+            monotonicity_repair_applied = True
+            if emit_warning:
+                warnings.warn(
+                    _format_cdf_monotonicity_message(
+                        policy=validated_policy,
+                        severity=monotonicity_severity,
+                        max_negative_step=float(diagnostics["max_negative_step"]),
+                        total_negative_variation=float(
+                            diagnostics["total_negative_variation"]
+                        ),
+                        worst_step_strike=worst_step_strike,
+                        action="repaired with np.maximum.accumulate",
+                    ),
+                    UserWarning,
+                    stacklevel=2,
+                )
+            cleaned = np.maximum.accumulate(cleaned)
+
     near_zero_threshold = _resolve_near_zero_strike_threshold(
-        np.asarray(strikes, dtype=float),
+        strike_values,
         reference_price=reference_price,
     )
-    is_left_near_zero = bool(float(strikes[0]) <= near_zero_threshold)
+    is_left_near_zero = bool(float(strike_values[0]) <= near_zero_threshold)
 
     left_endpoint_snapped = False
     if is_left_near_zero and abs(float(cleaned[0])) <= CDF_EPSILON:
@@ -252,6 +418,13 @@ def _minimal_direct_cdf_cleanup(
         "cdf_upper_tail_max_excess": upper_tail_max_excess,
         "cdf_upper_tail_clip_count": upper_clip_count,
         "cdf_near_zero_strike_threshold": near_zero_threshold,
+        "cdf_violation_policy": validated_policy,
+        "cdf_monotonicity_repair_applied": monotonicity_repair_applied,
+        "cdf_monotonicity_repair_tolerance": CDF_MONOTONICITY_EPSILON,
+        "cdf_total_negative_variation_tolerance": (
+            CDF_TOTAL_NEGATIVE_VARIATION_EPSILON
+        ),
+        "cdf_monotonicity_severity": monotonicity_severity,
         "raw_cdf_start": diagnostics["start"],
         "raw_cdf_end": diagnostics["end"],
         "raw_cdf_min": diagnostics["min"],
@@ -259,6 +432,8 @@ def _minimal_direct_cdf_cleanup(
         "raw_cdf_is_monotone": diagnostics["is_monotone"],
         "raw_cdf_negative_step_count": diagnostics["negative_step_count"],
         "raw_cdf_max_negative_step": diagnostics["max_negative_step"],
+        "raw_cdf_total_negative_variation": diagnostics["total_negative_variation"],
+        "raw_cdf_worst_step_strike": worst_step_strike,
         "raw_cdf_below_zero_count": diagnostics["below_zero_count"],
         "raw_cdf_above_one_count": diagnostics["above_one_count"],
         "raw_cdf_points": diagnostics["points"],
@@ -328,6 +503,8 @@ def cdf_from_price_curve(
     min_strike: float | None = None,
     max_strike: float | None = None,
     reference_price: float | None = None,
+    cdf_violation_policy: str = "warn",
+    emit_warning: bool = True,
 ) -> DirectCdfResult:
     """Apply Breeden-Litzenberger to obtain the canonical direct CDF.
 
@@ -340,6 +517,12 @@ def cdf_from_price_curve(
         max_strike: Optional right strike cutoff.
         reference_price: Optional spot or forward used for near-zero endpoint
             cleanup.
+        cdf_violation_policy: Policy for monotonicity violations in the raw
+            direct CDF. ``"warn"`` repairs and warns; ``"raise"`` raises for
+            material violations.
+        emit_warning: Whether to emit the direct core warning when warn-policy
+            repair occurs. Interface pipelines may pass ``False`` to suppress
+            verbose per-slice warnings while preserving diagnostics.
 
     Returns:
         DirectCdfResult: Filtered strikes, raw CDF values, minimally cleaned
@@ -361,6 +544,8 @@ def cdf_from_price_curve(
         cdf_prices,
         raw_cdf_values,
         reference_price=reference_price,
+        cdf_violation_policy=cdf_violation_policy,
+        emit_warning=emit_warning,
     )
     return DirectCdfResult(
         prices=cdf_prices,
@@ -392,8 +577,10 @@ def direct_cdf_diagnostics(
 
     steps = np.diff(values)
     negative_steps = steps[steps < -float(tolerance)]
+    all_negative_steps = steps[steps < 0.0]
     min_step = float(np.min(steps)) if steps.size else 0.0
     max_negative_step = min_step if min_step < 0.0 else 0.0
+    worst_step_index = int(np.argmin(steps)) if min_step < 0.0 else -1
 
     return {
         "start": float(values[0]),
@@ -404,6 +591,8 @@ def direct_cdf_diagnostics(
         "is_monotone": bool(np.all(steps >= -float(tolerance))),
         "negative_step_count": int(negative_steps.size),
         "max_negative_step": float(max_negative_step),
+        "total_negative_variation": float(-np.sum(all_negative_steps)),
+        "worst_step_index": worst_step_index,
         "min_step": min_step,
         "below_zero_count": int(np.count_nonzero(values < -float(tolerance))),
         "above_one_count": int(np.count_nonzero(values > 1.0 + float(tolerance))),
@@ -435,6 +624,9 @@ def calculate_quartiles(
 
 
 __all__ = [
+    "CDF_MONOTONICITY_EPSILON",
+    "CDF_SEVERE_MONOTONICITY_EPSILON",
+    "CDF_TOTAL_NEGATIVE_VARIATION_EPSILON",
     "DirectCdfResult",
     "cdf_from_price_curve",
     "pdf_from_price_curve",

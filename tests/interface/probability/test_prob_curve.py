@@ -43,6 +43,9 @@ def _assert_direct_cdf_diagnostics_pass(metadata):
     """
     assert metadata["cdf_method"] == "call_price_first_derivative"
     assert metadata["cdf_cleanup_policy"] == "minimal_epsilon_cleanup"
+    assert metadata["cdf_violation_policy"] == "warn"
+    assert metadata["cdf_monotonicity_repair_tolerance"] == pytest.approx(5e-6)
+    assert metadata["cdf_total_negative_variation_tolerance"] == pytest.approx(1e-4)
     assert (
         metadata["cdf_upper_tail_clip_policy"] == "clip_finite_monotone_small_overshoot"
     )
@@ -62,7 +65,7 @@ def _assert_direct_cdf_diagnostics_pass(metadata):
     assert metadata["native_grid_domain_width"] > 0.0
     raw_lower_boundary_tolerance = 1e-4
     raw_upper_boundary_tolerance = metadata["cdf_upper_tail_clip_tolerance"]
-    raw_monotonicity_tolerance = 1e-6
+    raw_monotonicity_tolerance = 5e-6
     assert metadata["raw_cdf_is_monotone"]
     assert metadata["raw_cdf_negative_step_count"] == 0
     assert metadata["raw_cdf_min"] >= -raw_lower_boundary_tolerance
@@ -326,6 +329,7 @@ class TestProbCurveLazyMaterialization:
         """Default probability materialization should use the auto grid policy."""
         prob_curve = fitted_vol_curve.implied_distribution()
 
+        assert prob_curve.metadata["cdf_violation_policy"] == "warn"
         assert prob_curve.metadata["native_grid_policy"] == "auto"
         assert len(prob_curve.prices) == prob_curve.metadata["native_grid_points"]
         assert len(prob_curve.prices) != 200
@@ -333,6 +337,31 @@ class TestProbCurveLazyMaterialization:
         assert np.all(np.isfinite(prob_curve.pdf_values))
         assert np.all(np.isfinite(prob_curve.cdf_values))
         assert np.all(np.diff(prob_curve.cdf_values) >= -1e-6)
+
+    def test_implied_distribution_propagates_raise_cdf_policy(
+        self,
+        fitted_vol_curve,
+    ):
+        """VolCurve.implied_distribution() should carry the CDF policy."""
+        prob_curve = fitted_vol_curve.implied_distribution(
+            cdf_violation_policy="raise",
+        )
+
+        assert prob_curve.metadata["cdf_violation_policy"] == "raise"
+
+    def test_probcurve_constructor_propagates_raise_cdf_policy(
+        self,
+        fitted_vol_curve,
+    ):
+        """Direct ProbCurve construction from VolCurve should preserve policy."""
+        from oipd import ProbCurve
+
+        prob_curve = ProbCurve(
+            fitted_vol_curve,
+            cdf_violation_policy="raise",
+        )
+
+        assert prob_curve.metadata["cdf_violation_policy"] == "raise"
 
     def test_implied_distribution_fixed_grid_points_preserves_resolution(
         self,
@@ -444,6 +473,20 @@ class TestProbCurveFromChain:
         )
         assert isinstance(prob, ProbCurve)
 
+    def test_from_chain_propagates_raise_cdf_policy(
+        self, single_expiry_chain, market_inputs
+    ):
+        """from_chain() should carry the requested CDF policy."""
+        from oipd import ProbCurve
+
+        prob = ProbCurve.from_chain(
+            single_expiry_chain,
+            market_inputs,
+            cdf_violation_policy="raise",
+        )
+
+        assert prob.metadata["cdf_violation_policy"] == "raise"
+
     def test_from_chain_rejects_multiple_expiries(
         self, single_expiry_chain, market_inputs
     ):
@@ -525,6 +568,11 @@ class TestProbCurveProperties:
             "default_view_quantiles",
             "cdf_method",
             "cdf_cleanup_policy",
+            "cdf_violation_policy",
+            "cdf_monotonicity_repair_applied",
+            "cdf_monotonicity_repair_tolerance",
+            "cdf_total_negative_variation_tolerance",
+            "cdf_monotonicity_severity",
             "raw_cdf_start",
             "raw_cdf_end",
             "raw_cdf_min",
@@ -532,6 +580,8 @@ class TestProbCurveProperties:
             "raw_cdf_is_monotone",
             "raw_cdf_negative_step_count",
             "raw_cdf_max_negative_step",
+            "raw_cdf_total_negative_variation",
+            "raw_cdf_worst_step_strike",
             "raw_cdf_below_zero_count",
             "raw_cdf_above_one_count",
             "raw_cdf_points",

@@ -208,9 +208,7 @@ class Reader(AbstractReader):
 
         # Set metadata on final DataFrame
         final_df.attrs["underlying_price"] = price
-        final_df.attrs["underlying_price_adjustment"] = (
-            _RAW_UNDERLYING_PRICE_ADJUSTMENT
-        )
+        final_df.attrs["underlying_price_adjustment"] = _RAW_UNDERLYING_PRICE_ADJUSTMENT
         final_df.attrs["asof"] = datetime.now()
         dividend_yield = self._extract_dividend_yield(tk.info)
         final_df.attrs["dividend_yield"] = dividend_yield

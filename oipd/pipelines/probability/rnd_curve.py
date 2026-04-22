@@ -680,6 +680,17 @@ def _build_cdf_diagnostics(
     return {
         "cdf_method": "call_price_first_derivative",
         "cdf_cleanup_policy": diagnostics["cdf_cleanup_policy"],
+        "cdf_violation_policy": diagnostics["cdf_violation_policy"],
+        "cdf_monotonicity_repair_applied": diagnostics[
+            "cdf_monotonicity_repair_applied"
+        ],
+        "cdf_monotonicity_repair_tolerance": diagnostics[
+            "cdf_monotonicity_repair_tolerance"
+        ],
+        "cdf_total_negative_variation_tolerance": diagnostics[
+            "cdf_total_negative_variation_tolerance"
+        ],
+        "cdf_monotonicity_severity": diagnostics["cdf_monotonicity_severity"],
         "raw_cdf_start": diagnostics["raw_cdf_start"],
         "raw_cdf_end": diagnostics["raw_cdf_end"],
         "raw_cdf_min": diagnostics["raw_cdf_min"],
@@ -687,6 +698,10 @@ def _build_cdf_diagnostics(
         "raw_cdf_is_monotone": diagnostics["raw_cdf_is_monotone"],
         "raw_cdf_negative_step_count": diagnostics["raw_cdf_negative_step_count"],
         "raw_cdf_max_negative_step": diagnostics["raw_cdf_max_negative_step"],
+        "raw_cdf_total_negative_variation": diagnostics[
+            "raw_cdf_total_negative_variation"
+        ],
+        "raw_cdf_worst_step_strike": diagnostics["raw_cdf_worst_step_strike"],
         "raw_cdf_below_zero_count": diagnostics["raw_cdf_below_zero_count"],
         "raw_cdf_above_one_count": diagnostics["raw_cdf_above_one_count"],
         "raw_cdf_points": diagnostics["raw_cdf_points"],
@@ -934,6 +949,7 @@ def derive_distribution_internal(
     max_staleness_days: int = 3,
     method: str = "svi",
     method_options: Optional[Mapping[str, Any]] = None,
+    cdf_violation_policy: str = "warn",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Compute PDF/CDF from option quotes using the stateless pipeline.
 
@@ -946,6 +962,9 @@ def derive_distribution_internal(
         max_staleness_days: Maximum allowed quote age; stale strikes are dropped.
         method: Volatility fitting method (``"svi"`` or ``"bspline"``).
         method_options: Method-specific overrides (e.g., ``{"random_seed": 42}``).
+        cdf_violation_policy: Direct-CDF monotonicity violation policy passed
+            to core CDF conversion. ``"warn"`` repairs and warns; ``"raise"``
+            raises for material violations.
 
     Returns:
         Tuple of ``(prices, pdf, cdf, metadata)`` where prices/pdf/cdf are
@@ -975,6 +994,7 @@ def derive_distribution_internal(
         resolved_market,
         pricing_engine=pricing_engine,
         vol_metadata=vol_meta,
+        cdf_violation_policy=cdf_violation_policy,
     )
 
 
@@ -987,6 +1007,7 @@ def derive_distribution_from_curve(
     domain: Optional[Tuple[float, float]] = None,
     points: int | None = None,
     time_to_expiry_years: Optional[float] = None,
+    cdf_violation_policy: str = "warn",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """Derive PDF/CDF from a pre-fitted volatility curve.
 
@@ -1000,6 +1021,9 @@ def derive_distribution_from_curve(
             smart native grid policy.
         time_to_expiry_years: Optional explicit maturity in years. When
             provided, this takes precedence over metadata-derived expiry.
+        cdf_violation_policy: Direct-CDF monotonicity violation policy passed
+            to core CDF conversion. ``"warn"`` repairs and warns; ``"raise"``
+            raises for material violations.
 
     Returns:
         Tuple of ``(prices, pdf, cdf, metadata)``. When ``domain`` is not
@@ -1147,6 +1171,8 @@ def derive_distribution_from_curve(
             min_strike=observed_min_strike,
             max_strike=observed_max_strike,
             reference_price=float(pricing_underlying),
+            cdf_violation_policy=cdf_violation_policy,
+            emit_warning=False,
         )
         if not np.array_equal(cdf_result.prices, pdf_prices):
             raise CalculationError("Direct CDF and PDF grids must match.")
@@ -1210,6 +1236,7 @@ def materialize_distribution_from_definition(
         vol_metadata=definition.vol_metadata,
         domain=materialization_spec.domain,
         points=materialization_spec.points,
+        cdf_violation_policy=materialization_spec.cdf_violation_policy,
     )
     return DistributionSnapshot(
         prices=prices,

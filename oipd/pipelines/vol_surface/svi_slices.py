@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Literal, Mapping, Optional
 
-import warnings
 import pandas as pd
 
 from oipd.core.errors import CalculationError
@@ -105,7 +104,7 @@ def fit_independent_slices(
     resolved_markets: dict[pd.Timestamp, Any] = {}
     slice_chains: dict[pd.Timestamp, pd.DataFrame] = {}
 
-    expiries_with_mid_fills: list[str] = []
+    price_fallback_reports: list[dict[str, Any]] = []
     staleness_reports: list[dict[str, Any]] = []
     skipped_expiry_failures: list[dict[str, str]] = []
 
@@ -150,10 +149,16 @@ def fit_independent_slices(
             continue
 
         if metadata.get("mid_price_filled"):
-            expiries_with_mid_fills.append(expiry_str)
+            price_fallback_reports.append(
+                {
+                    "expiry_str": expiry_str,
+                    "filled_count": metadata["mid_price_filled"],
+                    "price_method": price_method,
+                }
+            )
 
         if metadata.get("staleness_report"):
-            report = metadata["staleness_report"]
+            report = dict(metadata["staleness_report"])
             report["expiry_str"] = expiry_str
             staleness_reports.append(report)
 
@@ -163,70 +168,6 @@ def fit_independent_slices(
         }
         resolved_markets[expiry_timestamp] = resolved
         slice_chains[expiry_timestamp] = slice_df
-
-    if skipped_expiry_failures:
-        skipped_expiry_strings = sorted(
-            record["expiry_str"] for record in skipped_expiry_failures
-        )
-        skipped_expiry_detail = _format_expiry_list(skipped_expiry_strings)
-        reason_summary = _summarize_failure_reasons(skipped_expiry_failures)
-        warnings.warn(
-            f"Skipped {len(skipped_expiry_failures)} expiries during surface fit: "
-            f"[{skipped_expiry_detail}]. Reasons: {reason_summary}.",
-            UserWarning,
-        )
-
-    if expiries_with_mid_fills:
-        count = len(expiries_with_mid_fills)
-        # Show first 3 and last 1 if too many
-        if count > 4:
-            details = f"{', '.join(expiries_with_mid_fills[:3])} ... {expiries_with_mid_fills[-1]}"
-        else:
-            details = ", ".join(expiries_with_mid_fills)
-
-        warnings.warn(
-            f"Filled missing mid prices with last_price for {count} expiries: [{details}]",
-            UserWarning,
-        )
-
-    if staleness_reports:
-        total_removed = sum(r["removed_count"] for r in staleness_reports)
-        affected_count = len(staleness_reports)
-
-        # Try to find global min/max age
-        min_ages = [
-            r["min_age"]
-            for r in staleness_reports
-            if isinstance(r.get("min_age"), (int, float))
-        ]
-        max_ages = [
-            r["max_age"]
-            for r in staleness_reports
-            if isinstance(r.get("max_age"), (int, float))
-        ]
-
-        age_info = ""
-        if min_ages and max_ages:
-            global_min = min(min_ages)
-            global_max = max(max_ages)
-            age_info = f" (most recent: {global_min} days, oldest: {global_max} days)"
-
-        affected_expiries = [
-            r["expiry_str"] for r in staleness_reports if "expiry_str" in r
-        ]
-
-        if len(affected_expiries) > 4:
-            expiry_detail = (
-                f"{', '.join(affected_expiries[:3])} ... {affected_expiries[-1]}"
-            )
-        else:
-            expiry_detail = ", ".join(affected_expiries)
-
-        warnings.warn(
-            f"Filtered {total_removed} stale option rows across {affected_count} expiries: [{expiry_detail}]"
-            f"{age_info} older than {max_staleness_days} days.",
-            UserWarning,
-        )
 
     if len(slices) < 2:
         failure_detail = ""
@@ -248,4 +189,15 @@ def fit_independent_slices(
             "max_staleness_days), or use VolCurve for single-expiry analysis."
         )
 
-    return DiscreteSurface(slices, resolved_markets, slice_chains)
+    fit_warning_reports = {
+        "price_fallback": price_fallback_reports,
+        "stale_quote_filter": staleness_reports,
+        "skipped_expiry": skipped_expiry_failures,
+    }
+
+    return DiscreteSurface(
+        slices,
+        resolved_markets,
+        slice_chains,
+        fit_warning_reports=fit_warning_reports,
+    )

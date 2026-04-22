@@ -11,6 +11,31 @@ import numpy as np
 import pandas as pd
 
 # =============================================================================
+# Warning Diagnostics Contract Tests
+# =============================================================================
+
+
+class TestWarningDiagnosticsContract:
+    """Verify public warning taxonomy imports and inheritance."""
+
+    def test_warning_classes_import_from_oipd_warnings_and_inherit_user_warning(self):
+        """Broad warning classes are public and filterable as UserWarning subclasses."""
+        from oipd.warnings import (
+            DataQualityWarning,
+            ModelRiskWarning,
+            NumericalWarning,
+            OIPDWarning,
+            WorkflowWarning,
+        )
+
+        assert issubclass(OIPDWarning, UserWarning)
+        assert issubclass(DataQualityWarning, OIPDWarning)
+        assert issubclass(ModelRiskWarning, OIPDWarning)
+        assert issubclass(NumericalWarning, OIPDWarning)
+        assert issubclass(WorkflowWarning, OIPDWarning)
+
+
+# =============================================================================
 # Market Input Contract Tests
 # =============================================================================
 

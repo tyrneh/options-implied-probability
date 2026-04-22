@@ -26,7 +26,11 @@ from oipd.core.maturity import (
 from oipd.core.utils import resolve_risk_free_rate
 from oipd.core.vol_surface_fitting import fit_slice
 
-from oipd.pipelines.vol_curve import fit_vol_curve_internal
+from oipd.interface.warning_diagnostics import (
+    WarningDiagnostics,
+    WarningEvent,
+    _emit_warning_summaries,
+)
 from oipd.pipelines.vol_surface import fit_surface as fit_vol_surface_internal
 from oipd.presentation.publication import (
     _apply_publication_style,
@@ -69,6 +73,10 @@ from oipd.pipelines.vol_surface.interpolator import (
     build_interpolator_from_fitted_surface,
 )
 from oipd.presentation.iv_plotting import ForwardPriceAnnotation, plot_iv_smile
+
+SVI_BUTTERFLY_MIN_G_THRESHOLD = -1e-6
+VOL_CURVE_FIT_WARNING_SCOPE = "VolCurve.fit"
+VOL_SURFACE_FIT_WARNING_SCOPE = "VolSurface.fit"
 
 
 def _normalize_expiry_series(expiry_values: pd.Series) -> pd.Series:
@@ -201,6 +209,327 @@ def _infer_market_dividend_provenance(
     return "none"
 
 
+def _metadata_value(metadata: Any, key: str) -> Any:
+    """Return a value from mapping-like or object-like metadata.
+
+    Args:
+        metadata: Mapping or object containing diagnostic metadata.
+        key: Field name to retrieve.
+
+    Returns:
+        Any: Field value when present, otherwise ``None``.
+    """
+    if isinstance(metadata, Mapping):
+        return metadata.get(key)
+    return getattr(metadata, key, None)
+
+
+def _warning_detail_value(value: Any) -> Any:
+    """Convert metadata values to small JSON-like warning detail values.
+
+    Args:
+        value: Metadata value returned by a pipeline or core diagnostic.
+
+    Returns:
+        Any: JSON-like scalar or nested container accepted by ``WarningEvent``.
+
+    Raises:
+        TypeError: If ``value`` is a non-summarized object such as an array or
+            DataFrame. Such values should be summarized before event creation.
+    """
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Mapping):
+        return {str(key): _warning_detail_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_warning_detail_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_warning_detail_value(item) for item in sorted(value, key=str)]
+    return value
+
+
+def _warning_detail_mapping(details: Mapping[str, Any]) -> dict[str, Any]:
+    """Return JSON-like details suitable for a ``WarningEvent``.
+
+    Args:
+        details: Raw detail mapping built from metadata.
+
+    Returns:
+        dict[str, Any]: Sanitized detail mapping.
+    """
+    return {str(key): _warning_detail_value(value) for key, value in details.items()}
+
+
+def _diagnostics_butterfly_warning_details(
+    metadata: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Extract the SVI butterfly diagnostic value from fit metadata.
+
+    Args:
+        metadata: Volatility fit metadata.
+
+    Returns:
+        dict[str, Any] | None: Butterfly diagnostic details when warning-worthy.
+    """
+    diagnostics = metadata.get("diagnostics")
+    butterfly_warning = _metadata_value(diagnostics, "butterfly_warning")
+    diagnostics_status = _metadata_value(diagnostics, "status")
+    if butterfly_warning is not None:
+        details = {
+            "min_g": float(butterfly_warning),
+            "butterfly_min_g_threshold": SVI_BUTTERFLY_MIN_G_THRESHOLD,
+            "diagnostic_source": "svi.butterfly_warning",
+        }
+        if diagnostics_status is not None:
+            details["diagnostics_status"] = diagnostics_status
+        return details
+    min_g = _metadata_value(diagnostics, "min_g")
+    if min_g is not None and float(min_g) < SVI_BUTTERFLY_MIN_G_THRESHOLD:
+        details = {
+            "min_g": float(min_g),
+            "butterfly_min_g_threshold": SVI_BUTTERFLY_MIN_G_THRESHOLD,
+            "diagnostic_source": "svi.min_g",
+        }
+        if diagnostics_status is not None:
+            details["diagnostics_status"] = diagnostics_status
+        return details
+    return None
+
+
+def _expiry_detail_from_metadata(metadata: Mapping[str, Any]) -> str | None:
+    """Return an ISO-like expiry detail from volatility metadata.
+
+    Args:
+        metadata: Volatility fit metadata.
+
+    Returns:
+        str | None: Expiry string when available.
+    """
+    expiry = metadata.get("expiry")
+    if expiry is None:
+        return None
+    return str(_warning_detail_value(expiry))
+
+
+def _vol_curve_fit_warning_events(
+    metadata: Mapping[str, Any],
+    *,
+    scope: str,
+    price_method: str,
+    pricing_engine: str,
+    max_staleness_days: int,
+) -> list[WarningEvent]:
+    """Translate VolCurve fit metadata into warning diagnostic events.
+
+    Args:
+        metadata: Fit metadata returned by the volatility curve pipeline.
+        scope: Diagnostic replacement scope for these events.
+        price_method: Price-selection method used for fitting.
+        pricing_engine: Pricing engine used for IV inversion.
+        max_staleness_days: Maximum quote age configured for the fit.
+
+    Returns:
+        list[WarningEvent]: Warning-worthy events for the current fit.
+    """
+    events: list[WarningEvent] = []
+    expiry = _expiry_detail_from_metadata(metadata)
+
+    mid_price_filled = metadata.get("mid_price_filled")
+    if mid_price_filled:
+        details = {
+            "filled_count": int(mid_price_filled),
+            "price_method": price_method,
+            "pricing_engine": pricing_engine,
+        }
+        if expiry is not None:
+            details["expiry"] = expiry
+        events.append(
+            WarningEvent(
+                category="data_quality",
+                event_type="price_fallback",
+                severity="warning",
+                scope=scope,
+                message="Missing quote mids were filled with last_price.",
+                details=_warning_detail_mapping(details),
+            )
+        )
+
+    staleness_report = metadata.get("staleness_report") or {}
+    if staleness_report:
+        details = {
+            **dict(staleness_report),
+            "configured_max_staleness_days": max_staleness_days,
+        }
+        if expiry is not None:
+            details["expiry"] = expiry
+        events.append(
+            WarningEvent(
+                category="data_quality",
+                event_type="stale_quote_filter",
+                severity="warning",
+                scope=scope,
+                message="Stale option quote rows were filtered before fitting.",
+                details=_warning_detail_mapping(details),
+            )
+        )
+
+    butterfly_warning_details = _diagnostics_butterfly_warning_details(metadata)
+    if butterfly_warning_details is not None:
+        details = {
+            **butterfly_warning_details,
+            "pricing_engine": pricing_engine,
+        }
+        if expiry is not None:
+            details["expiry"] = expiry
+        events.append(
+            WarningEvent(
+                category="model_risk",
+                event_type="butterfly_arbitrage",
+                severity="warning",
+                scope=scope,
+                message="SVI calibration reported butterfly arbitrage risk.",
+                details=_warning_detail_mapping(details),
+            )
+        )
+
+    return events
+
+
+def _surface_fit_warning_events(
+    surface_model: FittedSurface,
+    *,
+    scope: str,
+    price_method: str,
+    pricing_engine: str,
+    max_staleness_days: int,
+) -> list[WarningEvent]:
+    """Translate fitted surface metadata and reports into warning events.
+
+    Args:
+        surface_model: Fitted volatility surface model.
+        scope: Diagnostic replacement scope for these events.
+        price_method: Price-selection method used for fitting.
+        pricing_engine: Pricing engine used for IV inversion.
+        max_staleness_days: Maximum quote age configured for the fit.
+
+    Returns:
+        list[WarningEvent]: Warning-worthy events for the current surface fit.
+    """
+    events: list[WarningEvent] = []
+    fit_warning_reports = getattr(surface_model, "fit_warning_reports", {})
+
+    for report in fit_warning_reports.get("price_fallback", []):
+        expiry = str(report.get("expiry_str", ""))
+        events.append(
+            WarningEvent(
+                category="data_quality",
+                event_type="price_fallback",
+                severity="warning",
+                scope=scope,
+                message="Missing quote mids were filled with last_price.",
+                details=_warning_detail_mapping(
+                    {
+                        "expiry": expiry,
+                        "filled_count": int(report.get("filled_count", 0)),
+                        "price_method": report.get("price_method", price_method),
+                        "pricing_engine": pricing_engine,
+                    }
+                ),
+            )
+        )
+
+    for report in fit_warning_reports.get("stale_quote_filter", []):
+        expiry = str(report.get("expiry_str", ""))
+        events.append(
+            WarningEvent(
+                category="data_quality",
+                event_type="stale_quote_filter",
+                severity="warning",
+                scope=scope,
+                message="Stale option quote rows were filtered before fitting.",
+                details=_warning_detail_mapping(
+                    {
+                        **dict(report),
+                        "expiry": expiry,
+                        "configured_max_staleness_days": max_staleness_days,
+                    }
+                ),
+            )
+        )
+
+    for report in fit_warning_reports.get("skipped_expiry", []):
+        expiry = str(report.get("expiry_str", ""))
+        events.append(
+            WarningEvent(
+                category="workflow",
+                event_type="skipped_expiry",
+                severity="warning",
+                scope=scope,
+                message="An expiry was skipped during best-effort surface fitting.",
+                details=_warning_detail_mapping(
+                    {
+                        "expiry": expiry,
+                        "exception_type": report.get("exception_type"),
+                        "reason": report.get("reason"),
+                    }
+                ),
+            )
+        )
+
+    for expiry in surface_model.expiries:
+        slice_metadata = surface_model.get_slice(expiry)["metadata"]
+        butterfly_warning_details = _diagnostics_butterfly_warning_details(
+            slice_metadata
+        )
+        if butterfly_warning_details is None:
+            continue
+        events.append(
+            WarningEvent(
+                category="model_risk",
+                event_type="butterfly_arbitrage",
+                severity="warning",
+                scope=scope,
+                message="SVI calibration reported butterfly arbitrage risk.",
+                details=_warning_detail_mapping(
+                    {
+                        "expiry": str(_warning_detail_value(pd.Timestamp(expiry))),
+                        **butterfly_warning_details,
+                        "pricing_engine": pricing_engine,
+                    }
+                ),
+            )
+        )
+
+    return events
+
+
+def _events_for_expiry(
+    events: Sequence[WarningEvent],
+    expiry: pd.Timestamp,
+) -> list[WarningEvent]:
+    """Return warning events whose details match an expiry.
+
+    Args:
+        events: Warning events from a parent surface fit.
+        expiry: Expiry timestamp for an exact fitted slice.
+
+    Returns:
+        list[WarningEvent]: Events associated with ``expiry``.
+    """
+    expiry_timestamp = pd.Timestamp(expiry)
+    expiry_date = expiry_timestamp.date().isoformat()
+    expiry_full = expiry_timestamp.isoformat()
+    return [
+        event
+        for event in events
+        if event.details.get("expiry") in {expiry_date, expiry_full}
+    ]
+
+
 class VolCurve:
     """Single-expiry implied-volatility smile fitter with sklearn-style API.
 
@@ -240,6 +569,7 @@ class VolCurve:
         self._metadata: dict[str, Any] | None = None
         self._resolved_market: ResolvedMarket | None = None
         self._chain: pd.DataFrame | None = None
+        self._warning_diagnostics = WarningDiagnostics()
 
     def fit(
         self,
@@ -325,38 +655,30 @@ class VolCurve:
             suppress_staleness_warning=True,
         )
 
-        # Handle warnings manually to ensure consistency
-        if metadata.get("mid_price_filled"):
-            count = metadata["mid_price_filled"]
-            # It might be a boolean in older versions or legacy paths, handle graceful fallback
-            count_str = f"{count}" if isinstance(count, int) and count > 1 else ""
-            warnings.warn(
-                f"Filled {count_str} missing mid prices with last_price due to unavailable bid/ask",
-                UserWarning,
-            )
-
-        if metadata.get("staleness_report"):
-            stats = metadata["staleness_report"]
-            removed_count = stats.get("removed_count", 0)
-            strike_desc = stats.get("strike_desc", "N/A")
-            max_staleness = stats.get("max_staleness_days", self.max_staleness_days)
-            min_age = stats.get("min_age", "N/A")
-            max_age = stats.get("max_age", "N/A")
-
-            warnings.warn(
-                f"Filtered {removed_count} option rows (covering {strike_desc} strikes) "
-                f"older than {max_staleness} days "
-                f"(most recent: {min_age} days old, oldest: {max_age} days old)",
-                UserWarning,
-            )
-
         if vol_curve is None:
             raise CalculationError("Volatility calibration returned no curve")
+
+        warning_events = _vol_curve_fit_warning_events(
+            metadata,
+            scope=VOL_CURVE_FIT_WARNING_SCOPE,
+            price_method=self.price_method,
+            pricing_engine=self.pricing_engine,
+            max_staleness_days=self.max_staleness_days,
+        )
+        _emit_warning_summaries(warning_events, owner="VolCurve.fit")
 
         self._vol_curve = vol_curve
         self._metadata = metadata
         self._resolved_market = resolved_market
         self._chain = chain_input
+        self._warning_diagnostics._replace_scope_events(
+            VOL_CURVE_FIT_WARNING_SCOPE,
+            warning_events,
+        )
+        self._warning_diagnostics._replace_scope_events(
+            VOL_SURFACE_FIT_WARNING_SCOPE,
+            [],
+        )
         return self
 
     def implied_vol(self, strikes: float | Sequence[float] | np.ndarray) -> np.ndarray:
@@ -656,6 +978,15 @@ class VolCurve:
         return diagnostics
 
     @property
+    def warning_diagnostics(self) -> WarningDiagnostics:
+        """Return structured warning diagnostics for the current curve state.
+
+        Returns:
+            WarningDiagnostics: Current warning diagnostic events and summary.
+        """
+        return self._warning_diagnostics
+
+    @property
     def resolved_market(self) -> ResolvedMarket:
         """Return the resolved market snapshot used for calibration.
 
@@ -667,12 +998,20 @@ class VolCurve:
             raise ValueError("Call fit before accessing the resolved market")
         return self._resolved_market
 
-    def implied_distribution(self, grid_points: int | None = None) -> ProbCurve:
+    def implied_distribution(
+        self,
+        grid_points: int | None = None,
+        *,
+        cdf_violation_policy: Literal["warn", "raise"] = "warn",
+    ) -> ProbCurve:
         """Return the risk-neutral probability distribution implied by the fitted vol smile.
 
         Args:
             grid_points: Optional native probability grid size. ``None`` uses
                 the smart native grid policy.
+            cdf_violation_policy: Direct-CDF monotonicity policy for lazy
+                materialization. ``"warn"`` repairs and warns; ``"raise"``
+                fails on material violations.
 
         Returns:
             ProbCurve: Fitted distribution object.
@@ -701,7 +1040,10 @@ class VolCurve:
 
         return ProbCurve._from_vol_curve(
             self,
-            native_spec=MaterializationSpec(points=grid_points),
+            native_spec=MaterializationSpec(
+                points=grid_points,
+                cdf_violation_policy=cdf_violation_policy,
+            ),
         )
 
     def price(
@@ -983,6 +1325,7 @@ class VolSurface:
         self._model: FittedSurface | None = None
         self._interpolator: Any = None  # TotalVarianceInterpolator if enabled
         self._market: Optional[MarketInputs] = None  # Stored for interpolated slices
+        self._warning_diagnostics = WarningDiagnostics()
 
     def fit(
         self,
@@ -1071,7 +1414,7 @@ class VolSurface:
                 "Use VolCurve.fit for a single-expiry chain."
             )
 
-        self._model = fit_surface(
+        surface_model = fit_surface(
             chain=chain_input,
             market=market,
             column_mapping=column_mapping,
@@ -1083,15 +1426,28 @@ class VolSurface:
             method=self.method,
             failure_policy=failure_policy,
         )
-
-        # Always build linear total variance interpolator
-        self._interpolator = build_interpolator_from_fitted_surface(
-            self._model, check_arbitrage=True
+        warning_events = _surface_fit_warning_events(
+            surface_model,
+            scope=VOL_SURFACE_FIT_WARNING_SCOPE,
+            price_method=self.price_method,
+            pricing_engine=self.pricing_engine,
+            max_staleness_days=self.max_staleness_days,
         )
 
+        # Always build linear total variance interpolator
+        interpolator = build_interpolator_from_fitted_surface(
+            surface_model, check_arbitrage=True
+        )
+
+        _emit_warning_summaries(warning_events, owner="VolSurface.fit")
+        self._model = surface_model
+        self._interpolator = interpolator
+        self._warning_diagnostics._replace_scope_events(
+            VOL_SURFACE_FIT_WARNING_SCOPE,
+            warning_events,
+        )
         # Store market for interpolated slice creation
         self._market = market
-
         return self
 
     def slice(self, expiry: str | date | pd.Timestamp) -> VolCurve:
@@ -1139,6 +1495,11 @@ class VolSurface:
             vol_curve._metadata = slice_data["metadata"]  # type: ignore[attr-defined]
             vol_curve._resolved_market = slice_data["resolved_market"]  # type: ignore[attr-defined]
             vol_curve._chain = slice_data["chain"]  # type: ignore[attr-defined]
+            slice_warning_events = _events_for_expiry(
+                self.warning_diagnostics.events,
+                expiry_timestamp,
+            )
+            vol_curve._warning_diagnostics = WarningDiagnostics(slice_warning_events)
             return vol_curve
 
         # Interpolated slice: create a synthetic VolCurve
@@ -1261,6 +1622,15 @@ class VolSurface:
         if self._model is None:
             return ()
         return self._model.expiries
+
+    @property
+    def warning_diagnostics(self) -> WarningDiagnostics:
+        """Return structured warning diagnostics for the current surface state.
+
+        Returns:
+            WarningDiagnostics: Current warning diagnostic events and summary.
+        """
+        return self._warning_diagnostics
 
     def _resolve_query_time(
         self,
@@ -1431,12 +1801,20 @@ class VolSurface:
         else:
             raise ValueError(f"Unsupported pricing engine for .price(): {engine_name}")
 
-    def implied_distribution(self, grid_points: int | None = None) -> ProbSurface:
+    def implied_distribution(
+        self,
+        grid_points: int | None = None,
+        *,
+        cdf_violation_policy: Literal["warn", "raise"] = "warn",
+    ) -> ProbSurface:
         """Return the risk-neutral distribution surface for all fitted expiries.
 
         Args:
             grid_points: Optional native probability grid size per slice.
                 ``None`` uses the smart native grid policy.
+            cdf_violation_policy: Direct-CDF monotonicity policy for lazy
+                materialization. ``"warn"`` repairs and warns; ``"raise"``
+                fails on material violations.
 
         Returns:
             ProbSurface: Surface with per-expiry distributions.
@@ -1450,7 +1828,11 @@ class VolSurface:
 
         from oipd.interface.probability import ProbSurface
 
-        return ProbSurface(vol_surface=self, grid_points=grid_points)
+        return ProbSurface(
+            vol_surface=self,
+            grid_points=grid_points,
+            cdf_violation_policy=cdf_violation_policy,
+        )
 
     def atm_vol(self, t: float | str | date | pd.Timestamp) -> float:
         """Return At-The-Money (ATM) implied volatility at time t.
