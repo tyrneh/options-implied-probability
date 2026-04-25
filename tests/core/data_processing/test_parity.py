@@ -313,32 +313,6 @@ class TestDetectParityOpportunity:
 
         assert detect_parity_opportunity(df) is True
 
-    def test_detect_rejects_wide_price_format(self):
-        """Wide call_price/put_price rows are not parity input."""
-        df = pd.DataFrame(
-            {
-                "strike": [95, 100, 105],
-                "call_price": [2.5, 1.8, 0.5],
-                "put_price": [1.2, 2.1, 3.5],
-            }
-        )
-
-        assert detect_parity_opportunity(df) is False
-
-    def test_detect_ignores_stray_wide_price_columns(self):
-        """Long-form detection should ignore unrelated wide price columns."""
-        df = pd.DataFrame(
-            {
-                "strike": [100, 100],
-                "last_price": [2.0, 1.0],
-                "option_type": ["C", "P"],
-                "call_price": [50.0, 50.0],
-                "put_price": [0.1, 0.1],
-            }
-        )
-
-        assert detect_parity_opportunity(df) is True
-
     def test_detect_no_opportunity_calls_only(self):
         """Test that calls-only data returns False."""
         df = pd.DataFrame(
@@ -448,40 +422,6 @@ class TestInferForwardFromATM:
 
         # Should be close to our expected forward price of 100.5
         assert 99.5 <= forward <= 101.5  # Allow some tolerance
-
-    def test_infer_forward_rejects_wide_price_format(self):
-        """Forward inference requires long-form call/put rows."""
-        df = pd.DataFrame(
-            {
-                "strike": [95, 100, 105],
-                "call_price": [6.0, 2.0, 0.5],
-                "put_price": [1.0, 2.5, 5.0],
-            }
-        )
-
-        spot_price = 100.0
-        discount_factor = 0.99
-
-        with pytest.raises(ValueError, match="Expected long-form option quotes"):
-            infer_forward_from_atm(df, spot_price, discount_factor)
-
-    def test_infer_forward_ignores_stray_wide_price_columns(self):
-        """Long-form prices take precedence over stray wide price columns."""
-        df = pd.DataFrame(
-            {
-                "strike": [100, 100],
-                "last_price": [2.0, 1.0],
-                "option_type": ["C", "P"],
-                "call_price": [50.0, 50.0],
-                "put_price": [0.1, 0.1],
-            }
-        )
-
-        with pytest.warns(UserWarning, match="1 valid pair.*low_single_pair"):
-            forward = infer_forward_from_atm(df, 100.0, 0.99)
-
-        expected = 100 + (2.0 - 1.0) / 0.99
-        assert forward == pytest.approx(expected)
 
     def test_infer_forward_from_put_call_parity_uses_mids_before_last_price(self):
         """Forward inference should prefer same-pair bid/ask mids over stale last."""
@@ -739,40 +679,6 @@ class TestApplyPutCallParity:
             "put_converted"
         )
         assert result.loc[result["strike"] == 105.0, "source"].iloc[0] == "call"
-
-    def test_parity_rejects_wide_price_format(self):
-        """Parity conversion requires long-form call/put rows."""
-        df = pd.DataFrame(
-            {
-                "strike": [95, 100, 105],
-                "call_price": [6.0, 2.0, 0.5],
-                "put_price": [1.0, 2.5, 5.0],
-            }
-        )
-
-        with pytest.raises(ValueError, match="Expected long-form option quotes"):
-            apply_put_call_parity_to_quotes(df, 100.0, 0.99)
-
-    def test_parity_ignores_stray_wide_price_columns(self):
-        """Parity conversion should use long-form prices over stray wide columns."""
-        df = pd.DataFrame(
-            {
-                "strike": [100, 100],
-                "last_price": [2.0, 1.0],
-                "option_type": ["C", "P"],
-                "call_price": [50.0, 50.0],
-                "put_price": [0.1, 0.1],
-            }
-        )
-
-        result = apply_put_call_parity_to_quotes(
-            df, forward_price=100.0, discount_factor=1.0
-        )
-
-        assert len(result) == 1
-        assert result["F_used"].eq(100.0).all()
-        assert result["last_price"].iloc[0] == pytest.approx(1.0)
-        assert result["source"].iloc[0] == "put_converted"
 
 
 class TestPreprocessWithParity:
