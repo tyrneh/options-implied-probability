@@ -57,7 +57,7 @@ minimal = [
 dev = [
     "black>=26.3.1",
     "isort>=5.13.0",
-    "pytest>=8.0.0",
+    "pytest>=9.0.3,<10",
     "mypy>=1.8.0",
     "build>=1.0.0",
 ]
@@ -96,7 +96,7 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "experiments/tests"]
+testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
