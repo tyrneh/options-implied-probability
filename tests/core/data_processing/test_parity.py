@@ -89,84 +89,119 @@ def _robust_forward_options_data() -> pd.DataFrame:
     )
 
 
-def _wide_call_put_options_data() -> pd.DataFrame:
-    """Create wide-format call/put quotes with a stable forward.
+def _long_call_put_options_data() -> pd.DataFrame:
+    """Create long-form call/put quotes with a stable forward.
 
     Returns:
-        Five strike rows with explicit ``call_price`` and ``put_price`` columns,
-        all implying ``F=100`` when the discount factor is one.
+        Five call-put row pairs, all implying ``F=100`` when the discount factor
+        is one.
     """
     strikes = [90.0, 95.0, 100.0, 105.0, 110.0]
     forward_price = 100.0
     time_value = 2.0
+    rows = []
 
-    return pd.DataFrame(
-        {
-            "strike": strikes,
-            "call_price": [
-                max(forward_price - strike, 0.0) + time_value for strike in strikes
-            ],
-            "put_price": [
-                max(strike - forward_price, 0.0) + time_value for strike in strikes
-            ],
-        }
-    )
+    for strike in strikes:
+        rows.append(
+            {
+                "strike": strike,
+                "option_type": "C",
+                "last_price": max(forward_price - strike, 0.0) + time_value,
+            }
+        )
+        rows.append(
+            {
+                "strike": strike,
+                "option_type": "P",
+                "last_price": max(strike - forward_price, 0.0) + time_value,
+            }
+        )
+
+    return pd.DataFrame(rows)
 
 
 def _two_valid_pair_options_data() -> pd.DataFrame:
-    """Create five-strike wide data with exactly two valid parity pairs.
+    """Create five-strike long-form data with exactly two valid parity pairs.
 
     Returns:
-        Wide-format option quotes where two strikes imply forwards of ``100`` and
+        Long-form option quotes where two strikes imply forwards of ``100`` and
         ``103`` while the remaining strikes are missing usable pair prices.
     """
-    return pd.DataFrame(
-        {
-            "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
-            "call_price": [np.nan, 7.0, np.nan, 4.0, np.nan],
-            "put_price": [np.nan, 2.0, np.nan, 6.0, np.nan],
-        }
+    return _long_rows_from_pair_prices(
+        strikes=[90.0, 95.0, 100.0, 105.0, 110.0],
+        call_prices=[np.nan, 7.0, np.nan, 4.0, np.nan],
+        put_prices=[np.nan, 2.0, np.nan, 6.0, np.nan],
     )
 
 
 def _single_valid_pair_options_data() -> pd.DataFrame:
-    """Create five-strike wide data with exactly one valid parity pair.
+    """Create five-strike long-form data with exactly one valid parity pair.
 
     Returns:
-        Wide-format option quotes where one strike implies ``F=102`` and all other
+        Long-form option quotes where one strike implies ``F=102`` and all other
         strikes lack usable paired prices.
     """
-    return pd.DataFrame(
-        {
-            "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
-            "call_price": [np.nan, np.nan, 3.0, np.nan, np.nan],
-            "put_price": [np.nan, np.nan, 1.0, np.nan, np.nan],
-        }
+    return _long_rows_from_pair_prices(
+        strikes=[90.0, 95.0, 100.0, 105.0, 110.0],
+        call_prices=[np.nan, np.nan, 3.0, np.nan, np.nan],
+        put_prices=[np.nan, np.nan, 1.0, np.nan, np.nan],
     )
 
 
 def _zero_valid_pair_options_data() -> pd.DataFrame:
-    """Create wide data with candidate pairs but no valid forward estimates.
+    """Create long-form data with candidate pairs but no valid forward estimates.
 
     Returns:
-        Wide-format option quotes where all five candidate pairs imply non-positive
+        Long-form option quotes where all five candidate pairs imply non-positive
         forwards, so direct forward inference must fail.
     """
-    return pd.DataFrame(
-        {
-            "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
-            "call_price": [1.0, 1.0, 1.0, 1.0, 1.0],
-            "put_price": [200.0, 200.0, 200.0, 200.0, 200.0],
-        }
+    return _long_rows_from_pair_prices(
+        strikes=[90.0, 95.0, 100.0, 105.0, 110.0],
+        call_prices=[1.0, 1.0, 1.0, 1.0, 1.0],
+        put_prices=[200.0, 200.0, 200.0, 200.0, 200.0],
     )
 
 
-def _wide_forward_chain(
+def _long_rows_from_pair_prices(
+    strikes: list[float],
+    call_prices: list[float],
+    put_prices: list[float],
+) -> pd.DataFrame:
+    """Create long-form call-put rows from per-strike pair prices.
+
+    Args:
+        strikes: Strike values to include in the option chain.
+        call_prices: Call prices aligned to ``strikes``.
+        put_prices: Put prices aligned to ``strikes``.
+
+    Returns:
+        Long-form option quotes with two rows per strike.
+    """
+    rows = []
+    for strike, call_price, put_price in zip(strikes, call_prices, put_prices):
+        rows.append(
+            {
+                "strike": strike,
+                "option_type": "C",
+                "last_price": call_price,
+            }
+        )
+        rows.append(
+            {
+                "strike": strike,
+                "option_type": "P",
+                "last_price": put_price,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _forward_chain(
     strikes: list[float],
     forward_by_strike: dict[float, float] | None = None,
     default_forward: float = 100.0,
 ) -> pd.DataFrame:
-    """Create positive wide call/put prices with chosen pair-implied forwards.
+    """Create positive long-form prices with chosen pair-implied forwards.
 
     Args:
         strikes: Strike values to include in the option chain.
@@ -175,8 +210,7 @@ def _wide_forward_chain(
         default_forward: Pair-implied forward used for strikes not in the mapping.
 
     Returns:
-        Wide-format option quotes where each row has a positive explicit call and
-        put price.
+        Long-form option quotes where each strike has positive call and put prices.
     """
     rows = []
     forward_by_strike = forward_by_strike or {}
@@ -187,8 +221,15 @@ def _wide_forward_chain(
         rows.append(
             {
                 "strike": float(strike),
-                "call_price": max(forward - strike, 0.0) + time_value,
-                "put_price": max(strike - forward, 0.0) + time_value,
+                "option_type": "C",
+                "last_price": max(forward - strike, 0.0) + time_value,
+            }
+        )
+        rows.append(
+            {
+                "strike": float(strike),
+                "option_type": "P",
+                "last_price": max(strike - forward, 0.0) + time_value,
             }
         )
 
@@ -267,18 +308,6 @@ class TestDetectParityOpportunity:
                 "strike": [95, 95, 100, 100, 105],
                 "last_price": [2.5, 1.2, 1.8, 2.1, 0.5],
                 "option_type": ["C", "P", "C", "P", "C"],
-            }
-        )
-
-        assert detect_parity_opportunity(df) is True
-
-    def test_detect_separate_price_format(self):
-        """Test detection with separate call_price/put_price format."""
-        df = pd.DataFrame(
-            {
-                "strike": [95, 100, 105],
-                "call_price": [2.5, 1.8, 0.5],
-                "put_price": [1.2, 2.1, 3.5],
             }
         )
 
@@ -393,30 +422,6 @@ class TestInferForwardFromATM:
 
         # Should be close to our expected forward price of 100.5
         assert 99.5 <= forward <= 101.5  # Allow some tolerance
-
-    def test_infer_forward_separate_price_format(self):
-        """Test forward inference with separate price columns."""
-        df = pd.DataFrame(
-            {
-                "strike": [95, 100, 105],
-                "call_price": [6.0, 2.0, 0.5],
-                "put_price": [1.0, 2.5, 5.0],
-            }
-        )
-
-        spot_price = 100.0
-        discount_factor = 0.99
-
-        forward = infer_forward_from_atm(df, spot_price, discount_factor)
-
-        # With 3+ valid pairs, inference uses robust median aggregation.
-        pair_forwards = [
-            95 + (6.0 - 1.0) / 0.99,
-            100 + (2.0 - 2.5) / 0.99,
-            105 + (0.5 - 5.0) / 0.99,
-        ]
-        expected = np.median(pair_forwards)
-        assert abs(forward - expected) < 0.1
 
     def test_infer_forward_from_put_call_parity_uses_mids_before_last_price(self):
         """Forward inference should prefer same-pair bid/ask mids over stale last."""
@@ -675,44 +680,6 @@ class TestApplyPutCallParity:
         )
         assert result.loc[result["strike"] == 105.0, "source"].iloc[0] == "call"
 
-    def test_parity_accepts_wide_call_put_prices(self):
-        """Parity conversion should consume explicit wide call/put prices."""
-        df = _wide_call_put_options_data()
-
-        result = apply_put_call_parity_to_quotes(
-            df, forward_price=100.0, discount_factor=1.0
-        )
-
-        assert len(result) == 5
-        assert set(result["strike"]) == {90.0, 95.0, 100.0, 105.0, 110.0}
-        assert result["F_used"].eq(100.0).all()
-        assert result["last_price"].notna().all()
-        assert result.loc[result["strike"] == 90.0, "last_price"].iloc[0] == (
-            pytest.approx(12.0)
-        )
-        assert result.loc[result["strike"] == 100.0, "source"].iloc[0] == (
-            "put_converted"
-        )
-        assert result.loc[result["strike"] == 105.0, "source"].iloc[0] == "call"
-
-    def test_wide_call_put_prices_override_stale_generic_last_price(self):
-        """Wide conversion should prefer explicit leg prices over generic last."""
-        df = _wide_call_put_options_data()
-        df["last_price"] = 999.0
-
-        result = apply_put_call_parity_to_quotes(
-            df, forward_price=100.0, discount_factor=1.0
-        )
-
-        assert result["last_price"].notna().all()
-        assert not result["last_price"].eq(999.0).any()
-        assert result.loc[result["strike"] == 90.0, "last_price"].iloc[0] == (
-            pytest.approx(12.0)
-        )
-        assert result.loc[result["strike"] == 105.0, "last_price"].iloc[0] == (
-            pytest.approx(2.0)
-        )
-
 
 class TestPreprocessWithParity:
     """Test the main preprocessing entry point."""
@@ -785,9 +752,9 @@ class TestPreprocessWithParity:
         assert outlier_pairs[0]["strike"] == 100.0
         assert outlier_pairs[0]["forward_price"] == pytest.approx(150.0)
 
-    def test_preprocess_wide_call_put_prices_attaches_parity_report(self):
-        """Wide-format preprocessing should convert quotes and attach diagnostics."""
-        df = _wide_call_put_options_data()
+    def test_preprocess_long_call_put_prices_attaches_parity_report(self):
+        """Long-form preprocessing should convert quotes and attach diagnostics."""
+        df = _long_call_put_options_data()
 
         with warnings.catch_warnings(record=True) as captured_warnings:
             result = preprocess_with_parity(df, 100.0, 1.0)
@@ -828,7 +795,7 @@ class TestPreprocessWithParity:
         invalid_pairs = [pair for pair in report["pairs"] if not pair["valid"]]
         assert len(invalid_pairs) == 3
         assert {pair["excluded_reason"] for pair in invalid_pairs} == {
-            "invalid_explicit_price"
+            "invalid_last_price_pair"
         }
         pair_estimates = sorted(
             pair["forward_price"] for pair in report["pairs"] if pair["valid"]
@@ -857,7 +824,7 @@ class TestPreprocessWithParity:
         invalid_pairs = [pair for pair in report["pairs"] if not pair["valid"]]
         assert len(invalid_pairs) == 4
         assert {pair["excluded_reason"] for pair in invalid_pairs} == {
-            "invalid_explicit_price"
+            "invalid_last_price_pair"
         }
         pair_estimates = [
             pair["forward_price"] for pair in report["pairs"] if pair["valid"]
@@ -918,7 +885,7 @@ class TestPreprocessWithParity:
         """Parity diagnostics should identify the source used for each pair."""
         mid_df = _bid_ask_only_options_data()
         last_df = _robust_forward_options_data()
-        explicit_df = _wide_call_put_options_data()
+        explicit_df = _long_call_put_options_data()
 
         mid_report = preprocess_with_parity(mid_df, 100.0, 1.0).attrs["parity_report"]
         last_report = preprocess_with_parity(last_df, 100.0, 1.0).attrs["parity_report"]
@@ -929,13 +896,13 @@ class TestPreprocessWithParity:
         assert {pair["price_source"] for pair in mid_report["pairs"]} == {"mid"}
         assert {pair["price_source"] for pair in last_report["pairs"]} == {"last_price"}
         assert {pair["price_source"] for pair in explicit_report["pairs"]} == {
-            "explicit"
+            "last_price"
         }
 
     def test_all_valid_chain_selects_only_nearest_five_pairs(self):
         """Forward inference should cap aggregation to five nearest valid pairs."""
         strikes = [float(strike) for strike in range(65, 135)]
-        df = _wide_forward_chain(strikes)
+        df = _forward_chain(strikes)
 
         result = preprocess_with_parity(df, 100.0, 1.0)
         report = result.attrs["parity_report"]
@@ -955,7 +922,7 @@ class TestPreprocessWithParity:
             for strike in strikes
             if strike not in {98.0, 99.0, 100.0, 101.0, 102.0}
         }
-        df = _wide_forward_chain(strikes, forward_by_strike=far_forwards)
+        df = _forward_chain(strikes, forward_by_strike=far_forwards)
 
         result = preprocess_with_parity(df, 100.0, 1.0)
         report = result.attrs["parity_report"]
@@ -979,7 +946,7 @@ class TestPreprocessWithParity:
             103.0: 180.0,
             104.0: 180.0,
         }
-        df = _wide_forward_chain(strikes, forward_by_strike=far_forwards)
+        df = _forward_chain(strikes, forward_by_strike=far_forwards)
 
         result = preprocess_with_parity(df, 100.0, 1.0)
         report = result.attrs["parity_report"]
@@ -997,9 +964,12 @@ class TestPreprocessWithParity:
 
     def test_invalid_near_atm_pair_does_not_consume_selection_cap(self):
         """Invalid near-ATM candidates should not count against max pairs."""
-        df = _wide_forward_chain([99.0, 101.0, 98.0, 102.0, 97.0])
+        df = _forward_chain([99.0, 101.0, 98.0, 102.0, 97.0])
         invalid_atm = pd.DataFrame(
-            [{"strike": 100.0, "call_price": 1.0, "put_price": 200.0}]
+            [
+                {"strike": 100.0, "option_type": "C", "last_price": 1.0},
+                {"strike": 100.0, "option_type": "P", "last_price": 200.0},
+            ]
         )
         df = pd.concat([invalid_atm, df], ignore_index=True)
 
@@ -1018,7 +988,7 @@ class TestPreprocessWithParity:
     def test_max_forward_pairs_three_selects_exactly_three(self):
         """The internal max pair cap should be configurable."""
         strikes = [float(strike) for strike in range(65, 135)]
-        df = _wide_forward_chain(strikes)
+        df = _forward_chain(strikes)
 
         result = preprocess_with_parity(df, 100.0, 1.0, max_forward_pairs=3)
         report = result.attrs["parity_report"]
@@ -1031,7 +1001,7 @@ class TestPreprocessWithParity:
     @pytest.mark.parametrize("max_forward_pairs", [True, False, 0, -1, np.nan, np.inf])
     def test_max_forward_pairs_rejects_invalid_values(self, max_forward_pairs):
         """The max pair cap must be a positive non-boolean integer."""
-        df = _wide_forward_chain([95.0, 100.0, 105.0])
+        df = _forward_chain([95.0, 100.0, 105.0])
 
         with pytest.raises(ValueError, match="max_forward_pairs"):
             infer_forward_from_put_call_parity(
@@ -1047,7 +1017,7 @@ class TestPreprocessWithParity:
     )
     def test_min_last_leg_volume_rejects_invalid_values(self, min_last_leg_volume):
         """The last-price volume floor must be finite, non-boolean, or None."""
-        df = _wide_forward_chain([95.0, 100.0, 105.0])
+        df = _forward_chain([95.0, 100.0, 105.0])
 
         with pytest.raises(ValueError, match="min_last_leg_volume"):
             infer_forward_from_put_call_parity(
@@ -1065,7 +1035,7 @@ class TestPreprocessWithParity:
         self, max_bid_ask_relative_spread
     ):
         """The bid/ask spread ceiling must be finite, positive, non-boolean, or None."""
-        df = _wide_forward_chain([95.0, 100.0, 105.0])
+        df = _forward_chain([95.0, 100.0, 105.0])
 
         with pytest.raises(ValueError, match="max_bid_ask_relative_spread"):
             infer_forward_from_put_call_parity(
@@ -1077,7 +1047,7 @@ class TestPreprocessWithParity:
 
     def test_optional_volume_and_spread_config_none_values_are_accepted(self):
         """None should continue disabling optional volume and spread filters."""
-        df = _wide_forward_chain([95.0, 100.0, 105.0])
+        df = _forward_chain([95.0, 100.0, 105.0])
 
         forward = infer_forward_from_put_call_parity(
             df,
@@ -1091,7 +1061,7 @@ class TestPreprocessWithParity:
 
     def test_min_last_leg_volume_zero_is_accepted(self):
         """A zero volume floor should be accepted because the floor is non-negative."""
-        df = _wide_forward_chain([95.0, 100.0, 105.0])
+        df = _forward_chain([95.0, 100.0, 105.0])
 
         forward = infer_forward_from_put_call_parity(
             df,
@@ -1307,7 +1277,7 @@ class TestPreprocessWithParity:
     def test_diagnostics_counts_reconcile(self):
         """Report-level selected, used, outlier, and unselected counts should add up."""
         strikes = [96.0, 97.0, 98.0, 99.0, 100.0, 101.0, 102.0, 103.0]
-        df = _wide_forward_chain(strikes, forward_by_strike={100.0: 150.0})
+        df = _forward_chain(strikes, forward_by_strike={100.0: 150.0})
 
         result = preprocess_with_parity(df, 100.0, 1.0)
         report = result.attrs["parity_report"]

@@ -52,7 +52,21 @@ If you only care about probability and do not want to manually manage the volati
 
 ### 2.1 Load option data
 
-Local CSV/DataFrame route:
+For local CSV or DataFrame uploads, use one long-form option-chain table: one
+row per option contract. OIPD expects these standard input columns:
+
+| Column | Required? | Notes |
+| --- | --- | --- |
+| `strike` | Yes | Option strike price. |
+| `expiry` | Yes | Option expiry date or timestamp. |
+| `option_type` | Yes | Call/put marker. Values are normalized to `C` or `P`; `call` and `put` are accepted. |
+| `last_price` | Yes | Last traded option price. This is required for fitting in the current input contract. |
+| `bid` | Recommended | Best bid when available; useful quote metadata, but not a standalone replacement for `last_price`. |
+| `ask` | Recommended | Best ask when available; useful quote metadata, but not a standalone replacement for `last_price`. |
+| `volume` | Optional | Lowercase column name. Can be used downstream for weighting. |
+| `last_trade_date` | Optional | Last quote/trade timestamp. Can be used downstream to filter stale quotes. |
+
+Example local CSV route:
 
 ```python
 from oipd import sources
@@ -62,12 +76,17 @@ COLUMN_MAPPING = {
     "last_price": "last_price",
     "bid": "bid",
     "ask": "ask",
+    "volume": "volume",
+    "last_trade_date": "last_trade_date",
     "expiration": "expiry",
     "type": "option_type",
 }
 
 chain = sources.from_csv("data/AAPL_data.csv", column_mapping=COLUMN_MAPPING)
 ```
+
+The same schema applies to `sources.from_dataframe(...)`. Use
+`column_mapping` when your input file uses different column names.
 
 Vendor route (automated yfinance fetch via `sources`):
 

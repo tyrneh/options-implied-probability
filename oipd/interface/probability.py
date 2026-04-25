@@ -395,7 +395,13 @@ class ProbCurve:
         and then derives the risk-neutral distribution.
 
         Args:
-            chain: Option chain DataFrame containing a single expiry.
+            chain: Long-form option chain DataFrame containing a single expiry,
+                with one row per contract. Expected standard columns are
+                ``strike``, ``expiry``, ``option_type``, and ``last_price``.
+                Optional quote metadata includes ``bid``, ``ask``, ``volume``,
+                and ``last_trade_date``. ``bid`` and ``ask`` can improve quote
+                handling when present, but ``last_price`` is still required by
+                the current input contract.
             market: Market inputs required for calibration.
             column_mapping: Optional mapping from input columns to OIPD
                 standard names.
@@ -1139,7 +1145,13 @@ class ProbSurface:
         derives the risk-neutral distribution surface.
 
         Args:
-            chain: Option chain DataFrame containing multiple expiries.
+            chain: Long-form option chain DataFrame containing multiple expiries,
+                with one row per contract. Expected standard columns are
+                ``strike``, ``expiry``, ``option_type``, and ``last_price``.
+                Optional quote metadata includes ``bid``, ``ask``, ``volume``,
+                and ``last_trade_date``. ``bid`` and ``ask`` can improve quote
+                handling when present, but ``last_price`` is still required by
+                the current input contract.
             market: Market inputs required for calibration.
             column_mapping: Optional mapping from input columns to OIPD
                 standard names.
