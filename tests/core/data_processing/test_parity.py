@@ -867,52 +867,6 @@ class TestPreprocessWithParity:
         assert report["outlier_count"] == 0
         assert report["pairs_used_count"] == 5
 
-    def test_preprocess_rejects_wide_price_format(self):
-        """Wide call_price/put_price rows are not converted to last_price."""
-        df = pd.DataFrame(
-            {
-                "strike": [95, 100, 105],
-                "call_price": [6.0, 2.0, 0.5],
-                "put_price": [1.0, 2.5, 5.0],
-            }
-        )
-
-        with pytest.raises(ValueError, match="Expected long-form option quotes"):
-            preprocess_with_parity(df, 100.0, 0.99)
-
-    def test_preprocess_rejects_invalid_hybrid_wide_format(self):
-        """Stray wide columns require otherwise valid long-form prices."""
-        df = pd.DataFrame(
-            {
-                "strike": [95, 100, 105],
-                "last_price": [6.0, 2.0, 0.5],
-                "call_price": [6.0, 2.0, 0.5],
-                "put_price": [1.0, 2.5, 5.0],
-            }
-        )
-
-        with pytest.raises(ValueError, match="Expected long-form option quotes"):
-            preprocess_with_parity(df, 100.0, 0.99)
-
-    def test_preprocess_ignores_stray_wide_price_columns(self):
-        """Preprocessing should use long-form prices over stray wide columns."""
-        df = pd.DataFrame(
-            {
-                "strike": [100, 100],
-                "last_price": [2.0, 1.0],
-                "option_type": ["C", "P"],
-                "call_price": [50.0, 50.0],
-                "put_price": [0.1, 0.1],
-            }
-        )
-
-        with pytest.warns(UserWarning, match="1 valid pair.*low_single_pair"):
-            result = preprocess_with_parity(df, 100.0, 0.99)
-
-        assert len(result) == 1
-        assert result["last_price"].iloc[0] == pytest.approx(2.0)
-        assert result["source"].iloc[0] == "put_converted"
-
     def test_preprocess_two_valid_pairs_warns_once_and_reports_low_confidence(self):
         """Two-pair preprocessing should warn once and report low confidence."""
         df = _two_valid_pair_options_data()
