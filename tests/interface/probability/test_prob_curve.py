@@ -29,7 +29,7 @@ def _derive_direct_probability_arrays(vol_curve, *, points=None):
     return derive_distribution_from_curve(
         vol_curve._vol_curve,
         vol_curve.resolved_market,
-        pricing_engine=vol_curve.pricing_engine,
+        pricing_engine=vol_curve._pricing_engine,
         vol_metadata=vol_curve._metadata,
         points=points,
     )
@@ -79,6 +79,14 @@ def _assert_direct_cdf_diagnostics_pass(metadata):
         assert metadata["cdf_upper_tail_clip_count"] > 0
     assert metadata["cdf_pdf_interval_max_error"] <= 1e-2
     assert metadata["cdf_pdf_interval_mean_error"] <= 2e-3
+
+
+def _assert_public_parity_requirement_message(message: str) -> None:
+    """Assert public parity errors describe the new data requirement."""
+    assert "usable same-strike call/put pairs" in message
+    assert "parity-forward inference" in message
+    assert "Black-Scholes" not in message
+    assert "dividend" not in message.lower()
 
 
 def _build_repriced_single_expiry_chain(
@@ -166,7 +174,6 @@ def market_inputs():
         valuation_date=date(2025, 1, 1),
         underlying_price=100.0,
         risk_free_rate=0.05,
-        dividend_yield=0.0,
     )
 
 
@@ -221,7 +228,7 @@ def fitted_vol_curve(single_expiry_chain, market_inputs):
     """A pre-fitted VolCurve for deriving probability."""
     from oipd import VolCurve
 
-    vc = VolCurve(pricing_engine="bs")
+    vc = VolCurve()
     vc.fit(single_expiry_chain, market_inputs)
     return vc
 
@@ -406,7 +413,7 @@ class TestProbCurveLazyMaterialization:
         """Existing ProbCurve should not change after its source VolCurve is refit."""
         from oipd import VolCurve
 
-        vol_curve = VolCurve(pricing_engine="bs")
+        vol_curve = VolCurve()
         vol_curve.fit(single_expiry_chain, market_inputs)
         expected_prices, expected_pdf, expected_cdf, _ = (
             _derive_direct_probability_arrays(vol_curve)
@@ -498,6 +505,21 @@ class TestProbCurveFromChain:
         with pytest.raises(ValueError, match="single expiry"):
             ProbCurve.from_chain(bad_chain, market_inputs)
 
+    def test_from_chain_missing_same_strike_pairs_uses_public_requirement(
+        self, single_expiry_chain, market_inputs
+    ):
+        """ProbCurve.from_chain should expose the parity-forward data requirement."""
+        from oipd import ProbCurve
+
+        call_only = single_expiry_chain[
+            single_expiry_chain["option_type"].astype(str).str.upper().str[0] == "C"
+        ].copy()
+
+        with pytest.raises(Exception) as exc_info:
+            ProbCurve.from_chain(call_only, market_inputs)
+
+        _assert_public_parity_requirement_message(str(exc_info.value))
+
 
 # =============================================================================
 # ProbCurve Basic Properties Tests
@@ -544,6 +566,8 @@ class TestProbCurveProperties:
             "time_to_expiry_years",
             "time_to_expiry_days",
             "forward_price",
+            "forward_price_source",
+            "parity_report",
             "at_money_vol",
             "resolved_domain",
             "observed_domain",
@@ -599,6 +623,16 @@ class TestProbCurveProperties:
         ):
             assert key in metadata
         assert np.isfinite(metadata["at_money_vol"])
+        parity_report = metadata["parity_report"]
+        assert parity_report["confidence"] in {
+            "robust",
+            "low_two_pairs",
+            "low_single_pair",
+        }
+        assert parity_report["valid_pair_count"] >= 1
+        assert "outlier_count" in parity_report
+        assert "quote_liquidity_confidence" in parity_report
+        assert metadata["forward_price_source"] == "put_call_parity"
         assert metadata["resolved_domain"][0] > 0.0
         assert metadata["resolved_domain"][1] > metadata["resolved_domain"][0]
 
@@ -704,10 +738,9 @@ class TestProbCurveProperties:
             valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
             underlying_price=100.0,
             risk_free_rate=0.05,
-            dividend_yield=0.0,
         )
 
-        curve = VolCurve(pricing_engine="bs")
+        curve = VolCurve()
         curve.fit(same_day_intraday_chain, market_intraday)
         prob_curve = curve.implied_distribution()
 
@@ -728,10 +761,9 @@ class TestProbCurveProperties:
             valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
             underlying_price=100.0,
             risk_free_rate=0.05,
-            dividend_yield=0.0,
         )
 
-        curve = VolCurve(pricing_engine="bs")
+        curve = VolCurve()
         curve.fit(same_day_intraday_chain, market_intraday)
         prob_curve = curve.implied_distribution()
 
@@ -748,63 +780,43 @@ class TestProbCurveProperties:
         assert np.all(np.isfinite(export["pdf"].to_numpy(dtype=float)))
         assert np.all(np.isfinite(export["cdf"].to_numpy(dtype=float)))
 
-    def test_bs_distribution_accepts_timestamp_dividend_schedule(
-        self, same_day_intraday_chain, timestamp_dividend_schedules
+    def test_public_market_inputs_reject_timestamp_dividend_schedule(
+        self, timestamp_dividend_schedules
     ):
-        """BS probability curves should support timestamped dividend schedules."""
+        """Explicit dividend schedules are no longer accepted publicly."""
+        from oipd import MarketInputs
+
+        with pytest.raises(TypeError, match="dividend_schedule"):
+            MarketInputs(
+                valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+                underlying_price=100.0,
+                risk_free_rate=0.05,
+                dividend_schedule=timestamp_dividend_schedules["after"],
+            )
+
+    def test_public_distribution_uses_parity_forward_without_dividend_timing_input(
+        self, same_day_intraday_chain
+    ):
+        """Public distributions use parity forwards without dividend inputs."""
         from oipd import MarketInputs, VolCurve
 
-        market_intraday = MarketInputs(
+        market = MarketInputs(
             valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
             underlying_price=100.0,
             risk_free_rate=0.05,
-            dividend_schedule=timestamp_dividend_schedules["after"],
         )
 
         prob_curve = (
-            VolCurve(pricing_engine="bs")
-            .fit(same_day_intraday_chain, market_intraday)
-            .implied_distribution()
+            VolCurve().fit(same_day_intraday_chain, market).implied_distribution()
         )
 
         assert np.isfinite(prob_curve.pdf(100.0))
         assert np.isfinite(prob_curve.prob_below(100.0))
+        assert prob_curve.metadata["forward_price_source"] == "put_call_parity"
 
-    def test_bs_distribution_distinguishes_same_day_dividend_timing(
-        self, same_day_intraday_chain, timestamp_dividend_schedules
-    ):
-        """BS distributions should change when dividend timing crosses valuation."""
-        from oipd import MarketInputs, VolCurve
-
-        market_before = MarketInputs(
-            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
-            underlying_price=100.0,
-            risk_free_rate=0.05,
-            dividend_schedule=timestamp_dividend_schedules["before"],
-        )
-        market_after = MarketInputs(
-            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
-            underlying_price=100.0,
-            risk_free_rate=0.05,
-            dividend_schedule=timestamp_dividend_schedules["after"],
-        )
-
-        prob_before = (
-            VolCurve(pricing_engine="bs")
-            .fit(same_day_intraday_chain, market_before)
-            .implied_distribution()
-        )
-        prob_after = (
-            VolCurve(pricing_engine="bs")
-            .fit(same_day_intraday_chain, market_after)
-            .implied_distribution()
-        )
-
-        assert prob_before.pdf(100.0) != pytest.approx(prob_after.pdf(100.0))
-
-    def test_bs_distribution_ignores_post_expiry_dividends(self, single_expiry_chain):
-        """BS distributions should ignore discrete dividends after the curve expiry."""
-        from oipd import MarketInputs, VolCurve
+    def test_public_distribution_rejects_explicit_dividend_schedule(self):
+        """Dividend math should not be reachable through public MarketInputs."""
+        from oipd import MarketInputs
 
         full_schedule = pd.DataFrame(
             {
@@ -815,43 +827,14 @@ class TestProbCurveProperties:
                 "amount": [1.0, 1.5],
             }
         )
-        early_only_schedule = pd.DataFrame(
-            {
-                "ex_date": [pd.Timestamp("2025-02-15 00:00:00")],
-                "amount": [1.0],
-            }
-        )
 
-        market_full = MarketInputs(
-            valuation_date=date(2025, 1, 1),
-            underlying_price=100.0,
-            risk_free_rate=0.05,
-            dividend_schedule=full_schedule,
-        )
-        market_early_only = MarketInputs(
-            valuation_date=date(2025, 1, 1),
-            underlying_price=100.0,
-            risk_free_rate=0.05,
-            dividend_schedule=early_only_schedule,
-        )
-
-        prob_full = (
-            VolCurve(pricing_engine="bs")
-            .fit(single_expiry_chain, market_full)
-            .implied_distribution()
-        )
-        prob_early_only = (
-            VolCurve(pricing_engine="bs")
-            .fit(single_expiry_chain, market_early_only)
-            .implied_distribution()
-        )
-
-        np.testing.assert_allclose(
-            prob_full.density_results()["pdf"].to_numpy(dtype=float),
-            prob_early_only.density_results()["pdf"].to_numpy(dtype=float),
-            rtol=1e-8,
-            atol=1e-10,
-        )
+        with pytest.raises(TypeError, match="dividend_schedule"):
+            MarketInputs(
+                valuation_date=date(2025, 1, 1),
+                underlying_price=100.0,
+                risk_free_rate=0.05,
+                dividend_schedule=full_schedule,
+            )
 
 
 # =============================================================================

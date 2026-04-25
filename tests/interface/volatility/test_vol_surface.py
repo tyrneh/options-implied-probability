@@ -122,6 +122,24 @@ def mostly_bad_multi_expiry_chain(mixed_quality_multi_expiry_chain):
     ].copy()
 
 
+def _assert_public_parity_requirement_message(message: str) -> None:
+    """Assert public parity errors describe the new data requirement."""
+    assert "usable same-strike call/put pairs" in message
+    assert "parity-forward inference" in message
+    assert "Black-Scholes" not in message
+    assert "dividend" not in message.lower()
+
+
+def _append_call_only_expiry(chain: pd.DataFrame) -> pd.DataFrame:
+    """Append one expiry with calls but no same-strike put pairs."""
+    call_mask = chain["option_type"].astype(str).str.upper().str[0] == "C"
+    bad_calls = chain.loc[call_mask].copy()
+    first_expiry = pd.Timestamp(chain["expiry"].iloc[0])
+    bad_calls = bad_calls[bad_calls["expiry"] == first_expiry].copy()
+    bad_calls["expiry"] = pd.Timestamp("2025-07-21")
+    return pd.concat([chain, bad_calls], ignore_index=True)
+
+
 # =============================================================================
 # VolSurface.__init__() Tests
 # =============================================================================
@@ -178,9 +196,18 @@ class TestVolSurfaceFit:
         vs.fit(multi_expiry_chain, market_inputs)
 
         fitted_slice = vs.slice(vs.expiries[0])
+        metadata = fitted_slice.metadata
+        parity_report = metadata["parity_report"]
 
-        assert fitted_slice._metadata["parity_report"]["valid_pair_count"] >= 3
-        assert fitted_slice._metadata["forward_price_source"] == "put_call_parity"
+        assert parity_report["valid_pair_count"] >= 3
+        assert parity_report["confidence"] in {
+            "robust",
+            "low_two_pairs",
+            "low_single_pair",
+        }
+        assert "outlier_count" in parity_report
+        assert "quote_liquidity_confidence" in parity_report
+        assert metadata["forward_price_source"] == "put_call_parity"
 
     def test_fit_with_horizon_filter(self, multi_expiry_chain, market_inputs):
         """fit() respects horizon parameter."""
@@ -219,6 +246,53 @@ class TestVolSurfaceFit:
             vs.fit(mixed_quality_multi_expiry_chain, market_inputs)
         assert len(vs.expiries) == 2
         assert pd.Timestamp("2025-07-21") not in vs.expiries
+
+    def test_fit_skip_warn_records_missing_parity_pairs_in_diagnostics(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Skipped surface expiries should expose parity data requirements."""
+        from oipd import VolSurface
+        from oipd.warnings import WorkflowWarning
+
+        chain = _append_call_only_expiry(multi_expiry_chain)
+        vs = VolSurface()
+
+        with pytest.warns(
+            WorkflowWarning,
+            match=r"VolSurface\.fit recorded 1 workflow warning event",
+        ):
+            vs.fit(chain, market_inputs)
+
+        skipped_events = [
+            event
+            for event in vs.warning_diagnostics.events
+            if event.event_type == "skipped_expiry"
+        ]
+        assert len(skipped_events) == 1
+        _assert_public_parity_requirement_message(
+            str(skipped_events[0].details["reason"])
+        )
+
+    def test_fit_raise_policy_missing_parity_pairs_uses_public_requirement(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Strict surface fits should fail with the parity-forward requirement."""
+        from oipd import VolSurface
+        from oipd.core.errors import CalculationError
+
+        chain = _append_call_only_expiry(multi_expiry_chain)
+        bad_expiry = pd.Timestamp("2025-07-21")
+        chain = chain[
+            chain["expiry"].isin([multi_expiry_chain["expiry"].iloc[0], bad_expiry])
+        ]
+
+        vs = VolSurface()
+        with pytest.raises(CalculationError) as exc_info:
+            vs.fit(chain, market_inputs, failure_policy="raise")
+
+        message = str(exc_info.value)
+        _assert_public_parity_requirement_message(message)
+        assert "failure_policy='skip_warn'" in message
 
     def test_fit_raise_policy_suggests_skip_warn(
         self, mixed_quality_multi_expiry_chain, market_inputs
@@ -498,33 +572,46 @@ class TestVolSurfaceInterpolation:
         assert metadata["interpolated_from_expiries"] == vs.expiries
         assert metadata["domain_hint_source"] == "bracketing_pillars"
 
-    def test_interpolated_bs_slice_preserves_spot_market_semantics(
+    def test_interpolated_public_slice_carries_forward_metadata(
         self, multi_expiry_chain, market_inputs
     ):
-        """BS interpolated slices should preserve spot in resolved market state."""
+        """Interpolated slices should expose forward state via metadata."""
         from oipd import MarketInputs, VolSurface
 
-        market_with_dividend = MarketInputs(
+        market = MarketInputs(
             valuation_date=market_inputs.valuation_date,
             underlying_price=market_inputs.underlying_price,
             risk_free_rate=market_inputs.risk_free_rate,
-            dividend_schedule=pd.DataFrame(
-                {"ex_date": [pd.Timestamp("2025-02-01")], "amount": [1.0]}
-            ),
         )
 
-        vs = VolSurface(pricing_engine="bs")
-        vs.fit(multi_expiry_chain, market_with_dividend)
+        vs = VolSurface()
+        vs.fit(multi_expiry_chain, market)
 
         interpolated_curve = vs.slice("2025-03-21")
-        metadata = interpolated_curve._metadata
+        metadata = interpolated_curve.metadata
         resolved_market = interpolated_curve.resolved_market
 
         assert metadata["interpolated"] is True
+        assert metadata["forward_price_source"] == "surface_interpolation"
+        source_forward_pillars = metadata["source_forward_pillars"]
+        assert len(source_forward_pillars) == 2
+        assert all(
+            pillar["forward_price_source"] == "put_call_parity"
+            for pillar in source_forward_pillars
+        )
+        assert all("parity_report" in pillar for pillar in source_forward_pillars)
         assert resolved_market.source_meta["interpolated"] is True
         assert resolved_market.source_meta["expiry"] == metadata["expiry"]
         assert resolved_market.source_meta["forward_price"] == pytest.approx(
             metadata["forward_price"]
+        )
+        assert (
+            resolved_market.source_meta["forward_price_source"]
+            == metadata["forward_price_source"]
+        )
+        assert (
+            resolved_market.source_meta["source_forward_pillars"]
+            == source_forward_pillars
         )
         assert (
             resolved_market.source_meta["interpolated_from_expiries"]
@@ -534,14 +621,8 @@ class TestVolSurfaceInterpolation:
             resolved_market.source_meta["domain_hint_source"]
             == metadata["domain_hint_source"]
         )
-        assert resolved_market.underlying_price == pytest.approx(
-            market_with_dividend.underlying_price
-        )
-        assert resolved_market.dividend_schedule is not None
-        pd.testing.assert_frame_equal(
-            resolved_market.dividend_schedule.reset_index(drop=True),
-            market_with_dividend.dividend_schedule.reset_index(drop=True),
-        )
+        assert resolved_market.dividend_schedule is None
+        assert resolved_market.dividend_yield is None
 
 
 # =============================================================================
@@ -854,7 +935,7 @@ class TestVolSurfacePlot:
         import matplotlib.pyplot as plt
         from oipd import VolSurface
 
-        vs = VolSurface(pricing_engine="bs")
+        vs = VolSurface()
         vs.fit(multi_expiry_chain, market_inputs)
         fig = vs.plot_term_structure()
         ax = fig.axes[0]

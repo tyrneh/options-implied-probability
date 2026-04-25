@@ -1717,7 +1717,9 @@ def preprocess_with_parity(
     except Exception as exc:
         if "No valid put-call parity pairs found" in str(exc):
             raise ValueError(
-                "Put-call parity preprocessing could not infer a forward. " f"{exc}"
+                "Put-call parity preprocessing could not infer a forward. "
+                "Provide usable same-strike call/put pairs for parity-forward "
+                f"inference. {exc}"
             ) from exc
         warnings.warn(
             "Put-call parity preprocessing failed: "

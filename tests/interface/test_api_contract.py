@@ -7,12 +7,31 @@ These tests verify the "shape" of the API, not numerical correctness.
 They should NEVER fail due to refactoring internal logic.
 """
 
+import inspect
+
 import numpy as np
 import pandas as pd
+import pytest
 
 # =============================================================================
 # Warning Diagnostics Contract Tests
 # =============================================================================
+
+
+class TestPackageExportsContract:
+    """Verify package-root imports expose the simplified public surface."""
+
+    def test_root_exports_retained_market_helpers(self):
+        """Root imports keep market helpers needed by existing workflows."""
+        import oipd
+        from oipd import ResolvedMarket, VendorSnapshot, resolve_market
+
+        assert getattr(oipd, "ResolvedMarket") is ResolvedMarket
+        assert getattr(oipd, "VendorSnapshot") is VendorSnapshot
+        assert getattr(oipd, "resolve_market") is resolve_market
+        assert "ResolvedMarket" in oipd.__all__
+        assert "VendorSnapshot" in oipd.__all__
+        assert "resolve_market" in oipd.__all__
 
 
 class TestWarningDiagnosticsContract:
@@ -42,6 +61,28 @@ class TestWarningDiagnosticsContract:
 
 class TestMarketInputContract:
     """Verify market input objects expose the timestamp-preserving contract."""
+
+    def test_constructor_hides_explicit_dividend_arguments(self):
+        from oipd import MarketInputs
+
+        signature = inspect.signature(MarketInputs)
+
+        assert "dividend_yield" not in signature.parameters
+        assert "dividend_schedule" not in signature.parameters
+
+    @pytest.mark.parametrize("keyword", ["dividend_yield", "dividend_schedule"])
+    def test_constructor_rejects_explicit_dividend_arguments(self, keyword):
+        from oipd import MarketInputs
+
+        kwargs = {
+            "valuation_date": pd.Timestamp("2025-01-15 09:30:00"),
+            "underlying_price": 100.0,
+            "risk_free_rate": 0.05,
+            keyword: 0.0 if keyword == "dividend_yield" else pd.DataFrame(),
+        }
+
+        with pytest.raises(TypeError, match=keyword):
+            MarketInputs(**kwargs)
 
     def test_market_inputs_preserve_timestamp_and_date_views(self):
         from datetime import date
@@ -84,6 +125,23 @@ class TestMarketInputContract:
 
 class TestVolCurveContract:
     """Verify all PRD-documented VolCurve methods exist and are callable."""
+
+    def test_constructor_hides_pricing_engine_argument(self):
+        """VolCurve() should not expose pricing-engine selection publicly."""
+        from oipd import VolCurve
+
+        signature = inspect.signature(VolCurve)
+
+        assert "pricing_engine" not in signature.parameters
+
+    def test_constructor_does_not_expose_mutable_engine_or_solver_attributes(self):
+        """VolCurve should keep engine and solver selection internal."""
+        from oipd import VolCurve
+
+        vc = VolCurve()
+
+        assert not hasattr(vc, "pricing_engine")
+        assert not hasattr(vc, "solver")
 
     def test_fit_exists_and_returns_self(self, single_expiry_chain, market_inputs):
         from oipd import VolCurve
@@ -178,6 +236,23 @@ class TestVolCurveContract:
 
 class TestVolSurfaceContract:
     """Verify all PRD-documented VolSurface methods exist and are callable."""
+
+    def test_constructor_hides_pricing_engine_argument(self):
+        """VolSurface() should not expose pricing-engine selection publicly."""
+        from oipd import VolSurface
+
+        signature = inspect.signature(VolSurface)
+
+        assert "pricing_engine" not in signature.parameters
+
+    def test_constructor_does_not_expose_mutable_engine_or_solver_attributes(self):
+        """VolSurface should keep engine and solver selection internal."""
+        from oipd import VolSurface
+
+        vs = VolSurface()
+
+        assert not hasattr(vs, "pricing_engine")
+        assert not hasattr(vs, "solver")
 
     def test_fit_exists_and_returns_self(self, multi_expiry_chain, market_inputs):
         from oipd import VolSurface

@@ -156,7 +156,7 @@ class CurveProbabilityDefinition:
         return cls(
             vol_curve=copy.deepcopy(fitted_callable),
             resolved_market=snapshot_resolved_market(resolved_market),
-            pricing_engine=str(getattr(vol_curve, "pricing_engine")),
+            pricing_engine=str(getattr(vol_curve, "_pricing_engine")),
             vol_metadata=copy.deepcopy(vol_metadata),
             native_spec=native_spec,
         )

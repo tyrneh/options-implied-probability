@@ -25,6 +25,12 @@ from oipd.core.utils import (
     resolve_risk_free_rate,
 )
 
+PARITY_FORWARD_DATA_REQUIREMENT_MESSAGE = (
+    "Public volatility fitting requires usable same-strike call/put pairs for "
+    "parity-forward inference. Provide both call and put quotes at matching "
+    "strikes with usable prices for each expiry."
+)
+
 
 def _extract_strike_domain(options_data: pd.DataFrame) -> tuple[float, float] | None:
     """Return the finite strike domain for one options table when available.
@@ -136,9 +142,7 @@ def fit_vol_curve_internal(
     # For Black-76, use forward price; for BS, use spot
     if pricing_engine == "black76":
         if forward_price is None:
-            raise CalculationError(
-                "Black-76 requires parity-implied forward but put quotes are missing."
-            )
+            raise CalculationError(PARITY_FORWARD_DATA_REQUIREMENT_MESSAGE)
         else:
             underlying_for_iv = forward_price
             forward_price_source = "put_call_parity"

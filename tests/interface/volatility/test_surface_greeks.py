@@ -6,6 +6,8 @@ import pytest
 from datetime import date
 
 from oipd import VolSurface, MarketInputs
+from oipd.core.utils import resolve_risk_free_rate
+from oipd.pricing.black76 import black76_delta, black76_gamma, black76_rho
 
 
 @pytest.fixture
@@ -14,7 +16,6 @@ def market_inputs():
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
         underlying_price=100.0,
-        dividend_yield=0.02,
     )
 
 
@@ -113,40 +114,68 @@ class TestVolSurfaceGreeks:
         assert list(df.columns) == expected_cols
         assert len(df) == 1
 
-    def test_black_scholes_engine(self, multi_expiry_chain, market_inputs):
-        """Test BS engine execution path."""
-        # Use BS engine
-        vs = VolSurface(pricing_engine="bs").fit(multi_expiry_chain, market_inputs)
+    def test_surface_greeks_match_black76_forward_formulas(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Surface Greeks should use Black-76 forward sensitivities."""
+        vs = VolSurface().fit(multi_expiry_chain, market_inputs)
 
-        # Should work without error
-        delta = vs.delta([100], t=0.2)
-        assert np.isfinite(delta[0])
+        t = 0.2
+        strikes = np.array([90.0, 100.0, 110.0])
+        r = resolve_risk_free_rate(
+            market_inputs.risk_free_rate,
+            market_inputs.risk_free_rate_mode,
+            t,
+        )
+        forward = vs.forward_price(t)
+        sigma = np.array([vs.implied_vol(strike, t) for strike in strikes])
 
-    def test_surface_greeks_with_dividend_schedule_do_not_raise(
+        np.testing.assert_allclose(
+            vs.delta(strikes, t=t),
+            black76_delta(forward, strikes, sigma, t, r),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            vs.gamma(strikes, t=t),
+            black76_gamma(forward, strikes, sigma, t, r),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+    def test_surface_greeks_without_dividend_inputs_match_forward_rho(
         self, multi_expiry_chain
     ):
-        """BS surface Greeks should work when discrete dividends are supplied."""
-        market_schedule = MarketInputs(
+        """Public surface Greeks should preserve Black-76 forward semantics."""
+        market = MarketInputs(
             valuation_date=date(2025, 1, 1),
             risk_free_rate=0.05,
             underlying_price=100.0,
-            dividend_schedule=pd.DataFrame(
-                {
-                    "ex_date": [
-                        pd.Timestamp("2025-01-15 00:00:00"),
-                        pd.Timestamp("2025-02-15 00:00:00"),
-                    ],
-                    "amount": [1.0, 1.5],
-                }
-            ),
         )
 
-        vs = VolSurface(pricing_engine="bs").fit(multi_expiry_chain, market_schedule)
-        greek_frame = vs.greeks([100], t=pd.Timestamp("2025-03-02 00:00:00"))
+        vs = VolSurface().fit(multi_expiry_chain, market)
+        t = pd.Timestamp("2025-03-02 00:00:00")
+        t_years = 60 / 365.0
+        strikes = np.array([100.0])
+        greek_frame = vs.greeks(strikes, t=t)
+
+        r = resolve_risk_free_rate(
+            market.risk_free_rate,
+            market.risk_free_rate_mode,
+            t_years,
+        )
+        forward = vs.forward_price(t_years)
+        sigma = np.array([vs.implied_vol(strikes[0], t_years)])
 
         assert isinstance(greek_frame, pd.DataFrame)
         assert np.all(
             np.isfinite(
                 greek_frame[["delta", "gamma", "vega", "theta", "rho"]].to_numpy()
             )
+        )
+        np.testing.assert_allclose(
+            greek_frame["rho"].to_numpy(),
+            black76_rho(forward, strikes, sigma, t_years, r),
+            rtol=1e-12,
+            atol=1e-12,
         )

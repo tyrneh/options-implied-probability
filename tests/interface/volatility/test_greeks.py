@@ -6,6 +6,14 @@ import pytest
 from datetime import date
 
 from oipd import VolCurve, MarketInputs
+from oipd.core.utils import resolve_risk_free_rate
+from oipd.pricing.black76 import (
+    black76_delta,
+    black76_gamma,
+    black76_rho,
+    black76_theta,
+    black76_vega,
+)
 
 
 @pytest.fixture
@@ -14,7 +22,6 @@ def market_inputs():
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
         underlying_price=100.0,
-        dividend_yield=0.02,
     )
 
 
@@ -57,15 +64,31 @@ class TestVolCurveGreeks:
         assert len(delta) == 3
 
     def test_delta_call_vs_put(self, single_expiry_chain, market_inputs):
-        """Call Delta > 0, Put Delta < 0 for OTM strikes."""
+        """Call and put deltas should be Black-76 forward deltas."""
         vc = VolCurve().fit(single_expiry_chain, market_inputs)
         strike = 100
         delta_call = vc.delta([strike], call_or_put="call")[0]
         delta_put = vc.delta([strike], call_or_put="put")[0]
 
-        # ATM Call Delta should be ~0.5, Put Delta ~-0.5
+        t = 31 / 365.0
+        r = resolve_risk_free_rate(
+            market_inputs.risk_free_rate,
+            market_inputs.risk_free_rate_mode,
+            t,
+        )
+        discount_factor = np.exp(-r * t)
+        expected_call = black76_delta(
+            vc.forward_price, np.array([strike]), vc([strike]), t, r, call_or_put="call"
+        )[0]
+        expected_put = black76_delta(
+            vc.forward_price, np.array([strike]), vc([strike]), t, r, call_or_put="put"
+        )[0]
+
         assert delta_call > 0
         assert delta_put < 0
+        assert delta_call - delta_put == pytest.approx(discount_factor)
+        assert delta_call == pytest.approx(expected_call)
+        assert delta_put == pytest.approx(expected_put)
 
     def test_gamma_same_for_call_and_put(self, single_expiry_chain, market_inputs):
         """Gamma should be identical for Call and Put at same strike."""
@@ -86,14 +109,14 @@ class TestVolCurveGreeks:
         # Theta is negative = option loses value as time passes
         assert theta[0] < 0
 
-    def test_rho_call_positive(self, single_expiry_chain, market_inputs):
-        """Call Rho should be positive (higher rates = higher call value)."""
+    def test_rho_call_uses_forward_discounting(
+        self, single_expiry_chain, market_inputs
+    ):
+        """Black-76 call rho should reflect forward-price discounting."""
         vc = VolCurve().fit(single_expiry_chain, market_inputs)
         rho = vc.rho([100], call_or_put="call")
-        # In BS, Rho_call > 0. In Black-76, it's more nuanced.
-        # For Black-76: Rho = -T * V, which is negative.
-        # This depends on pricing engine. Let's just check it's a number.
         assert np.isfinite(rho[0])
+        assert rho[0] < 0
 
     def test_greeks_returns_dataframe(self, single_expiry_chain, market_inputs):
         """greeks() should return a DataFrame with all columns."""
@@ -104,25 +127,34 @@ class TestVolCurveGreeks:
         assert list(df.columns) == ["strike", "delta", "gamma", "vega", "theta", "rho"]
         assert len(df) == 3
 
-    def test_bs_greeks_with_dividend_schedule_do_not_raise(self, single_expiry_chain):
-        """BS Greeks should work when discrete dividends are supplied as a schedule."""
-        market_schedule = MarketInputs(
+    def test_greeks_match_forward_formulas_without_dividend_inputs(
+        self, single_expiry_chain
+    ):
+        """Public Greeks should use Black-76 forward-Greek semantics."""
+        market = MarketInputs(
             valuation_date=date(2025, 1, 1),
             risk_free_rate=0.05,
             underlying_price=100.0,
-            dividend_schedule=pd.DataFrame(
-                {
-                    "ex_date": [
-                        pd.Timestamp("2025-01-15 00:00:00"),
-                        pd.Timestamp("2025-02-15 00:00:00"),
-                    ],
-                    "amount": [1.0, 1.5],
-                }
-            ),
         )
 
-        vc = VolCurve(pricing_engine="bs").fit(single_expiry_chain, market_schedule)
-        greek_frame = vc.greeks([90, 100, 110])
+        vc = VolCurve().fit(single_expiry_chain, market)
+        strikes = np.array([90.0, 100.0, 110.0])
+        greek_frame = vc.greeks(strikes)
+
+        t = 31 / 365.0
+        r = resolve_risk_free_rate(
+            market.risk_free_rate,
+            market.risk_free_rate_mode,
+            t,
+        )
+        sigma = vc(strikes)
+        expected = {
+            "delta": black76_delta(vc.forward_price, strikes, sigma, t, r),
+            "gamma": black76_gamma(vc.forward_price, strikes, sigma, t, r),
+            "vega": black76_vega(vc.forward_price, strikes, sigma, t, r),
+            "theta": black76_theta(vc.forward_price, strikes, sigma, t, r),
+            "rho": black76_rho(vc.forward_price, strikes, sigma, t, r),
+        }
 
         assert isinstance(greek_frame, pd.DataFrame)
         assert np.all(
@@ -130,27 +162,33 @@ class TestVolCurveGreeks:
                 greek_frame[["delta", "gamma", "vega", "theta", "rho"]].to_numpy()
             )
         )
+        for greek_name, expected_values in expected.items():
+            np.testing.assert_allclose(
+                greek_frame[greek_name].to_numpy(),
+                expected_values,
+                rtol=1e-12,
+                atol=1e-12,
+            )
 
 
 class TestGreeksVsFiniteDifference:
-    """Verify analytical Greeks match numerical (bump & revalue) approximations."""
+    """Sanity checks for public Greek magnitudes."""
 
-    def test_delta_vs_bump(self, single_expiry_chain, market_inputs):
-        """Delta should approximately equal (V(S+h) - V(S-h)) / 2h."""
+    def test_delta_forward_sensitivity_reasonable(
+        self, single_expiry_chain, market_inputs
+    ):
+        """Delta should remain in a reasonable forward-sensitivity range."""
         vc = VolCurve().fit(single_expiry_chain, market_inputs)
         K = 100
-        h = 0.01  # Small bump
 
         # Analytical Delta
         delta_analytical = vc.delta([K])[0]
 
-        # Numerical: we can't easily bump S for Black-76 (it uses F).
-        # For Black-Scholes, we'd need to refit, which is complex.
-        # Instead, verify sign and magnitude are reasonable.
-        # Delta for ATM call should be ~0.4-0.6
+        # Re-fitting a bumped forward is outside this interface test; this is
+        # a scale sanity check for the public forward delta.
         assert 0.3 < abs(delta_analytical) < 0.8
 
-    def test_vega_vs_bump(self, single_expiry_chain, market_inputs):
+    def test_vega_magnitude_reasonable(self, single_expiry_chain, market_inputs):
         """Vega should be positive and have reasonable magnitude."""
         vc = VolCurve().fit(single_expiry_chain, market_inputs)
         vega = vc.vega([100])[0]

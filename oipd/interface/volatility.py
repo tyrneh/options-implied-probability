@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from datetime import date
 from typing import Any, Callable, Dict, Literal, Optional, Sequence, Union
@@ -187,26 +188,29 @@ def _resolve_interpolated_domain_hint(
     return (lower_bound, upper_bound), candidate_expiries, source_label
 
 
-def _infer_market_dividend_provenance(
-    market: MarketInputs,
-) -> Literal[
-    "user_schedule",
-    "user_yield",
-    "none",
-]:
-    """Infer dividend provenance for a stored parent market snapshot.
+def _forward_pillar_metadata(
+    surface_model: FittedSurface,
+    source_expiries: Sequence[pd.Timestamp],
+) -> tuple[dict[str, Any], ...]:
+    """Return forward-source metadata for fitted pillars feeding interpolation."""
+    pillar_metadata: list[dict[str, Any]] = []
+    for expiry in source_expiries:
+        try:
+            slice_data = surface_model.get_slice(pd.Timestamp(expiry))
+        except (KeyError, ValueError):
+            continue
 
-    Args:
-        market: Parent market inputs used when the surface was fitted.
+        metadata = slice_data.get("metadata", {})
+        pillar: dict[str, Any] = {
+            "expiry": pd.Timestamp(expiry),
+            "forward_price": metadata.get("forward_price"),
+            "forward_price_source": metadata.get("forward_price_source"),
+        }
+        if "parity_report" in metadata:
+            pillar["parity_report"] = copy.deepcopy(metadata["parity_report"])
+        pillar_metadata.append(pillar)
 
-    Returns:
-        Literal["user_schedule", "user_yield", "none"]: Dividend provenance label.
-    """
-    if market.dividend_schedule is not None:
-        return "user_schedule"
-    if market.dividend_yield is not None:
-        return "user_yield"
-    return "none"
+    return tuple(pillar_metadata)
 
 
 def _metadata_value(metadata: Any, key: str) -> Any:
@@ -541,7 +545,6 @@ class VolCurve:
         self,
         *,
         method: str = "svi",
-        pricing_engine: str = "black76",
         price_method: str = "mid",
         max_staleness_days: int = 3,
     ) -> None:
@@ -551,8 +554,6 @@ class VolCurve:
         ----------
         method : str, default "svi"
             Calibration algorithm to use (e.g., "svi").
-        pricing_engine : str, default "black76"
-            Pricing model for IV inversion: "black76" (futures) or "bs" (spot).
         price_method : str, default "mid"
             Quote type to fit against: "mid", "last", "bid", or "ask".
         max_staleness_days : int, default 3
@@ -560,8 +561,8 @@ class VolCurve:
         """
         self.method = method
         self.method_options = None  # Hidden advanced configuration
-        self.solver = "brent"  # Default solver, not exposed in __init__
-        self.pricing_engine = pricing_engine
+        self._solver = "brent"
+        self._pricing_engine = "black76"
         self.price_method = price_method
         self.max_staleness_days = max_staleness_days
 
@@ -635,7 +636,7 @@ class VolCurve:
                 "Choose a later expiry to fit a volatility curve."
             )
 
-        # resolved_market: A complete snapshot of market conditions (rates, spot, dividends)
+        # resolved_market: A complete snapshot of market conditions (rates and spot)
         # derived from explicit user inputs.
         resolved_market = resolve_market(market)
 
@@ -645,10 +646,10 @@ class VolCurve:
         vol_curve, metadata = fit_vol_curve_internal(
             chain_input,
             resolved_market,
-            pricing_engine=self.pricing_engine,
+            pricing_engine=self._pricing_engine,
             price_method=self.price_method,
             max_staleness_days=self.max_staleness_days,
-            solver=self.solver,
+            solver=self._solver,
             method=self.method,
             method_options=self.method_options,
             suppress_price_warning=True,
@@ -662,7 +663,7 @@ class VolCurve:
             metadata,
             scope=VOL_CURVE_FIT_WARNING_SCOPE,
             price_method=self.price_method,
-            pricing_engine=self.pricing_engine,
+            pricing_engine=self._pricing_engine,
             max_staleness_days=self.max_staleness_days,
         )
         _emit_warning_summaries(warning_events, owner="VolCurve.fit")
@@ -960,6 +961,19 @@ class VolCurve:
         return self._metadata.get("forward_price")
 
     @property
+    def metadata(self) -> dict[str, Any]:
+        """Return fit metadata, including parity-forward diagnostics.
+
+        Returns:
+            dict[str, Any]: Metadata captured during volatility fitting, such as
+                the inferred forward, forward source, and ``parity_report`` when
+                parity-forward inference was used.
+        """
+        if self._metadata is None:
+            raise ValueError("Call fit before accessing metadata")
+        return copy.deepcopy(self._metadata)
+
+    @property
     def diagnostics(self) -> dict[str, Any] | None:
         """Return calibration diagnostics captured during fitting.
 
@@ -1053,7 +1067,7 @@ class VolCurve:
     ) -> np.ndarray:
         """Calculate theoretical option prices using the fitted volatility.
 
-        Uses the pricing engine specified at initialization (default "black76").
+        Uses the internal Black-76 forward-pricing convention.
 
         Args:
             strikes: Strike price(s) to value.
@@ -1080,7 +1094,7 @@ class VolCurve:
 
         # 2. Select Engine & Dispatch
         # We allow "black76" (futures/forward) or "bs" (spot)
-        engine_name = self.pricing_engine
+        engine_name = self._pricing_engine
         pricer = get_pricer(engine_name)
 
         if engine_name == "black76":
@@ -1136,7 +1150,7 @@ class VolCurve:
         K = np.asarray(strikes, dtype=float)
         sigma = self(K)
 
-        if self.pricing_engine == "bs":
+        if self._pricing_engine == "bs":
             t, r, effective_spot, effective_q, _curve_expiry = (
                 self._get_bs_pricing_inputs()
             )
@@ -1160,7 +1174,7 @@ class VolCurve:
         """Dispatch controller: routes the calculation to the appropriate pricing kernel (Black-76 or Black-Scholes)."""
         K, sigma, t, r, q, effective_spot = self._get_greeks_inputs(strikes)
 
-        if self.pricing_engine == "black76":
+        if self._pricing_engine == "black76":
             F = self.forward_price
             if F is None:
                 raise ValueError(f"Forward price required for Black-76 Greeks")
@@ -1298,7 +1312,6 @@ class VolSurface:
         self,
         *,
         method: str = "svi",
-        pricing_engine: str = "black76",
         price_method: str = "mid",
         max_staleness_days: int = 3,
     ) -> None:
@@ -1308,8 +1321,6 @@ class VolSurface:
         ----------
         method : str, default "svi"
             Calibration algorithm to use (e.g., "svi" or "cubic_spline").
-        pricing_engine : str, default "black76"
-            Pricing model for IV inversion: "black76" (futures) or "bs" (spot).
         price_method : str, default "mid"
             Quote type to fit against: "mid", "last", "bid", or "ask".
         max_staleness_days : int, default 3
@@ -1317,14 +1328,14 @@ class VolSurface:
         """
         self.method = method
         self.method_options = None  # Hidden advanced configuration
-        self.solver = "brent"  # Default solver, not exposed in __init__
-        self.pricing_engine = pricing_engine
+        self._solver = "brent"
+        self._pricing_engine = "black76"
         self.price_method = price_method
         self.max_staleness_days = max_staleness_days
 
         self._model: FittedSurface | None = None
         self._interpolator: Any = None  # TotalVarianceInterpolator if enabled
-        self._market: Optional[MarketInputs] = None  # Stored for interpolated slices
+        self._market: Optional[ResolvedMarket] = None  # Stored for interpolated slices
         self._warning_diagnostics = WarningDiagnostics()
 
     def fit(
@@ -1340,7 +1351,7 @@ class VolSurface:
 
         Args:
             chain: Option chain DataFrame containing multiple expiries.
-            market: Explicit market parameters (price, rates, dividends).
+            market: Explicit market parameters (price and rates).
             column_mapping: Optional mapping from user column names to OIPD standard names.
             horizon: Optional fit horizon (e.g., "30d", "1y" or explicit date).
                      Expiries after this horizon will be ignored.
@@ -1419,10 +1430,10 @@ class VolSurface:
             market=market,
             column_mapping=column_mapping,
             method_options=self.method_options,
-            pricing_engine=self.pricing_engine,
+            pricing_engine=self._pricing_engine,
             price_method=self.price_method,
             max_staleness_days=self.max_staleness_days,
-            solver=self.solver,
+            solver=self._solver,
             method=self.method,
             failure_policy=failure_policy,
         )
@@ -1430,7 +1441,7 @@ class VolSurface:
             surface_model,
             scope=VOL_SURFACE_FIT_WARNING_SCOPE,
             price_method=self.price_method,
-            pricing_engine=self.pricing_engine,
+            pricing_engine=self._pricing_engine,
             max_staleness_days=self.max_staleness_days,
         )
 
@@ -1446,8 +1457,9 @@ class VolSurface:
             VOL_SURFACE_FIT_WARNING_SCOPE,
             warning_events,
         )
-        # Store market for interpolated slice creation
-        self._market = market
+        # Store resolved market state for interpolated slice creation.
+        first_expiry = surface_model.expiries[0]
+        self._market = surface_model.get_slice(first_expiry)["resolved_market"]
         return self
 
     def slice(self, expiry: str | date | pd.Timestamp) -> VolCurve:
@@ -1485,12 +1497,12 @@ class VolSurface:
 
             vol_curve = VolCurve(
                 method=self.method,
-                pricing_engine=self.pricing_engine,
                 price_method=self.price_method,
                 max_staleness_days=self.max_staleness_days,
             )
             vol_curve.method_options = self.method_options
-            vol_curve.solver = self.solver
+            vol_curve._solver = self._solver
+            vol_curve._pricing_engine = self._pricing_engine
             vol_curve._vol_curve = slice_data["curve"]  # type: ignore[attr-defined]
             vol_curve._metadata = slice_data["metadata"]  # type: ignore[attr-defined]
             vol_curve._resolved_market = slice_data["resolved_market"]  # type: ignore[attr-defined]
@@ -1516,6 +1528,8 @@ class VolSurface:
         """
         if self._interpolator is None:
             raise ValueError("Interpolator not available")
+        if self._model is None:
+            raise ValueError("Surface model not available")
         if self._market is None:
             raise ValueError("Market data not stored")
 
@@ -1541,7 +1555,7 @@ class VolSurface:
             )
         )
 
-        if self.pricing_engine == "bs":
+        if self._pricing_engine == "bs":
             synthetic_underlying_price = float(self._market.underlying_price)
         else:
             synthetic_underlying_price = forward_price
@@ -1555,7 +1569,7 @@ class VolSurface:
             "interpolated": True,
             "expiry": resolved_maturity.expiry,
             "time_to_expiry_years": t,
-            "risk_free_rate_mode": self._market.risk_free_rate_mode,
+            "risk_free_rate_mode": self._market.source_meta["risk_free_rate_mode"],
             "forward_price": forward_price,
             "interpolated_from_expiries": interpolated_from_expiries,
             "domain_hint_source": domain_hint_source,
@@ -1563,6 +1577,13 @@ class VolSurface:
 
         if default_domain is not None:
             synthetic_source_meta["default_domain"] = default_domain
+
+        source_forward_pillars = _forward_pillar_metadata(
+            self._model,
+            interpolated_from_expiries,
+        )
+        synthetic_source_meta["forward_price_source"] = "surface_interpolation"
+        synthetic_source_meta["source_forward_pillars"] = source_forward_pillars
 
         # Construct synthetic ResolvedMarket for this expiry.
         # For BS surfaces we preserve the parent spot/dividend state and carry
@@ -1575,7 +1596,7 @@ class VolSurface:
             dividend_schedule=synthetic_dividend_schedule,
             provenance=Provenance(
                 price="user",
-                dividends=_infer_market_dividend_provenance(self._market),
+                dividends=self._market.provenance.dividends,
             ),
             source_meta=synthetic_source_meta,
         )
@@ -1590,18 +1611,20 @@ class VolSurface:
         # Build a shell VolCurve
         vol_curve = VolCurve(
             method=self.method,
-            pricing_engine=self.pricing_engine,
             price_method=self.price_method,
             max_staleness_days=self.max_staleness_days,
         )
         vol_curve.method_options = self.method_options
-        vol_curve.solver = self.solver
+        vol_curve._solver = self._solver
+        vol_curve._pricing_engine = self._pricing_engine
         vol_curve._vol_curve = interpolated_vol_curve  # type: ignore[attr-defined]
         vol_curve._metadata = {  # type: ignore[attr-defined]
             "interpolated": True,
             **build_maturity_metadata(resolved_maturity),
             "interpolated_from_expiries": interpolated_from_expiries,
             "forward_price": forward_price,
+            "forward_price_source": "surface_interpolation",
+            "source_forward_pillars": source_forward_pillars,
             "at_money_vol": at_money_vol,
             "method": "total_variance_interpolation",
             "domain_hint_source": domain_hint_source,
@@ -1674,7 +1697,7 @@ class VolSurface:
         resolved_expiry_timestamp, t_years = self._resolve_query_time(t)
         r = resolve_risk_free_rate(
             self._market.risk_free_rate,
-            self._market.risk_free_rate_mode,
+            self._market.source_meta["risk_free_rate_mode"],
             t_years,
         )
         effective_spot, effective_q = prepare_dividends(
@@ -1767,12 +1790,14 @@ class VolSurface:
 
         K = np.asarray(strikes, dtype=float)
         r = resolve_risk_free_rate(
-            self._market.risk_free_rate, self._market.risk_free_rate_mode, t_years
+            self._market.risk_free_rate,
+            self._market.source_meta["risk_free_rate_mode"],
+            t_years,
         )
 
         # 3. Dispatch to internal engine
-        # Using self.pricing_engine to stay consistent with fit()
-        engine_name = self.pricing_engine
+        # Use the same private engine convention as fit().
+        engine_name = self._pricing_engine
 
         if engine_name == "black76":
             # Direct Black-76 call
@@ -1929,9 +1954,11 @@ class VolSurface:
         sigma = self._interpolator.implied_vol(K, t_years)
 
         # 3. Dispatch to Match Pricing Engine
-        if self.pricing_engine == "black76":
+        if self._pricing_engine == "black76":
             r = resolve_risk_free_rate(
-                self._market.risk_free_rate, self._market.risk_free_rate_mode, t_years
+                self._market.risk_free_rate,
+                self._market.source_meta["risk_free_rate_mode"],
+                t_years,
             )
             F = self._interpolator._forward_interp(t_years)
             return func_black76(F, K, sigma, t_years, r, **kwargs)

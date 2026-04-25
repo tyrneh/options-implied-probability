@@ -1,11 +1,10 @@
 import pytest
 import numpy as np
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date
 from oipd.interface.volatility import VolCurve, VolSurface
 from oipd.market_inputs import MarketInputs
 from oipd.pricing.black76 import black76_call_price
-from oipd.pricing.black_scholes import black_scholes_call_price
 from oipd.core.utils import resolve_risk_free_rate
 
 
@@ -16,7 +15,6 @@ def sample_market():
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
         underlying_price=100.0,
-        dividend_yield=0.0,
     )
 
 
@@ -120,34 +118,9 @@ def multi_expiry_chain():
     return pd.concat([df1, df1_puts, df2, df2_puts], ignore_index=True)
 
 
-@pytest.fixture
-def bs_dividend_schedule_curve():
-    """Discrete schedule with one live and one post-expiry cash dividend."""
-    return pd.DataFrame(
-        {
-            "ex_date": [
-                pd.Timestamp("2025-01-15 00:00:00"),
-                pd.Timestamp("2025-02-15 00:00:00"),
-            ],
-            "amount": [1.0, 1.5],
-        }
-    )
-
-
-@pytest.fixture
-def bs_dividend_schedule_early_only():
-    """Early-expiry schedule retaining only the first dividend."""
-    return pd.DataFrame(
-        {
-            "ex_date": [pd.Timestamp("2025-01-15 00:00:00")],
-            "amount": [1.0],
-        }
-    )
-
-
 def test_vol_curve_price_black76(sample_market, single_expiry_chain):
-    """Test VolCurve.price() using default Black76 engine."""
-    vc = VolCurve(pricing_engine="black76", method="svi")
+    """VolCurve.price() should use the default Black-76 forward formula."""
+    vc = VolCurve(method="svi")
     vc.fit(single_expiry_chain, sample_market)
 
     strikes = [95, 105]
@@ -172,36 +145,34 @@ def test_vol_curve_price_black76(sample_market, single_expiry_chain):
     np.testing.assert_allclose(prices, expected, rtol=1e-5)
 
 
-def test_vol_curve_price_bs(sample_market, single_expiry_chain):
-    """Test VolCurve.price() using Black-Scholes engine."""
-    vc = VolCurve(pricing_engine="bs", method="svi")
-    vc.fit(single_expiry_chain, sample_market)
+def test_vol_curve_price_black76_without_dividend_yield(single_expiry_chain):
+    """Default forward pricing should not require a dividend-yield input."""
+    market_no_dividend = MarketInputs(
+        valuation_date=date(2025, 1, 1),
+        risk_free_rate=0.05,
+        underlying_price=100.0,
+    )
+    vc = VolCurve(method="svi")
+    vc.fit(single_expiry_chain, market_no_dividend)
 
-    strikes = [100]
-
-    # 1. Calculate via method
+    strikes = np.array([100.0])
     price_method = vc.price(strikes)
 
-    # 2. Manual Verification
-    S = sample_market.underlying_price
-    q = 0.0
     expiry_date = single_expiry_chain["expiry"].iloc[0].date()
-    t = (expiry_date - sample_market.valuation_calendar_date).days / 365.0
+    t = (expiry_date - market_no_dividend.valuation_calendar_date).days / 365.0
     r = resolve_risk_free_rate(
-        sample_market.risk_free_rate,
-        sample_market.risk_free_rate_mode,
+        market_no_dividend.risk_free_rate,
+        market_no_dividend.risk_free_rate_mode,
         t,
     )
-    sigma = vc(strikes)
-
-    expected = black_scholes_call_price(S, np.array(strikes), sigma, t, r, q)
+    expected = black76_call_price(vc.forward_price, strikes, vc(strikes), t, r)
 
     np.testing.assert_allclose(price_method, expected, rtol=1e-5)
 
 
 def test_vol_curve_parity(sample_market, single_expiry_chain):
     """Test Put-Call Parity consistency in VolCurve.price()."""
-    vc = VolCurve(pricing_engine="black76")
+    vc = VolCurve()
     vc.fit(single_expiry_chain, sample_market)
 
     K = 100.0
@@ -271,111 +242,97 @@ def test_vol_surface_date_input(sample_market, multi_expiry_chain):
     np.testing.assert_allclose(p1, p2, rtol=1e-8)
 
 
-def test_pricing_bs_missing_dividend_error(single_expiry_chain, multi_expiry_chain):
-    """Test that ValueError is raised if dividend_yield is missing for BS pricing."""
-    # Create market with implicit None dividend_yield (or explicitly None if supported)
-    # MarketInputs defaults use None for dividend_yield if not provided?
-    # Let's verify MarketInputs constructor or just pass None explicitly if allowed.
-    # Assuming MarketInputs supports explicit None or omits it.
-
-    # Based on usage, MarketInputs(..., dividend_yield=None) is valid.
+def test_public_pricing_accepts_missing_dividend_yield(
+    single_expiry_chain, multi_expiry_chain
+):
+    """Default Black-76 pricing should price curves and surfaces without q."""
     market_incomplete = MarketInputs(
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
         underlying_price=100.0,
-        dividend_yield=None,  # Explicitly missing
     )
 
-    vc = VolCurve(pricing_engine="bs", method="svi")
+    vc = VolCurve(method="svi")
     vc.fit(single_expiry_chain, market_incomplete)
+    curve_prices = vc.price([100], call_or_put="call")
 
-    with pytest.raises(ValueError, match="Dividend yield.*required"):
-        vc.price([100])
-
-    vs = VolSurface(pricing_engine="bs")
+    vs = VolSurface()
     vs.fit(multi_expiry_chain, market_incomplete)
+    surface_prices = vs.price([100], t=0.1, call_or_put="put")
 
-    with pytest.raises(ValueError, match="Dividend yield.*required"):
-        vs.price([100], t=0.1)
+    assert np.isfinite(curve_prices[0])
+    assert np.isfinite(surface_prices[0])
 
 
-def test_vol_curve_price_bs_with_dividend_schedule_matches_adjusted_spot(
-    single_expiry_chain, bs_dividend_schedule_curve
+def test_vol_curve_price_uses_forward_formula_without_dividend_inputs(
+    single_expiry_chain,
 ):
-    """BS curve pricing should use schedule-adjusted spot instead of requiring q."""
-    market_schedule = MarketInputs(
+    """Public curve pricing should use the Black-76 forward formula."""
+    market = MarketInputs(
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
         underlying_price=100.0,
-        dividend_schedule=bs_dividend_schedule_curve,
     )
-    vc = VolCurve(pricing_engine="bs", method="svi")
-    vc.fit(single_expiry_chain, market_schedule)
+    vc = VolCurve(method="svi")
+    vc.fit(single_expiry_chain, market)
 
     strike = np.array([100.0])
     price_method = vc.price(strike)
 
     expiry_timestamp = pd.Timestamp(single_expiry_chain["expiry"].iloc[0])
-    valuation_timestamp = pd.Timestamp(market_schedule.valuation_date)
+    valuation_timestamp = pd.Timestamp(market.valuation_date)
     t = (expiry_timestamp - valuation_timestamp).total_seconds() / (
         365.0 * 24.0 * 60.0 * 60.0
     )
     r = resolve_risk_free_rate(
-        market_schedule.risk_free_rate,
-        market_schedule.risk_free_rate_mode,
+        market.risk_free_rate,
+        market.risk_free_rate_mode,
         t,
     )
-    tau_div = (
-        pd.Timestamp("2025-01-15 00:00:00") - valuation_timestamp
-    ).total_seconds() / (365.0 * 24.0 * 60.0 * 60.0)
-    adjusted_spot = 100.0 - np.exp(-r * tau_div)
-    expected = black_scholes_call_price(
-        adjusted_spot,
+    expected = black76_call_price(
+        vc.forward_price,
         strike,
         vc(strike),
         t,
         r,
-        0.0,
     )
 
     np.testing.assert_allclose(price_method, expected, rtol=1e-6)
+    assert vc.resolved_market.underlying_price == pytest.approx(100.0)
+    assert vc.resolved_market.dividend_schedule is None
+    assert vc.resolved_market.dividend_yield is None
 
 
-def test_vol_surface_price_bs_with_dividend_schedule_respects_early_vs_late_window(
+def test_vol_surface_price_uses_forward_curve_without_dividend_inputs(
     multi_expiry_chain,
-    bs_dividend_schedule_curve,
-    bs_dividend_schedule_early_only,
 ):
-    """Early expiry should ignore the later dividend while later expiry includes it."""
-    market_full = MarketInputs(
+    """Public surface prices should use Black-76 forwards."""
+    market = MarketInputs(
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
         underlying_price=100.0,
-        dividend_schedule=bs_dividend_schedule_curve,
-    )
-    market_early_only = MarketInputs(
-        valuation_date=date(2025, 1, 1),
-        risk_free_rate=0.05,
-        underlying_price=100.0,
-        dividend_schedule=bs_dividend_schedule_early_only,
     )
 
-    surface_full = VolSurface(pricing_engine="bs").fit(multi_expiry_chain, market_full)
-    surface_early_only = VolSurface(pricing_engine="bs").fit(
-        multi_expiry_chain, market_early_only
-    )
+    surface = VolSurface().fit(multi_expiry_chain, market)
 
-    early_expiry = pd.Timestamp("2025-01-31 00:00:00")
     late_expiry = pd.Timestamp("2025-03-02 00:00:00")
-    early_t = 30 / 365.0
     late_t = 60 / 365.0
+    strike = np.array([100.0])
 
-    price_early_date = surface_full.price([100.0], t=early_expiry)
-    price_early_float = surface_full.price([100.0], t=early_t)
-    price_early_only = surface_early_only.price([100.0], t=early_t)
-    price_late_full = surface_full.price([100.0], t=late_expiry)
-    price_late_early_only = surface_early_only.price([100.0], t=late_t)
+    price_late_date = surface.price(strike, t=late_expiry)
+    price_late_float = surface.price(strike, t=late_t)
+    r = resolve_risk_free_rate(
+        market.risk_free_rate,
+        market.risk_free_rate_mode,
+        late_t,
+    )
+    expected = black76_call_price(
+        surface.forward_price(late_t),
+        strike,
+        np.array([surface.implied_vol(strike[0], late_t)]),
+        late_t,
+        r,
+    )
 
-    np.testing.assert_allclose(price_early_date, price_early_float, rtol=1e-8)
-    np.testing.assert_allclose(price_early_float, price_early_only, rtol=1e-8)
-    assert price_late_full[0] != pytest.approx(price_late_early_only[0])
+    np.testing.assert_allclose(price_late_date, price_late_float, rtol=1e-8)
+    np.testing.assert_allclose(price_late_float, expected, rtol=1e-8)

@@ -95,13 +95,22 @@ Step 1: Fit volatility
   Initialize VolCurve / VolSurface object
       + options chain + market inputs
       -> .fit(...)
-      -> fitted VolCurve / VolSurface object (inspect IV, prices, greeks, etc.)
+      -> fitted VolCurve / VolSurface object (inspect IV, prices, forward-space greeks, etc.)
 
 Step 2: Convert fitted volatility to probability
   Use fitted VolCurve / VolSurface
       -> .implied_distribution()
       -> ProbCurve / ProbSurface object (inspect PDF, CDF, quantiles, moments, etc.)
 ```
+
+Public fits use one default economic path: OIPD infers the forward price from
+usable same-strike call/put pairs and then works in Black-76 forward space.
+Use the raw, unadjusted current underlying price in `MarketInputs`; this is the
+reference price for diagnostics and forward-implied carry, while IV fitting
+uses the parity-implied forward. The resulting carry is dividend-equivalent
+model metadata, not a clean dividend forecast. Public Greeks are forward-space
+Black-76 Greeks, so delta is sensitivity to the inferred forward, not
+necessarily cash-equity spot delta.
 
 ## 3. Quickstart tutorial in computing market-implied probability distributions
 
@@ -126,7 +135,7 @@ chain, snapshot = sources.fetch_chain(ticker, expiries=single_expiry) # download
 # 2. fill in the parameters 
 market = MarketInputs(
     valuation_date=snapshot.asof,               # datetime on which the options data was downloaded
-    underlying_price=snapshot.underlying_price, # the price of the underlying stock at the time when the options data was downloaded 
+    underlying_price=snapshot.underlying_price, # raw current underlying price at download time
     risk_free_rate=0.04,                        # the risk-free rate of return. Use the US Fed or Treasury yields that are closest to the horizon of the expiry date
 )
 
@@ -166,7 +175,7 @@ chain_surface, snapshot_surface = sources.fetch_chain(
 # 2. fill in the parameters
 surface_market = MarketInputs(
     valuation_date=snapshot_surface.asof,               # datetime on which the options data was downloaded
-    underlying_price=snapshot_surface.underlying_price, # price of the underlying stock at download time
+    underlying_price=snapshot_surface.underlying_price, # raw current underlying price at download time
     risk_free_rate=0.04,                                # risk-free rate for the horizon
 )
 
