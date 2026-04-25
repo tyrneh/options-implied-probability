@@ -66,6 +66,7 @@ def infer_forward_from_atm(
         max_bid_ask_relative_spread=max_bid_ask_relative_spread,
     )
 
+
 def infer_forward_from_put_call_parity(
     options_df: pd.DataFrame,
     underlying_price: float,
