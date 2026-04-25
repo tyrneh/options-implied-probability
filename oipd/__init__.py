@@ -50,9 +50,10 @@ __all__ = [
     "VolSurface",
     "ProbCurve",
     "ProbSurface",
-    "MarketInputs",  # Immutable input class
-    "ResolvedMarket",  # Resolved parameters with provenance
+    "MarketInputs",  # Immutable public input class
+    "ResolvedMarket",  # Lower-level resolved parameters with provenance
     "VendorSnapshot",  # Vendor data snapshot
+    "resolve_market",  # Lower-level market resolver retained for compatibility
     "VolModel",
     "RebuiltSlice",
     "RebuiltSurface",

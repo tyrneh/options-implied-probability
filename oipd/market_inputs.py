@@ -11,15 +11,13 @@ from oipd.core.maturity import DateTimeLike, normalize_datetime_like
 @dataclass(frozen=True)
 class MarketInputs:
     """
-    User-provided market parameters (may have missing fields for vendor mode).
+    User-provided market parameters for the public fitting workflow.
 
     Terminology
     ----------
     `underlying_price` is the current tradable price of the instrument the
-    option is written on:
-    - For equity/ETF/FX spot options (Black–Scholes), this is the cash spot S.
-    - For options on futures (Black‑76), this is the current futures price F
-      of the relevant contract.
+    option is written on. In the public workflow it is the reference price used
+    for diagnostics while option-implied forwards are inferred from parity.
     """
 
     # Required fields first
@@ -29,6 +27,7 @@ class MarketInputs:
     # 'annualized' means simple annualized nominal rate on ACT/365 for the horizon
     # 'continuous' means continuously compounded rate
     risk_free_rate_mode: Literal["annualized", "continuous"] = "annualized"
+    underlying_price: Optional[float] = None
 
     def __post_init__(self) -> None:
         """Normalize and persist valuation timestamp with intraday precision.
@@ -56,11 +55,6 @@ class MarketInputs:
             date: Calendar date associated with ``valuation_date``.
         """
         return self.valuation_date.date()
-
-    # Optional fields second
-    underlying_price: Optional[float] = None
-    dividend_yield: Optional[float] = None
-    dividend_schedule: Optional[pd.DataFrame] = None  # columns: ex_date, amount
 
     # Convenience alias used in some UIs
     @property
@@ -252,23 +246,62 @@ def resolve_market(
     price = inputs.underlying_price
     price_source = "user"
 
-    # 3) Resolve dividends (yield takes priority over schedule)
+    # 3) Public market inputs do not carry explicit dividends.
+    prov = Provenance(price=price_source, dividends="none")
+
+    # 4) Return resolved market
+    return ResolvedMarket(
+        risk_free_rate=float(inputs.risk_free_rate),
+        underlying_price=price,
+        valuation_date=valuation_timestamp,
+        dividend_yield=None,
+        dividend_schedule=None,
+        provenance=prov,
+        source_meta={
+            "risk_free_rate_mode": inputs.risk_free_rate_mode,
+            "risk_free_rate_input": inputs.risk_free_rate,
+        },
+    )
+
+
+def _resolve_market_with_dividends(
+    inputs: MarketInputs,
+    *,
+    dividend_yield: Optional[float] = None,
+    dividend_schedule: Optional[pd.DataFrame] = None,
+) -> ResolvedMarket:
+    """Resolve market state with legacy/internal explicit dividends.
+
+    This is intentionally not part of the public constructor path. It preserves
+    dividend-bearing ``ResolvedMarket`` coverage for retained Black-Scholes and
+    dividend utility tests while ``MarketInputs`` stays small for users.
+    """
+    valuation_timestamp = inputs.valuation_timestamp
+
+    if inputs.underlying_price is None:
+        raise ValueError(
+            "underlying_price must be provided in MarketInputs. "
+            "Please explicitly populate this field."
+        )
+    price = inputs.underlying_price
+    price_source = "user"
+
+    # Preserve the historical schedule-priority behavior for internal callers.
     yld: Optional[float] = None
     sched: Optional[pd.DataFrame] = None
     div_source: Literal[
         "user_schedule", "user_yield", "vendor_schedule", "vendor_yield", "none"
     ] = "none"
 
-    if inputs.dividend_schedule is not None:
-        sched = _normalize_dividend_schedule(inputs.dividend_schedule)
+    if dividend_schedule is not None:
+        sched = _normalize_dividend_schedule(dividend_schedule)
         div_source = "user_schedule"
-    elif inputs.dividend_yield is not None:
-        yld = inputs.dividend_yield
+    elif dividend_yield is not None:
+        yld = dividend_yield
         div_source = "user_yield"
 
     prov = Provenance(price=price_source, dividends=div_source)
 
-    # 4) Return resolved market
     return ResolvedMarket(
         risk_free_rate=float(inputs.risk_free_rate),
         underlying_price=price,

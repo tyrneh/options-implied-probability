@@ -15,7 +15,6 @@ def market_inputs():
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.0,  # Zero rate simplifies things (Forward = Spot)
         underlying_price=100.0,
-        dividend_yield=0.0,
     )
 
 

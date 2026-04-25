@@ -34,7 +34,7 @@ Step 1: Fit volatility
   Initialize VolCurve / VolSurface object
       + options chain + market inputs
       -> .fit(...)
-      -> fitted VolCurve / VolSurface object (inspect IV, prices, greeks, etc.)
+      -> fitted VolCurve / VolSurface object (inspect IV, prices, forward-space greeks, etc.)
 
 Step 2: Convert fitted volatility to probability
   Use fitted VolCurve / VolSurface
@@ -84,11 +84,19 @@ chain, snapshot = sources.fetch_chain(
 
 ### 2.2 Define `MarketInputs` 
 
-`MarketInputs` stores the required parameters for the Black-Scholes formula. It always needs:
+`MarketInputs` stores the public market context used by the default fitting
+workflow. It always needs:
 
 1. `risk_free_rate`
 2. `valuation_date`
 3. `underlying_price`
+
+`underlying_price` should be the raw, unadjusted current price of the
+underlying in the same contract units as the option strikes. For US equity
+and yfinance-style workflows, use the live or snapshot stock price, not a
+split- or dividend-adjusted historical close. OIPD uses this value for
+diagnostics and forward-implied carry calculations; implied-volatility fitting
+uses the forward inferred from option prices.
 
 Example:
 
@@ -98,10 +106,9 @@ from oipd import MarketInputs
 market = MarketInputs(
     risk_free_rate=0.04,
     valuation_date=snapshot.asof,              # recommended for intraday precision
-    underlying_price=snapshot.underlying_price, # set explicitly if snapshot is unavailable
+    underlying_price=snapshot.underlying_price, # raw current underlying price
     # optional:
     # risk_free_rate_mode="annualized",  # default
-    # dividend_yield=0.01,
 )
 ```
 
@@ -139,12 +146,6 @@ Migration note:
 - replace old `days_to_expiry` metadata reads with
   `calendar_days_to_expiry` if you intended integer calendar-bucket semantics
 
-If you use explicit dividends in the Black-Scholes path, `dividend_schedule`
-supports both date-only and timestamp-style `ex_date` values. Same-day timing
-matters: an ex-dividend timestamp after `valuation_date` is included in pricing,
-while one before `valuation_date` is excluded. Date-only dividend rows keep the
-current midnight semantics for backwards compatibility.
-
 Timezone display redesign is still out of scope for this cycle. Intraday
 arithmetic is supported, but timezone-aware display semantics are unchanged.
 
@@ -177,14 +178,29 @@ vol_surface.fit(chain, market)  # chain contains multiple expiries
 prob_surface = vol_surface.implied_distribution()
 ```
 
-### 2.4 Black-76 forward inference metadata
+### 2.4 Forward inference, carry, and Greeks
 
-For Black-76 fits, OIPD infers the stored `forward_price` from same-strike
-put-call parity across valid call/put pairs. Internally retained fit diagnostics
-include a `parity_report` with pair counts, confidence, outlier counts, and the
-strikes used or excluded during the forward estimate. The public diagnostics
-surface for this report is still stabilizing, so treat it as debugging metadata
-rather than a stable user-facing API.
+The public workflow fits in Black-76 forward space. OIPD infers the stored
+`forward_price` from same-strike put-call parity across usable call/put pairs.
+That means each fitted expiry needs both calls and puts at matching strikes
+with usable prices. Call-only or put-only chains are not enough for the main
+public workflow.
+
+The gap between `underlying_price` and the parity-implied forward is best read
+as `forward-implied carry` or `dividend-equivalent carry`. It is useful model
+metadata, but it is not a clean dividend forecast. Treat it with extra caution
+for American single-name or ETF options, special dividends, hard-to-borrow
+names, sparse quotes, stale quotes, and raw-versus-adjusted spot mismatches.
+
+Internally retained fit diagnostics include a `parity_report` with pair counts,
+confidence, outlier counts, liquidity indicators, and the strikes used or
+excluded during the forward estimate. The public diagnostics surface for this
+report is still stabilizing, so treat it as debugging metadata rather than a
+stable user-facing API.
+
+Prices and Greeks reported by `VolCurve` and `VolSurface` are Black-76 outputs.
+For Greeks, delta is a forward delta: it is sensitivity to the inferred forward
+price, not necessarily the same object as cash-equity spot delta.
 
 ### 2.5 Warning diagnostics
 
@@ -283,11 +299,11 @@ p_below_240 = prob_curve_slice.prob_below(240)
 | **Calibration** | `fit(chain, market)` | Calibrate model to one expiry. | `fit(chain, market)` | Calibrate multiple expiries. |
 | **Implied Volatility** | `implied_vol(K)` | Get $\sigma$ for strike $K$. | `implied_vol(K, t)` | Get $\sigma$ for strike $K$ and time $t$. |
 | **Total Variance** | `total_variance(K)` | Get $w = \sigma^2 t$. | `total_variance(K, t)` | Get $w = \sigma^2 t$ (interpolated). |
-| **Option Pricing** | `price(K, call_put)` | Theoretical option price. | `price(K, t, call_put)` | Price at arbitrary time $t$. |
+| **Option Pricing** | `price(K, call_put)` | Black-76 theoretical option price. | `price(K, t, call_put)` | Black-76 price at arbitrary time $t$. |
 | **ATM Volatility** | `atm_vol` (property) | ATM Vol level. | `atm_vol(t)` | ATM Vol term structure at $t$. |
 | **Forward Price** | `forward_price` (property) | Parity-implied forward $F$. | `forward_price(t)` | Interpolated forward $F(t)$. |
-| **Greeks (Bulk)** | `greeks(K)` | DataFrame of all Greeks. | `greeks(K, t)` | DataFrame of interpolated Greeks. |
-| **Individual Greeks** | `delta`, `gamma`, `vega`... | Partials w.r.t $S, \sigma, t, r$. | `delta`, `gamma`, `vega`... | Interpolated Greeks at $(K, t)$. |
+| **Greeks (Bulk)** | `greeks(K)` | DataFrame of forward-space Black-76 Greeks. | `greeks(K, t)` | DataFrame of interpolated forward-space Greeks. |
+| **Individual Greeks** | `delta`, `gamma`, `vega`... | Partials w.r.t. forward $F$, $\sigma$, $t$, and $r$. | `delta`, `gamma`, `vega`... | Interpolated Greeks at $(K, t)$. |
 | **Calibration Data** | `iv_results(domain=None, points=200, include_observed=True)` | Single-slice DataFrame of fitted IV vs observed quotes on a configurable strike grid. | `iv_results(domain=None, points=200, include_observed=True, start=None, end=None, step_days=1)` | Long-format IV export on a daily grid by default; omitted `start`/`end` use the first/last fitted pillar and fitted pillars are always preserved. |
 | **Parameters** | `params` | Fitted coeffs (SVI `a, b...`). | `params` (dict) | Dict of `{expiry: params}`. |
 | **Slicing** | | | `slice(expiry)` | Extract a `VolCurve` snapshot. |

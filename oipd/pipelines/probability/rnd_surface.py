@@ -175,7 +175,7 @@ def derive_surface_slice_probability(
     prices, pdf_values, cdf_values, metadata = derive_distribution_from_curve(
         vol_curve._vol_curve,
         resolved_market,
-        pricing_engine=vol_curve.pricing_engine,
+        pricing_engine=vol_curve._pricing_engine,
         vol_metadata=vol_curve._metadata,
         points=points,
         cdf_violation_policy=cdf_violation_policy,

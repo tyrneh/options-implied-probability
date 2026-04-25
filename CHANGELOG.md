@@ -41,6 +41,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   spot handling, and lowercase `volume` preservation.
 - Fixed SVI weighting so reliable bid/ask spreads take precedence over volume,
   with diagnostics for the chosen auxiliary weight source and fallback reason.
+- Simplified the public volatility/probability API by hiding legacy
+  Black-Scholes, Newton solver, and explicit dividend-input knobs; default fits
+  remain parity-forward Black-76.
 
 ## [2.0.3]
 ### Changed

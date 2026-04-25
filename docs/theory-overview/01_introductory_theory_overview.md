@@ -44,7 +44,7 @@ Using the Breeden-Litzenberger method, the risk-neutral probability density is c
 Market quotes are noisy and come in discrete increments, which make them unsuitable for numerical differentiation. Instead, we must build a continuous model of theoretical call prices at any strike price, fitted to observed data. We model **implied volatility** instead of option prices directly because IV is the key input to the pricing model, while prices are a noisier output.
 
 ### 2.1. Implied Volatility (IV)
-Implied volatility is the market's expectation of future price movements of a security. It is the volatility value that, when plugged into an options pricing model (like Black-Scholes), yields the option's current market price. High IV suggests the market expects significant price swings, while low IV implies a period of relative calm.
+Implied volatility is the market's expectation of future price movements of a security. It is the volatility value that, when plugged into an options pricing model, yields the option's current market price. High IV suggests the market expects significant price swings, while low IV implies a period of relative calm.
 
 ### 2.2. The Volatility Smile & Surface
 *   **Smile:** IV is lowest for at-the-money (ATM) options and increases for both in-the-money (ITM) and out-of-the-money (OTM) options. By plotting IVs against strikes, a "smile" pattern is often observed. 
@@ -61,4 +61,4 @@ Implied volatility is the market's expectation of future price movements of a se
 </p>
 
 
-A popular academic model used to fit an IV smile is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. Once we fit the IV surface, we can plug the theoretical IV back into an option pricing model (like Black-Scholes) to determine the price of a call option. Finally, we have a smooth and continuous model of call prices, and this allows us to cleanly take the numerical second derivative. 
+A popular academic model used to fit an IV smile is the **SVI (Stochastic Volatility Inspired)** model. This is the model OIPD relies on. Once we fit the IV surface, we can plug the theoretical IV back into OIPD's forward-space pricing path to determine the price of a call option. Finally, we have a smooth and continuous model of call prices, and this allows us to cleanly take the numerical second derivative.

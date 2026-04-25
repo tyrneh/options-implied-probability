@@ -14,6 +14,15 @@ The notebooks below mirror the workflows in the User Guide.
 `MarketInputs.valuation_date` accepts both dates and datetimes. For intraday
 precision when using vendor data, prefer `snapshot.asof`.
 
+The examples use the simplified public workflow:
+
+- option chains should contain usable same-strike call/put pairs for each
+  expiry you want to fit, because OIPD infers forwards from put-call parity
+- `underlying_price` should be the raw, unadjusted current underlying price in
+  the same units as the option strikes
+- forward-implied carry is model metadata, not a clean dividend forecast
+- volatility prices and Greeks are Black-76 forward-space outputs
+
 Object-model contract used throughout the examples:
 
 - `valuation_date` remains the public field name and stores the canonical
@@ -40,6 +49,4 @@ Migration note:
 - old `days_to_expiry` metadata reads should move to
   `calendar_days_to_expiry` if integer calendar-bucket semantics were intended
 
-If you provide a Black-Scholes `dividend_schedule`, its `ex_date` column can
-also be date-only or full timestamp values. Same-day timestamp ordering matters
-for pricing. Timezone display redesign remains out of scope for this cycle.
+Timezone display redesign remains out of scope for this cycle.

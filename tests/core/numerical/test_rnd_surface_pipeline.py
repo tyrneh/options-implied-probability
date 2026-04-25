@@ -76,7 +76,7 @@ def fitted_surface() -> VolSurface:
         underlying_price=100.0,
         risk_free_rate=0.05,
     )
-    surface = VolSurface(pricing_engine="bs")
+    surface = VolSurface()
     surface.fit(_build_multi_expiry_chain(), market)
     return surface
 

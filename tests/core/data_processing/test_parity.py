@@ -249,6 +249,14 @@ def _row_quote_pair(
     return pd.DataFrame(rows)
 
 
+def _assert_parity_forward_requirement_message(message: str) -> None:
+    """Assert parity-forward failures do not suggest legacy pricing fallbacks."""
+    assert "usable same-strike call/put pairs" in message
+    assert "parity-forward inference" in message
+    assert "Black-Scholes" not in message
+    assert "dividend" not in message.lower()
+
+
 class TestDetectParityOpportunity:
     """Test detection of when parity preprocessing would be beneficial."""
 
@@ -860,11 +868,12 @@ class TestPreprocessWithParity:
         """Zero-valid-pair preprocessing should fail instead of fallback silently."""
         df = _zero_valid_pair_options_data()
 
-        with pytest.raises(
-            ValueError,
-            match="Put-call parity preprocessing could not infer a forward",
-        ):
+        with pytest.raises(ValueError) as exc_info:
             preprocess_with_parity(df, 100.0, 1.0)
+
+        message = str(exc_info.value)
+        assert "Put-call parity preprocessing could not infer a forward" in message
+        _assert_parity_forward_requirement_message(message)
 
     def test_preprocess_fallback_on_error(self, monkeypatch):
         """Test that preprocessing falls back gracefully on errors."""

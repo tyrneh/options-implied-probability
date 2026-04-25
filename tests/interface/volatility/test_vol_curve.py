@@ -167,6 +167,14 @@ def _black76_wide_call_put_chain(*, forward_price: float = 100.0) -> pd.DataFram
     )
 
 
+def _assert_public_parity_requirement_message(message: str) -> None:
+    """Assert public parity errors describe the new data requirement."""
+    assert "usable same-strike call/put pairs" in message
+    assert "parity-forward inference" in message
+    assert "Black-Scholes" not in message
+    assert "dividend" not in message.lower()
+
+
 @pytest.fixture
 def same_day_intraday_chain():
     """Single-expiry chain whose expiry is later on the valuation day."""
@@ -286,9 +294,18 @@ class TestVolCurveFit:
         vc = VolCurve()
         vc.fit(sample_option_chain, market_inputs)
 
-        parity_report = vc._metadata["parity_report"]
+        metadata = vc.metadata
+        parity_report = metadata["parity_report"]
+        assert metadata["forward_price_source"] == "put_call_parity"
+        assert parity_report["confidence"] in {
+            "robust",
+            "low_two_pairs",
+            "low_single_pair",
+        }
         assert parity_report["valid_pair_count"] >= 3
         assert parity_report["pairs_used_count"] >= 1
+        assert "outlier_count" in parity_report
+        assert "quote_liquidity_confidence" in parity_report
 
     def test_black76_forward_price_metadata_marks_put_call_parity_source(
         self, sample_option_chain, market_inputs
@@ -382,16 +399,51 @@ class TestVolCurveFit:
             }
         )
 
-        with pytest.raises(
-            ValueError,
-            match="Put-call parity preprocessing could not infer a forward",
-        ):
+        with pytest.raises(ValueError) as exc_info:
             VolCurve().fit(chain, market_inputs)
 
-    def test_bs_fit_does_not_mark_spot_forward_as_parity_sourced(
+        message = str(exc_info.value)
+        assert "Put-call parity preprocessing could not infer a forward" in message
+        _assert_public_parity_requirement_message(message)
+
+    @pytest.mark.parametrize(
+        "chain_builder",
+        [
+            pytest.param(
+                lambda chain: chain[
+                    chain["option_type"].astype(str).str.upper().str[0] == "C"
+                ].copy(),
+                id="call_only",
+            ),
+            pytest.param(
+                lambda chain: chain.assign(
+                    strike=np.where(
+                        chain["option_type"].astype(str).str.upper().str[0] == "P",
+                        chain["strike"].to_numpy(dtype=float) + 0.5,
+                        chain["strike"].to_numpy(dtype=float),
+                    )
+                ),
+                id="no_same_strike_puts",
+            ),
+        ],
+    )
+    def test_missing_same_strike_pairs_fail_with_public_parity_requirement(
+        self, sample_option_chain, market_inputs, chain_builder
+    ):
+        """Public fits require usable same-strike call/put pairs."""
+        from oipd import VolCurve
+
+        chain = chain_builder(sample_option_chain)
+
+        with pytest.raises(Exception) as exc_info:
+            VolCurve().fit(chain, market_inputs)
+
+        _assert_public_parity_requirement_message(str(exc_info.value))
+
+    def test_constructor_rejects_pricing_engine_override(
         self, sample_option_chain, market_inputs
     ):
-        """BS metadata should not label stored spot/effective spot as parity forward.
+        """VolCurve no longer accepts public pricing-engine selection.
 
         Args:
             sample_option_chain: Row-format same-expiry option chain.
@@ -399,11 +451,8 @@ class TestVolCurveFit:
         """
         from oipd import VolCurve
 
-        vc = VolCurve(pricing_engine="bs")
-        vc.fit(sample_option_chain, market_inputs)
-
-        assert "parity_report" in vc._metadata
-        assert "forward_price_source" not in vc._metadata
+        with pytest.raises(TypeError, match="pricing_engine"):
+            VolCurve(pricing_engine="bs")  # type: ignore[call-arg]
 
     def test_fit_populates_atm_vol(self, sample_option_chain, market_inputs):
         """fit() populates ATM volatility."""
@@ -421,10 +470,10 @@ class TestVolCurveFit:
         """SVI fit metadata reports bid/ask measurement weighting over volume."""
         from oipd import VolCurve
 
-        chain = sample_option_chain[sample_option_chain["option_type"] == "C"].copy()
+        chain = sample_option_chain.copy()
         chain["volume"] = np.linspace(100.0, 500.0, len(chain))
 
-        vc = VolCurve(method="svi", pricing_engine="bs")
+        vc = VolCurve(method="svi")
         vc.method_options = {
             "random_seed": 42,
             "global_solver": "none",
@@ -512,52 +561,37 @@ class TestVolCurveFit:
         )
         assert vc.atm_vol > 0.0
 
-    def test_bs_fit_accepts_timestamp_dividend_schedule(
-        self, same_day_intraday_chain, timestamp_dividend_schedules
+    def test_public_market_inputs_reject_timestamp_dividend_schedule(
+        self, timestamp_dividend_schedules
     ):
-        """BS fits should accept timestamped dividend schedules without crashing."""
+        """Explicit dividend schedules are no longer accepted publicly."""
+        from oipd import MarketInputs
+
+        with pytest.raises(TypeError, match="dividend_schedule"):
+            MarketInputs(
+                valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
+                underlying_price=100.0,
+                risk_free_rate=0.05,
+                dividend_schedule=timestamp_dividend_schedules["after"],
+            )
+
+    def test_public_fit_uses_parity_forward_without_dividend_timing_input(
+        self, same_day_intraday_chain
+    ):
+        """Public fits use parity-implied forwards without dividend inputs."""
         from oipd import MarketInputs, VolCurve
 
-        market_intraday = MarketInputs(
+        market = MarketInputs(
             valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
             underlying_price=100.0,
             risk_free_rate=0.05,
-            dividend_schedule=timestamp_dividend_schedules["after"],
         )
 
-        vc = VolCurve(pricing_engine="bs")
-        vc.fit(same_day_intraday_chain, market_intraday)
+        curve = VolCurve().fit(same_day_intraday_chain, market)
 
-        assert vc.forward_price is not None
-        assert vc.atm_vol > 0.0
-
-    def test_bs_fit_distinguishes_same_day_dividend_timing(
-        self, same_day_intraday_chain, timestamp_dividend_schedules
-    ):
-        """BS fits should change when the dividend is before vs after valuation."""
-        from oipd import MarketInputs, VolCurve
-
-        market_before = MarketInputs(
-            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
-            underlying_price=100.0,
-            risk_free_rate=0.05,
-            dividend_schedule=timestamp_dividend_schedules["before"],
-        )
-        market_after = MarketInputs(
-            valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
-            underlying_price=100.0,
-            risk_free_rate=0.05,
-            dividend_schedule=timestamp_dividend_schedules["after"],
-        )
-
-        curve_before = VolCurve(pricing_engine="bs").fit(
-            same_day_intraday_chain, market_before
-        )
-        curve_after = VolCurve(pricing_engine="bs").fit(
-            same_day_intraday_chain, market_after
-        )
-
-        assert curve_before.forward_price != pytest.approx(curve_after.forward_price)
+        assert curve.forward_price is not None
+        assert curve.atm_vol > 0.0
+        assert curve._metadata["forward_price_source"] == "put_call_parity"
 
 
 # =============================================================================

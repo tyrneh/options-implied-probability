@@ -18,7 +18,7 @@ from oipd.core.probability_density_conversion import (
     price_curve_from_iv,
     pdf_from_price_curve,
 )
-from oipd.market_inputs import MarketInputs, resolve_market
+from oipd.market_inputs import MarketInputs, _resolve_market_with_dividends
 
 
 def _discounted_cashflow(amount: float, r: float, tau_years: float) -> float:
@@ -305,12 +305,16 @@ def test_prepare_dividends_includes_cashflow_at_valuation_and_expiry_boundaries(
     assert effective_q == pytest.approx(0.0)
 
 
-def test_resolve_market_normalizes_dividend_schedule_timestamps_and_amounts():
-    """resolve_market should canonicalize dividend schedule schema without filtering."""
+def test_internal_resolver_normalizes_dividend_schedule_timestamps_and_amounts():
+    """Internal dividend resolver should canonicalize schedules without filtering."""
     inputs = MarketInputs(
         valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
         underlying_price=100.0,
         risk_free_rate=0.05,
+    )
+
+    resolved_market = _resolve_market_with_dividends(
+        inputs,
         dividend_schedule=pd.DataFrame(
             {
                 "ex_date": ["2025-01-01T12:00:00-05:00", "2025-01-02"],
@@ -319,7 +323,6 @@ def test_resolve_market_normalizes_dividend_schedule_timestamps_and_amounts():
         ),
     )
 
-    resolved_market = resolve_market(inputs)
     schedule = resolved_market.dividend_schedule
 
     assert schedule is not None
@@ -328,28 +331,31 @@ def test_resolve_market_normalizes_dividend_schedule_timestamps_and_amounts():
         pd.Timestamp("2025-01-02 00:00:00"),
     ]
     assert schedule["amount"].to_list() == pytest.approx([1.5, 2.0])
+    assert resolved_market.provenance.dividends == "user_schedule"
 
 
 @pytest.mark.parametrize("bad_amount", [None, np.nan])
-def test_resolve_market_rejects_non_finite_dividend_amounts(bad_amount):
-    """resolve_market should reject missing or non-finite dividend amounts."""
+def test_internal_resolver_rejects_non_finite_dividend_amounts(bad_amount):
+    """Internal dividend resolver should reject missing or non-finite amounts."""
     inputs = MarketInputs(
         valuation_date=pd.Timestamp("2025-01-01 09:30:00"),
         underlying_price=100.0,
         risk_free_rate=0.05,
-        dividend_schedule=pd.DataFrame(
-            {
-                "ex_date": [pd.Timestamp("2025-01-02 00:00:00")],
-                "amount": [bad_amount],
-            }
-        ),
     )
 
     with pytest.raises(
         ValueError,
         match="dividend_schedule amount values must be finite",
     ):
-        resolve_market(inputs)
+        _resolve_market_with_dividends(
+            inputs,
+            dividend_schedule=pd.DataFrame(
+                {
+                    "ex_date": [pd.Timestamp("2025-01-02 00:00:00")],
+                    "amount": [bad_amount],
+                }
+            ),
+        )
 
 
 def test_black76_round_trip():

@@ -141,10 +141,28 @@ def _derive_direct_probability_arrays(vol_curve, *, points: int | None = None):
     return derive_distribution_from_curve(
         vol_curve._vol_curve,
         vol_curve.resolved_market,
-        pricing_engine=vol_curve.pricing_engine,
+        pricing_engine=vol_curve._pricing_engine,
         vol_metadata=vol_curve._metadata,
         points=points,
     )
+
+
+def _assert_public_parity_requirement_message(message: str) -> None:
+    """Assert public parity errors describe the required option coverage."""
+    assert "usable same-strike call/put pairs" in message
+    assert "parity-forward inference" in message
+    assert "Black-Scholes" not in message
+    assert "dividend" not in message.lower()
+
+
+def _append_call_only_expiry(chain: pd.DataFrame) -> pd.DataFrame:
+    """Append one expiry with calls but no same-strike put pairs."""
+    call_mask = chain["option_type"].astype(str).str.upper().str[0] == "C"
+    bad_calls = chain.loc[call_mask].copy()
+    first_expiry = pd.Timestamp(chain["expiry"].iloc[0])
+    bad_calls = bad_calls[pd.to_datetime(bad_calls["expiry"]) == first_expiry].copy()
+    bad_calls["expiry"] = pd.Timestamp("2025-07-21")
+    return pd.concat([chain, bad_calls], ignore_index=True)
 
 
 def _build_repriced_multi_expiry_chain(
@@ -299,7 +317,7 @@ def fitted_vol_surface(multi_expiry_chain, market_inputs):
     """A pre-fitted VolSurface for deriving probability surface."""
     from oipd import VolSurface
 
-    vs = VolSurface(pricing_engine="bs")
+    vs = VolSurface()
     vs.fit(multi_expiry_chain, market_inputs)
     return vs
 
@@ -359,9 +377,7 @@ class TestProbSurfaceLazyMaterialization:
             pd.to_datetime(multi_expiry_chain["expiry"]) == pd.Timestamp(first_expiry)
         ]
         prob_curve = (
-            VolCurve(pricing_engine="bs")
-            .fit(single_expiry_chain, market_inputs)
-            .implied_distribution()
+            VolCurve().fit(single_expiry_chain, market_inputs).implied_distribution()
         )
 
         assert materialization_calls == 0
@@ -538,7 +554,7 @@ class TestProbSurfaceLazyMaterialization:
         """Existing ProbSurface should not change after its source VolSurface is refit."""
         from oipd import VolSurface
 
-        vol_surface = VolSurface(pricing_engine="bs")
+        vol_surface = VolSurface()
         vol_surface.fit(multi_expiry_chain, market_inputs)
         prob_surface = vol_surface.implied_distribution()
 
@@ -647,6 +663,31 @@ class TestProbSurfaceFromChain:
         assert len(prob.expiries) == 2
         assert pd.Timestamp("2025-07-21") not in prob.expiries
 
+    def test_from_chain_skip_warn_records_missing_parity_pairs_in_diagnostics(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Skipped probability-surface expiries should expose parity requirements."""
+        from oipd import ProbSurface
+        from oipd.warnings import WorkflowWarning
+
+        chain = _append_call_only_expiry(multi_expiry_chain)
+
+        with pytest.warns(
+            WorkflowWarning,
+            match=r"VolSurface\.fit recorded 1 workflow warning event",
+        ):
+            prob = ProbSurface.from_chain(chain, market_inputs)
+
+        skipped_events = [
+            event
+            for event in prob.warning_diagnostics.events
+            if event.event_type == "skipped_expiry"
+        ]
+        assert len(skipped_events) == 1
+        _assert_public_parity_requirement_message(
+            str(skipped_events[0].details["reason"])
+        )
+
     def test_from_chain_raise_policy_suggests_skip_warn(
         self, mixed_quality_multi_expiry_chain, market_inputs
     ):
@@ -660,6 +701,29 @@ class TestProbSurfaceFromChain:
                 market_inputs,
                 failure_policy="raise",
             )
+
+    def test_from_chain_raise_policy_missing_parity_pairs_uses_public_requirement(
+        self, multi_expiry_chain, market_inputs
+    ):
+        """Strict probability-surface fits should expose parity requirements."""
+        from oipd import ProbSurface
+        from oipd.core.errors import CalculationError
+
+        chain = _append_call_only_expiry(multi_expiry_chain)
+        bad_expiry = pd.Timestamp("2025-07-21")
+        keep_expiries = [multi_expiry_chain["expiry"].iloc[0], bad_expiry]
+        chain = chain[pd.to_datetime(chain["expiry"]).isin(keep_expiries)]
+
+        with pytest.raises(CalculationError) as exc_info:
+            ProbSurface.from_chain(
+                chain,
+                market_inputs,
+                failure_policy="raise",
+            )
+
+        message = str(exc_info.value)
+        _assert_public_parity_requirement_message(message)
+        assert "failure_policy='skip_warn'" in message
 
     def test_from_chain_invalid_failure_policy_raises(
         self, multi_expiry_chain, market_inputs
@@ -750,6 +814,53 @@ class TestProbSurfaceSlice:
         resolved_market = curve.resolved_market
         assert resolved_market is not None
         assert hasattr(resolved_market, "valuation_date")
+
+    @pytest.mark.parametrize(
+        "expiry_kind, expected_source",
+        [
+            pytest.param("pillar", "put_call_parity", id="pillar"),
+            pytest.param(
+                "interpolated",
+                "surface_interpolation",
+                id="interpolated",
+            ),
+        ],
+    )
+    def test_slice_metadata_exposes_forward_source_lineage(
+        self,
+        prob_surface,
+        expiry_kind,
+        expected_source,
+    ):
+        """Probability slices should preserve volatility forward diagnostics."""
+        expiry = (
+            prob_surface.expiries[0]
+            if expiry_kind == "pillar"
+            else INTERIOR_INTERPOLATED_EXPIRY
+        )
+
+        metadata = prob_surface.slice(expiry).metadata
+
+        assert metadata["forward_price_source"] == expected_source
+        if expiry_kind == "pillar":
+            parity_report = metadata["parity_report"]
+            assert parity_report["confidence"] in {
+                "robust",
+                "low_two_pairs",
+                "low_single_pair",
+            }
+            assert parity_report["valid_pair_count"] >= 1
+            assert "outlier_count" in parity_report
+            assert "quote_liquidity_confidence" in parity_report
+            return
+
+        source_forward_pillars = metadata["source_forward_pillars"]
+        assert len(source_forward_pillars) == 2
+        assert all(
+            pillar["forward_price_source"] == "put_call_parity"
+            for pillar in source_forward_pillars
+        )
+        assert all("parity_report" in pillar for pillar in source_forward_pillars)
 
     def test_slice_matches_direct_probcurve_for_pillar_expiry(
         self, fitted_vol_surface, prob_surface_with_native_resolution

@@ -23,7 +23,6 @@ def market_inputs():
         valuation_date=date(2025, 1, 1),
         risk_free_rate=0.05,
         underlying_price=100.0,
-        dividend_yield=0.02,
     )
 
 
