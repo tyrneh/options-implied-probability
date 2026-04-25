@@ -37,8 +37,8 @@ def infer_forward_from_atm(
     pairs with robust aggregation when enough pairs are available.
 
     Args:
-        options_df: Option quotes containing either ``call_price`` and ``put_price``
-            columns or rows distinguished by an ``option_type`` column.
+        options_df: Long-form option quotes containing ``strike``, ``last_price``,
+            and rows distinguished by an ``option_type`` column.
         underlying_price: Observed underlying spot price used to rank strikes in
             diagnostics and low-pair compatibility paths.
         discount_factor: Present-value discount factor :math:`\\exp(-rT)`.
@@ -66,7 +66,6 @@ def infer_forward_from_atm(
         max_bid_ask_relative_spread=max_bid_ask_relative_spread,
     )
 
-
 def infer_forward_from_put_call_parity(
     options_df: pd.DataFrame,
     underlying_price: float,
@@ -82,8 +81,8 @@ def infer_forward_from_put_call_parity(
     cases still return a forward but emit a low-confidence warning.
 
     Args:
-        options_df: Option quotes containing either explicit ``call_price`` and
-            ``put_price`` columns or rows distinguished by an ``option_type`` column.
+        options_df: Long-form option quotes distinguished by an ``option_type``
+            column and priced with bid/ask, ``mid``, or ``last_price`` columns.
         underlying_price: Observed underlying spot price used to rank strikes in
             diagnostics and low-pair compatibility paths.
         discount_factor: Present-value discount factor :math:`\\exp(-rT)`.
@@ -126,8 +125,8 @@ def _infer_forward_from_put_call_parity_with_report(
     """Infer the forward price and return parity diagnostics.
 
     Args:
-        options_df: Option quotes containing either explicit ``call_price`` and
-            ``put_price`` columns or rows distinguished by an ``option_type`` column.
+        options_df: Long-form option quotes distinguished by an ``option_type``
+            column and priced with bid/ask, ``mid``, or ``last_price`` columns.
         underlying_price: Observed underlying spot price used to rank strikes by ATM
             proximity for legacy low-pair inference.
         discount_factor: Present-value discount factor :math:`\\exp(-rT)`.
@@ -769,7 +768,8 @@ def _collect_forward_candidate_pairs(
     """Collect viable same-strike call-put pairs for forward inference.
 
     Args:
-        options_df: Option quotes in one of the supported parity formats.
+        options_df: Long-form option quotes with an ``option_type`` column and a
+            supported row price source.
         underlying_price: Observed underlying spot price used to rank candidate
             strikes by ATM proximity.
 
@@ -780,12 +780,6 @@ def _collect_forward_candidate_pairs(
     Raises:
         ValueError: If the structure of ``options_df`` is not recognised.
     """
-    if {"call_price", "put_price"}.issubset(options_df.columns):
-        return _collect_wide_forward_candidate_pairs(
-            options_df=options_df,
-            underlying_price=underlying_price,
-        )
-
     if _has_supported_row_price_columns(options_df):
         return _collect_row_forward_candidate_pairs(
             options_df=options_df,
@@ -793,8 +787,8 @@ def _collect_forward_candidate_pairs(
         )
 
     raise ValueError(
-        "Expected DataFrame with either (call_price, put_price) columns or "
-        "option_type rows with bid/ask, mid, or last_price columns."
+        "Expected long-form option quotes with 'option_type' and bid/ask, "
+        "'mid', or 'last_price' columns."
     )
 
 
@@ -1479,9 +1473,8 @@ def apply_put_call_parity_to_quotes(
     """Convert quotes into one synthetic call per strike via parity.
 
     Args:
-        options_df: Option quotes containing either separate call/put columns or
-            rows distinguished by ``option_type`` and priced with bid/ask, ``mid``,
-            or ``last_price`` columns.
+        options_df: Long-form option quotes with an ``option_type`` column and
+            bid/ask, ``mid``, or ``last_price`` prices.
         forward_price: Forward price inferred for the valuation date.
         discount_factor: Present-value discount factor :math:`\\exp(-rT)`.
 
@@ -1494,26 +1487,7 @@ def apply_put_call_parity_to_quotes(
     """
     results: list[dict[str, float | str]] = []
 
-    if {"call_price", "put_price"}.issubset(options_df.columns):
-        for _, row in options_df.iterrows():
-            strike = float(row["strike"])
-            call_price = row.get("call_price")
-            call_data = row if pd.notna(call_price) and float(call_price) > 0 else None
-
-            put_price = row.get("put_price")
-            put_data = row if pd.notna(put_price) and float(put_price) > 0 else None
-
-            _process_strike_prices(
-                results=results,
-                strike=strike,
-                call_data=call_data,
-                put_data=put_data,
-                forward_price=forward_price,
-                discount_factor=discount_factor,
-                call_price_column="call_price",
-                put_price_column="put_price",
-            )
-    elif _has_supported_row_price_columns(options_df):
+    if _has_supported_row_price_columns(options_df):
         strikes = options_df["strike"].unique()
         for strike in strikes:
             strike_data = options_df[options_df["strike"] == strike]
@@ -1534,8 +1508,8 @@ def apply_put_call_parity_to_quotes(
             )
     else:
         raise ValueError(
-            "Expected DataFrame with either (call_price, put_price) columns or "
-            "option_type rows with bid/ask, mid, or last_price columns."
+            "Expected long-form option quotes with 'option_type' and bid/ask, "
+            "'mid', or 'last_price' columns."
         )
 
     if not results:
@@ -1572,7 +1546,7 @@ def detect_parity_opportunity(options_df: pd.DataFrame) -> bool:
     """Check whether parity preprocessing is likely to help.
 
     Args:
-        options_df: Option quotes in either supported format.
+        options_df: Long-form option quotes with ``last_price`` and ``option_type``.
 
     Returns:
         ``True`` when at least one same-strike call-put pair with positive prices is
@@ -1595,7 +1569,7 @@ def _has_parity_opportunity(
     """Check for at least one coherently priced same-strike call-put pair.
 
     Args:
-        options_df: Option quotes in either supported format.
+        options_df: Long-form option quotes with an ``option_type`` column.
         min_last_leg_volume: Minimum last-price volume floor.
         max_bid_ask_relative_spread: Maximum bid/ask relative spread.
 
@@ -1606,20 +1580,6 @@ def _has_parity_opportunity(
         return False
 
     try:
-        if {"call_price", "put_price"}.issubset(options_df.columns):
-            candidate_pairs = _collect_wide_forward_candidate_pairs(
-                options_df=options_df,
-                underlying_price=0.0,
-            )
-            return any(
-                _select_forward_price_pair(
-                    pair=pair,
-                    min_last_leg_volume=min_last_leg_volume,
-                    max_bid_ask_relative_spread=max_bid_ask_relative_spread,
-                )["valid"]
-                for pair in candidate_pairs
-            )
-
         if _has_supported_row_price_columns(options_df):
             candidate_pairs = _collect_row_forward_candidate_pairs(
                 options_df=options_df,
@@ -1651,7 +1611,7 @@ def preprocess_with_parity(
     """Produce parity-adjusted quotes when beneficial.
 
     Args:
-        options_df: Option quotes in either supported format.
+        options_df: Long-form option quotes with ``last_price`` and ``option_type``.
         underlying_price: Observed underlying spot price.
         discount_factor: Present-value discount factor :math:`\\exp(-rT)`.
         max_forward_pairs: Maximum number of nearest-ATM valid parity pairs to use.
@@ -1675,6 +1635,13 @@ def preprocess_with_parity(
         max_bid_ask_relative_spread
     )
 
+    has_wide_price_columns = bool({"call_price", "put_price"} & set(options_df.columns))
+    if has_wide_price_columns and not _has_supported_row_price_columns(options_df):
+        raise ValueError(
+            "Expected long-form option quotes with 'option_type' and bid/ask, "
+            "'mid', or 'last_price' columns."
+        )
+
     if not _has_parity_opportunity(
         options_df=options_df,
         min_last_leg_volume=min_last_leg_volume,
@@ -1692,9 +1659,6 @@ def preprocess_with_parity(
                 result["mid"] = calculated_mid
             return result
         if "last_price" in options_df.columns:
-            return result
-        if "call_price" in options_df.columns:
-            result["last_price"] = result["call_price"]
             return result
         raise ValueError("No usable price data found in options DataFrame.")
 
@@ -1728,10 +1692,6 @@ def preprocess_with_parity(
         )
         if "last_price" in options_df.columns:
             return options_df
-        if "call_price" in options_df.columns:
-            result = options_df.copy()
-            result["last_price"] = result["call_price"]
-            return result
         raise ValueError("No usable price data found in options DataFrame.")
 
 
@@ -1747,8 +1707,8 @@ def apply_put_call_parity(
     """Apply parity preprocessing and infer a forward price when possible.
 
     Args:
-        options_data: Option chain quotes, expected to include either bid/ask pairs
-            or explicit call/put columns.
+        options_data: Long-form option chain quotes with ``last_price`` and
+            ``option_type`` columns. Optional bid/ask pairs are used when present.
         spot: Observed spot price of the underlying asset.
         resolved_market: Fully resolved market snapshot providing risk-free rate
             and time-to-expiry.

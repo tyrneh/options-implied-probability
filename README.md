@@ -200,7 +200,11 @@ curve.kurtosis()
 
 
 
-OIPD also **supports manual CSV or DataFrame uploads**. 
+OIPD also **supports manual CSV or DataFrame uploads**. Manual inputs should be
+long-form option chains with one row per contract and standard columns
+`strike`, `expiry`, `option_type`, and `last_price`; see the
+[user guide](docs/3_user-guide.md#21-load-option-data) for the full input
+schema and column-mapping example.
 
 See [more examples](examples/) for demos.
 
