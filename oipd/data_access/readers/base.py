@@ -148,9 +148,13 @@ class AbstractReader(ABC):
                 )
                 raw_data["strike"] = strike_as_string
 
-        price_columns = {"last_price", "mid", "bid", "ask", "call_price", "put_price"}
+        price_columns = {"last_price", "mid", "bid", "ask"}
         present_price_columns = price_columns & set(raw_data.columns)
-        columns_to_clean = required_columns | present_optional | present_price_columns
+        # Clean numeric columns only. ``last_trade_date`` is date-like metadata
+        # used downstream for staleness filtering and must remain parseable.
+        columns_to_clean = (
+            required_columns | present_optional | present_price_columns
+        ) - {"last_trade_date"}
 
         for col in columns_to_clean:
             # Handle string columns that might have commas in numbers

@@ -22,8 +22,12 @@ def from_csv(
     Args:
         path: Path to the CSV file.
         column_mapping: Optional mapping from CSV columns to OIPD standard names.
-            Standard names: 'strike', 'last_price', 'bid', 'ask', 'volume',
-            'open_interest', 'expiry', 'option_type'.
+            Required standard names for fit-ready local input are ``strike``,
+            ``expiry``, ``option_type``, and ``last_price``. Supported quote
+            metadata includes ``bid``, ``ask``, ``volume``, and
+            ``last_trade_date`` when available. ``bid`` and ``ask`` are useful
+            metadata but are not a standalone replacement for ``last_price`` in
+            the current input contract.
 
     Returns:
         pd.DataFrame: Cleaned and normalized DataFrame.
@@ -42,6 +46,12 @@ def from_dataframe(
     Args:
         df: Input DataFrame.
         column_mapping: Optional mapping from input columns to OIPD standard names.
+            Required standard names for fit-ready local input are ``strike``,
+            ``expiry``, ``option_type``, and ``last_price``. Supported quote
+            metadata includes ``bid``, ``ask``, ``volume``, and
+            ``last_trade_date`` when available. ``bid`` and ``ask`` are useful
+            metadata but are not a standalone replacement for ``last_price`` in
+            the current input contract.
 
     Returns:
         pd.DataFrame: Cleaned and normalized DataFrame.

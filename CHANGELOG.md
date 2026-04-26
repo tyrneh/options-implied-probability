@@ -37,13 +37,16 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   far-from-ATM pairs that merely pass validation.
 - Temporarily disabled the default bid/ask relative-spread gate; explicit
   `max_bid_ask_relative_spread` values still apply.
-- Added bid/ask-only and wide `call_price`/`put_price` ingestion, raw yfinance
+- Added bid/ask-only ingestion, raw yfinance
   spot handling, and lowercase `volume` preservation.
 - Fixed SVI weighting so reliable bid/ask spreads take precedence over volume,
   with diagnostics for the chosen auxiliary weight source and fallback reason.
 - Simplified the public volatility/probability API by hiding legacy
   Black-Scholes, Newton solver, and explicit dividend-input knobs; default fits
   remain parity-forward Black-76.
+
+### Removed
+- Removed wide `call_price` / `put_price` option-chain input support; use long-form rows with `option_type` and `last_price`.
 
 ## [2.0.3]
 ### Changed
