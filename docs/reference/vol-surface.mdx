@@ -1,0 +1,330 @@
+---
+title: "VolSurface"
+description: "Calibrate an implied volatility surface across multiple expiries, interpolate between pillars, and export IV results or derive probability distributions."
+---
+
+`VolSurface` calibrates individual SVI smiles for each expiry in a multi-expiry option chain and builds a total-variance interpolator across maturities. Once fitted, you can retrieve a `VolCurve` for maturities within the fitted range, including dates that fall between fitted pillars. You can also export the surface as a long-format DataFrame or derive a `ProbSurface` of risk-neutral distributions.
+
+```python
+from oipd import VolSurface
+```
+
+## Constructor
+
+```python
+VolSurface(
+    method="svi",
+    pricing_engine="black76",
+    price_method="mid",
+    max_staleness_days=3,
+)
+```
+
+<ParamField path="method" type="str" default="svi">
+  Calibration algorithm. Currently `"svi"` is the supported method.
+</ParamField>
+
+<ParamField path="pricing_engine" type="Literal['black76', 'bs']" default="black76">
+  Pricing model used for implied volatility inversion. Use `"black76"` for options on futures or forwards, and `"bs"` for spot options (Black-Scholes).
+</ParamField>
+
+<ParamField path="price_method" type="Literal['mid', 'last']" default="mid">
+  Quote type to fit against per slice. `"mid"` uses the bid-ask midpoint, falling back to `last_price` when the mid is unavailable. `"last"` fits against `last_price`.
+</ParamField>
+
+<ParamField path="max_staleness_days" type="int" default="3">
+  Maximum age of option quotes in calendar days, relative to the valuation date. Stale rows are excluded before fitting each slice.
+</ParamField>
+
+---
+
+## Methods
+
+<Accordion title="fit(chain, market, column_mapping, horizon, failure_policy)">
+Calibrate all expiries in the chain and build the surface interpolator. Returns `self` for chaining.
+
+```python
+surface.fit(
+    chain,
+    market,
+    column_mapping=None,
+    horizon=None,
+    failure_policy="skip_warn",
+)
+```
+
+<ParamField path="chain" type="pd.DataFrame" required>
+  Multi-expiry option chain DataFrame. Must contain an `expiry` column and at least two unique expiry dates after filtering.
+</ParamField>
+
+<ParamField path="market" type="MarketInputs" required>
+  Market inputs providing the risk-free rate, valuation date, and underlying price.
+</ParamField>
+
+<ParamField path="column_mapping" type="dict[str, str] | None" default="None">
+  Optional mapping in the form `{"dataframe_column": "oipd_column"}`. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+</ParamField>
+
+<ParamField path="horizon" type="str | date | pd.Timestamp | None" default="None">
+  Optional fit horizon that filters out expiries beyond the cutoff. Accepts human-readable strings like `"30d"` or `"12m"`, or an explicit date. Expiries after the cutoff are dropped before fitting.
+</ParamField>
+
+<ParamField path="failure_policy" type="Literal['skip_warn', 'raise']" default="skip_warn">
+  Slice-level failure handling policy. `"skip_warn"` skips failing expiries and continues; `"raise"` propagates the first error immediately.
+</ParamField>
+
+<ResponseField name="returns" type="VolSurface">
+  The fitted `VolSurface` instance (self).
+</ResponseField>
+
+**Raises:** `ValueError` if `failure_policy` is not a supported value. `CalculationError` if the `expiry` column is missing or invalid, if fewer than two unique expiries remain after filtering, or if calibration fails.
+
+<Note>
+`fit` requires at least two unique expiries. Pass a single-expiry chain to `VolCurve.fit` instead.
+</Note>
+</Accordion>
+
+<Accordion title="slice(expiry)">
+Return a `VolCurve` for the requested maturity. If `expiry` matches a fitted pillar exactly, the original parametric curve is returned. Otherwise, a synthetic curve is derived from the total-variance interpolator.
+
+```python
+surface.slice(expiry)
+```
+
+<ParamField path="expiry" type="str | date | pd.Timestamp" required>
+  Target expiry. Accepts ISO date strings like `"2025-06-20"`, Python `date` objects, or `pd.Timestamp`. Interpolated maturities between fitted pillars are supported.
+</ParamField>
+
+<ResponseField name="returns" type="VolCurve">
+  A `VolCurve` for the requested maturity.
+</ResponseField>
+
+**Raises:** `ValueError` if `fit` has not been called or if the maturity is outside the fitted range.
+</Accordion>
+
+<Accordion title="iv_results(domain, points, include_observed, start, end, step_days)">
+Return a long-format DataFrame of fitted IV results across expiries.
+
+```python
+surface.iv_results(
+    domain=None,
+    points=200,
+    include_observed=True,
+    start=None,
+    end=None,
+    step_days=1,
+)
+```
+
+<ParamField path="domain" type="tuple[float, float] | None" default="None">
+  Optional `(min_strike, max_strike)` range per slice.
+</ParamField>
+
+<ParamField path="points" type="int" default="200">
+  Number of fitted-curve evaluation points per expiry slice.
+</ParamField>
+
+<ParamField path="include_observed" type="bool" default="True">
+  Whether to include observed market IV columns.
+</ParamField>
+
+<ParamField path="start" type="str | date | pd.Timestamp | None" default="None">
+  Lower expiry bound. Defaults to the first fitted pillar.
+</ParamField>
+
+<ParamField path="end" type="str | date | pd.Timestamp | None" default="None">
+  Upper expiry bound. Defaults to the last fitted pillar.
+</ParamField>
+
+<ParamField path="step_days" type="int | None" default="1">
+  Calendar-day sampling interval. Fitted pillar expiries are always included. Pass `None` to export fitted pillars only.
+</ParamField>
+
+<ResponseField name="returns" type="pd.DataFrame">
+  Long-format DataFrame with an `expiry` column and per-slice IV data.
+</ResponseField>
+</Accordion>
+
+<Accordion title="total_variance(K, t)">
+Return total variance at strike `K` and maturity `t`.
+
+```python
+surface.total_variance(100, t=45 / 365)
+```
+
+<ParamField path="K" type="float" required>
+  Strike price.
+</ParamField>
+
+<ParamField path="t" type="float | str | date | pd.Timestamp" required>
+  Maturity as a year fraction or date-like value within the fitted range.
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  Total variance, defined as implied volatility squared times time to expiry.
+</ResponseField>
+</Accordion>
+
+<Accordion title="implied_vol(K, t)">
+Return the interpolated implied volatility at strike `K` and maturity `t`. `surface(K, t)` is a callable alias.
+
+```python
+surface.implied_vol(100, t=45 / 365)
+```
+
+<ResponseField name="returns" type="float">
+  Implied volatility in decimal form.
+</ResponseField>
+</Accordion>
+
+<Accordion title="forward_price(t)">
+Return the interpolated forward price at maturity `t`.
+
+```python
+surface.forward_price(t=45 / 365)
+```
+
+<ResponseField name="returns" type="float">
+  Forward price at the requested maturity.
+</ResponseField>
+</Accordion>
+
+<Accordion title="price(strikes, t, call_or_put)">
+Calculate theoretical option prices from the fitted surface.
+
+```python
+surface.price([95, 100, 105], t=45 / 365, call_or_put="call")
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ParamField path="call_or_put" type="Literal['call', 'put']" default="call">
+  Option type.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Theoretical option prices.
+</ResponseField>
+</Accordion>
+
+<Accordion title="atm_vol(t)">
+Return the at-the-money implied volatility at maturity `t`, where ATM is defined at the forward price.
+
+```python
+surface.atm_vol(t=45 / 365)
+```
+
+<ResponseField name="returns" type="float">
+  Interpolated ATM implied volatility.
+</ResponseField>
+</Accordion>
+
+<Accordion title="implied_distribution(grid_points, cdf_violation_policy)">
+Derive a `ProbSurface` from the fitted volatility surface.
+
+```python
+surface.implied_distribution(grid_points=None, cdf_violation_policy="warn")
+```
+
+<ResponseField name="returns" type="ProbSurface">
+  Risk-neutral probability surface.
+</ResponseField>
+</Accordion>
+
+<Accordion title="delta, gamma, vega, theta, rho, greeks">
+Compute Greeks at a strike grid and maturity.
+
+```python
+surface.delta(strikes, t=45 / 365, call_or_put="call")
+surface.gamma(strikes, t=45 / 365)
+surface.vega(strikes, t=45 / 365)
+surface.theta(strikes, t=45 / 365, call_or_put="call")
+surface.rho(strikes, t=45 / 365, call_or_put="call")
+surface.greeks(strikes, t=45 / 365, call_or_put="call")
+```
+
+<ResponseField name="returns" type="np.ndarray | pd.DataFrame">
+  Individual Greek methods return arrays. `greeks` returns a DataFrame with `strike`, `delta`, `gamma`, `vega`, `theta`, and `rho`.
+</ResponseField>
+</Accordion>
+
+<Accordion title="plot, plot_3d, plot_term_structure">
+Render surface plots.
+
+```python
+surface.plot()
+surface.plot_3d()
+surface.plot_term_structure()
+```
+
+<ResponseField name="returns" type="matplotlib.figure.Figure">
+  The rendered Matplotlib figure.
+</ResponseField>
+</Accordion>
+
+---
+
+## Properties
+
+<ResponseField name="expiries" type="tuple[pd.Timestamp, ...]">
+  Sorted tuple of fitted pillar expiry timestamps. Returns an empty tuple if `fit` has not been called.
+</ResponseField>
+
+<ResponseField name="warning_diagnostics" type="WarningDiagnostics">
+  Structured diagnostic events accumulated during fitting. Inspect `.warning_diagnostics.events` for data-quality issues (e.g., stale quotes, price fallbacks), model-risk warnings (butterfly arbitrage), and skipped expiries.
+</ResponseField>
+
+<ResponseField name="params" type="dict[pd.Timestamp, Any]">
+  Fitted parameter dictionary for each expiry pillar.
+</ResponseField>
+
+---
+
+## Example
+
+```python
+import numpy as np
+from oipd import VolSurface, MarketInputs, sources
+
+# 1. Fetch a multi-expiry option chain
+chain, snapshot = sources.fetch_chain("SPY", horizon="6m")
+
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date=snapshot.asof,
+    underlying_price=snapshot.underlying_price,
+)
+
+# 2. Fit the surface
+surface = VolSurface(method="svi", pricing_engine="black76")
+surface.fit(chain, market, failure_policy="skip_warn")
+
+print("Fitted expiries:", surface.expiries)
+
+# 3. Slice at a fitted pillar
+expiry = surface.expiries[0]
+curve = surface.slice(expiry)
+print("ATM vol:", curve.atm_vol)
+print("SVI params:", curve.params)
+
+# 4. Slice at an interpolated maturity between fitted pillars
+midpoint = surface.expiries[0] + (surface.expiries[1] - surface.expiries[0]) / 2
+interp_curve = surface.slice(midpoint)
+print("Interpolated ATM vol:", interp_curve.atm_vol)
+
+# 5. Export long-format IV results (pillar expiries only)
+df = surface.iv_results(step_days=None, include_observed=False)
+print(df.head())
+
+# 6. Derive the probability surface
+prob_surface = surface.implied_distribution()
+print("Prob surface expiries:", prob_surface.expiries)
+
+# 7. Review diagnostics
+diag = surface.warning_diagnostics
+print("Total warning events:", diag.summary.total_events)
+for event in diag.events:
+    print(event.event_type, event.severity, event.message)
+```

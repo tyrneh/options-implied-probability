@@ -1,0 +1,51 @@
+---
+title: "Introduction"
+description: "Learn what OIPD is and how its four core objects work together to extract market-implied probability distributions from options chains."
+---
+
+OIPD (Options Implied Probability Distribution) is a Python library that turns raw options chain data into risk-neutral probability distributions over future asset prices. It fits SVI volatility smiles to listed options, links maturities with total-variance interpolation, and transforms the fitted volatility into a full price-implied distribution.
+
+## Capabilities
+
+OIPD provides two tightly integrated capabilities in a single library:
+
+- **Probability extraction** — compute the full risk-neutral PDF and CDF over future asset prices, query tail probabilities (`prob_below`, `prob_above`), quantiles, skew, and kurtosis.
+- **Volatility modeling** — fit single-expiry SVI smiles and multi-expiry total-variance surfaces for pricing and risk work, evaluate implied volatilities, price options, and compute Greeks.
+
+## Core objects
+
+OIPD organises everything around four classes, arranged by scope (single expiry vs. a time horizon) and layer (volatility vs. probability):
+
+| Scope | Volatility layer | Probability layer |
+|---|---|---|
+| Single future date | `VolCurve` | `ProbCurve` |
+| Future time horizon | `VolSurface` | `ProbSurface` |
+
+Use `VolCurve` and `ProbCurve` when you care about one expiry date. Use `VolSurface` and `ProbSurface` when you want to reason across multiple maturities simultaneously — for example, to build a probability fan chart over the next 12 months.
+
+## Workflow
+
+OIPD is similar to a scikit-learn workflow. Every OIPD estimator follows the same three-step lifecycle:
+
+1. **Configure** — instantiate the estimator object with any model parameters.
+2. **Fit** — call `.fit(chain, market)` (or the convenience factory `from_chain`) to calibrate the model to your data.
+3. **Query** — call methods on the fitted object to extract implied volatilities, probabilities, quantiles, plots, and diagnostics.
+
+You never need to manage intermediate state manually; each fitted object is self-contained and queryable.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Compute your first market-implied probability distribution in under five minutes using live options data from yfinance.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install OIPD with pip and understand the standard vs. minimal dependency sets.
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts/mental-model">
+    Dive deeper into the four core objects, the volatility-to-probability pipeline, and the warning diagnostics system.
+  </Card>
+  <Card title="API reference" icon="code" href="/reference/prob-curve">
+    Full reference for every public method on OIPD's classes, including parameters, return types, and examples.
+  </Card>
+</CardGroup>

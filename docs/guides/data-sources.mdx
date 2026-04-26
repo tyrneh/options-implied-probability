@@ -1,0 +1,180 @@
+---
+title: "Data sources"
+description: "Fetch live options chains via yfinance, normalize a CSV file, or pass an existing DataFrame — all using the OIPD sources module."
+---
+
+OIPD accepts options data from three sources: the built-in yfinance connection, a CSV file on disk, and an in-memory DataFrame. All three paths normalize data into the same standard column schema before you pass the result to `VolCurve`, `VolSurface`, `ProbCurve`, or `ProbSurface`. Choose the tab that matches your data source below.
+
+<Tabs>
+
+<Tab title="yfinance (built-in)">
+
+The `sources` module wraps yfinance to download live options chains in one call. Use `list_expiry_dates` to browse available dates, then `fetch_chain` to download a chain or surface.
+
+**List available expiry dates**
+
+```python
+from oipd import sources
+
+expiries = sources.list_expiry_dates("AAPL")
+# e.g. ["2026-05-15", "2026-06-19", "2026-09-18", ...]
+print(expiries)
+```
+
+**Download a single expiry**
+
+```python
+chain, snapshot = sources.fetch_chain("AAPL", expiries=expiries[1])
+```
+
+**Download a multi-expiry surface**
+
+Pass `horizon` instead of `expiries` to fetch all listed expiries within the window:
+
+```python
+chain_surface, snapshot_surface = sources.fetch_chain(
+    "AAPL",
+    horizon="12m",   # "3m", "6m", "1y", etc.
+)
+```
+
+You cannot pass both `expiries` and `horizon` — OIPD raises a `ValueError` if you do.
+
+**Using the VendorSnapshot**
+
+`fetch_chain` returns a `(DataFrame, VendorSnapshot)` tuple. The snapshot records the download context. Use its fields to populate `MarketInputs`:
+
+| Field | Type | Description |
+|---|---|---|
+| `.asof` | `datetime` | Timestamp of the data pull |
+| `.underlying_price` | `float \| None` | Underlying spot price at download time |
+| `.vendor` | `str` | Source vendor, e.g. `"yfinance"` |
+
+```python
+from oipd import MarketInputs
+
+market = MarketInputs(
+    valuation_date=snapshot.asof,
+    underlying_price=snapshot.underlying_price,
+    risk_free_rate=0.04,
+)
+```
+
+<Note>
+`fetch_chain` caches network responses for 15 minutes by default. Pass `cache_enabled=False` or `cache_ttl_minutes=5` to change the caching behavior.
+</Note>
+
+</Tab>
+
+<Tab title="CSV file">
+
+`sources.from_csv` reads a CSV file and normalizes it to the OIPD standard column schema. It returns a `DataFrame` ready to pass directly to `fit`.
+
+**Minimal example**
+
+```python
+from oipd import sources
+
+chain = sources.from_csv("path/to/options.csv")
+```
+
+**Data-loading minimum** (after any remapping): `strike`, `expiry`, `option_type`, and one supported price source.
+
+Most vendor files use one of two shapes:
+
+- **BBO or CBBO quotes**: use `bid` and `ask`. This is preferred for fitting because OIPD can use the mid quote and keep spread diagnostics.
+- **OHLCV-style snapshots**: use `last_price`; include `volume` when you have it. OIPD preserves `volume` and uses it during SVI fitting when it relies on last-price data.
+
+Use one row per option contract. The `option_type` column identifies calls and puts; the reader normalizes `"call"` / `"put"` to `"C"` / `"P"`.
+
+<Tip>
+BBO/CBBO is quote data: the current best bid and offer. OHLCV is trade data: the last traded price plus volume. Prefer `bid` and `ask` when you have them; use `last_price` with `volume` when your source only gives trades.
+</Tip>
+
+**Other standard columns**: `last_trade_date` is used for staleness filtering.
+
+**Remapping non-standard column names**
+
+If your CSV uses different column names, provide a `column_mapping` dictionary. The left side is the column in your file; the right side is the OIPD standard name. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+
+```python
+chain = sources.from_csv(
+    "path/to/options.csv",
+    column_mapping={
+        "type":       "option_type",
+        "expiration": "expiry",
+        "last":       "last_price",
+    },
+)
+```
+
+Here, `"type"` is a column in your CSV. OIPD treats it as `option_type`.
+
+The same reader is also available as the `CSVReader` class:
+
+```python
+from oipd.data_access.readers import CSVReader
+
+reader = CSVReader()
+chain = reader.read("path/to/options.csv", column_mapping={"type": "option_type"})
+```
+
+</Tab>
+
+<Tab title="DataFrame">
+
+`sources.from_dataframe` normalizes an existing in-memory DataFrame to the OIPD standard schema. Use this when you already have options data from a database query, proprietary feed, or custom pipeline.
+
+**Minimal example**
+
+```python
+import pandas as pd
+from oipd import sources
+
+raw_df = pd.DataFrame(...)   # your existing options DataFrame
+
+chain = sources.from_dataframe(raw_df)
+```
+
+**Remapping columns**
+
+Use the same mapping direction for DataFrames: `{"your_column": "oipd_column"}`. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+
+```python
+chain = sources.from_dataframe(
+    raw_df,
+    column_mapping={
+        "type":       "option_type",
+        "expiration": "expiry",
+        "last":       "last_price",
+    },
+)
+```
+
+The same reader is also available as the `DataFrameReader` class:
+
+```python
+from oipd.data_access.readers import DataFrameReader
+
+reader = DataFrameReader()
+chain = reader.read(raw_df, column_mapping={"type": "option_type"})
+```
+
+</Tab>
+
+</Tabs>
+
+## Standard columns
+
+OIPD expects these target column names after any `column_mapping` is applied:
+
+| Column | Required | Description |
+|---|---|---|
+| `strike` | Yes | Strike price |
+| `last_price` | Price column option | Last traded price |
+| `bid` | Price column option | Bid price; use with `ask` |
+| `ask` | Price column option | Ask price; use with `bid` |
+| `expiry` | Fit-ready data | Expiry date (`YYYY-MM-DD` or datetime) |
+| `option_type` | Fit-ready data | `"C"` / `"P"` after normalization |
+| `volume` | Recommended with `last_price` | Traded volume; used as a fitting weight when available |
+| `last_trade_date` | No | Quote timestamp used for staleness filtering |

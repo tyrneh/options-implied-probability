@@ -1,0 +1,194 @@
+---
+title: "Errors"
+description: "Understand the OIPD exception hierarchy, when each error is raised, and how to write robust try/except blocks for calibration and data-loading workflows."
+---
+
+OIPD raises typed exceptions for calculation failures and CSV parsing. Some public validation paths also raise Python built-ins such as `ValueError` and `TypeError`, so production code should usually catch both OIPD-specific errors and ordinary input-validation errors.
+
+```python
+from oipd import OIPDError, InvalidInputError, CalculationError, CSVReadError
+```
+
+---
+
+<Accordion title="OIPDError">
+
+**Base exception for all OIPD errors.**
+
+`OIPDError` is the root of the OIPD exception hierarchy. Catch it when you want a single handler for any library-level failure, regardless of its specific cause.
+
+```python
+class OIPDError(Exception):
+    pass
+```
+
+**When it is raised:** Not raised directly by OIPD. All OIPD exceptions are subclasses, so catching `OIPDError` will also catch `InvalidInputError` and `CalculationError`.
+
+```python
+from oipd import OIPDError, ProbCurve, MarketInputs
+
+try:
+    prob = ProbCurve.from_chain(chain, market)
+except OIPDError as e:
+    print(f"OIPD error: {e}")
+```
+
+</Accordion>
+
+<Accordion title="InvalidInputError">
+
+**Raised by some lower-level probability and plotting paths when inputs are invalid.**
+
+`InvalidInputError` is part of the OIPD exception hierarchy, but not every public validation path uses it. Many common checks in data loading and `.fit(...)` methods raise `ValueError` or `TypeError` instead.
+
+Common public input failures include:
+
+- Missing columns or unsupported quote shapes in data readers: `ValueError`.
+- Non-positive strikes or negative prices after cleaning: `ValueError`.
+- Invalid single-expiry data passed to `VolCurve.fit`: `ValueError`.
+
+```python
+class InvalidInputError(OIPDError):
+    pass
+```
+
+```python
+from oipd import VolCurve
+
+try:
+    vol = VolCurve()
+    vol.fit(chain, market)
+except (ValueError, TypeError) as e:
+    print(f"Invalid input: {e}")
+```
+
+</Accordion>
+
+<Accordion title="CalculationError">
+
+**Raised when calibration fails or a numerical computation cannot complete.**
+
+`CalculationError` indicates that OIPD received valid inputs but was unable to complete the calculation. Common triggers include:
+
+- SVI calibration returning no fitted curve (e.g., insufficient liquid strikes after staleness filtering).
+- A `VolSurface` that has fewer than two unique expiries after horizon or staleness filtering.
+- An expiry that is on or before the valuation date (zero or negative time to expiry).
+- `VolSurface.fit` called with `failure_policy="raise"` when a slice fails to calibrate.
+
+```python
+class CalculationError(OIPDError):
+    pass
+```
+
+```python
+from oipd import CalculationError, ProbCurve
+
+try:
+    prob = ProbCurve.from_chain(chain, market)
+except CalculationError as e:
+    print(f"Calibration failed: {e}")
+```
+
+<Warning>
+When `VolSurface.fit` is called with `failure_policy="skip_warn"` (the default), individual expiry failures do not raise `CalculationError` — they are skipped and recorded in `warning_diagnostics`. Use `failure_policy="raise"` if you need strict failure propagation.
+</Warning>
+
+</Accordion>
+
+<Accordion title="CSVReadError">
+
+**Raised when CSV loading fails.**
+
+`CSVReadError` is raised by `sources.from_csv` and `CSVReader.read` when the CSV file exists but cannot be parsed. Note that `CSVReadError` does **not** inherit from `OIPDError` — it is a standalone exception defined in `oipd.data_access.readers`.
+
+Common triggers include:
+
+- A file encoding that cannot be decoded (e.g., a binary file passed as a CSV path).
+- A corrupt or malformed CSV that `pandas.read_csv` cannot parse.
+
+```python
+class CSVReadError(Exception):
+    pass
+```
+
+```python
+from oipd import CSVReadError, sources
+
+try:
+    chain = sources.from_csv("data/options.csv")
+except FileNotFoundError as e:
+    print(f"File not found: {e}")
+except CSVReadError as e:
+    print(f"CSV read failed: {e}")
+except ValueError as e:
+    print(f"Data validation failed: {e}")
+```
+
+</Accordion>
+
+<Accordion title="NotImplementedError">
+
+**Raised by `sources.list_expiry_dates` when the vendor does not support expiry listing.**
+
+This is Python's built-in `NotImplementedError`, not an OIPD exception. It is raised when you call `sources.list_expiry_dates` with a vendor that has not implemented the expiry-listing capability.
+
+```python
+from oipd import sources
+
+try:
+    expiries = sources.list_expiry_dates("SPY", vendor="my_vendor")
+except NotImplementedError as e:
+    print(f"Vendor does not support listing expiries: {e}")
+```
+
+</Accordion>
+
+---
+
+## Example
+
+```python
+from oipd import (
+    CalculationError,
+    OIPDError,
+    CSVReadError,
+    ProbCurve,
+    MarketInputs,
+    sources,
+)
+
+# Load data
+try:
+    chain = sources.from_csv("data/spy_chain.csv")
+except FileNotFoundError as e:
+    raise SystemExit(f"Data file missing: {e}")
+except CSVReadError as e:
+    raise SystemExit(f"Could not read CSV: {e}")
+except ValueError as e:
+    raise SystemExit(f"Invalid data: {e}")
+
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date="2025-04-01",
+    underlying_price=512.40,
+)
+
+# Fit and derive the distribution
+try:
+    prob = ProbCurve.from_chain(chain, market)
+except (ValueError, TypeError) as e:
+    print(f"Bad inputs — check column names and values: {e}")
+except CalculationError as e:
+    print(f"Calibration failed: {e}")
+except OIPDError as e:
+    # Catch-all for any other OIPD-specific error
+    print(f"Unexpected OIPD error: {e}")
+else:
+    print(f"Mean: {prob.mean():.2f}")
+    print(f"P(below 500): {prob.prob_below(500):.4f}")
+    # Inspect any non-fatal warnings
+    if prob.warning_diagnostics.summary.total_events > 0:
+        print("Warnings recorded:")
+        for event in prob.warning_diagnostics.events:
+            print(f"  [{event.severity}] {event.event_type}: {event.message}")
+```

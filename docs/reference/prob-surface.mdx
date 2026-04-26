@@ -1,0 +1,281 @@
+---
+title: "ProbSurface"
+description: "Query risk-neutral probability distributions across multiple expiries from a volatility surface or a multi-expiry option chain using OIPD."
+---
+
+`ProbSurface` extends the single-expiry `ProbCurve` concept to multiple maturities. You normally build one with `ProbSurface.from_chain(...)`, or by calling `VolSurface.implied_distribution(...)` on a fitted volatility surface. Once built, you can evaluate the PDF or CDF within the fitted maturity range, extract `ProbCurve` slices, export a long-format DataFrame, and visualize the distribution with a fan chart.
+
+```python
+from oipd import ProbSurface
+```
+
+## Constructors
+
+You normally build a `ProbSurface` in one of two ways:
+
+### `ProbSurface.from_chain`
+
+The one-step constructor. It fits the underlying `VolSurface` internally and returns a ready-to-query `ProbSurface`.
+
+```python
+ProbSurface.from_chain(
+    chain,
+    market,
+    column_mapping=None,
+    max_staleness_days=3,
+    failure_policy="skip_warn",
+    cdf_violation_policy="warn",
+)
+```
+
+<ParamField path="chain" type="pd.DataFrame" required>
+  Multi-expiry option chain DataFrame. Must contain an `expiry` column and at least two unique expiry dates.
+</ParamField>
+
+<ParamField path="market" type="MarketInputs" required>
+  Market inputs providing the risk-free rate, valuation date, and underlying price.
+</ParamField>
+
+<ParamField path="column_mapping" type="dict[str, str] | None" default="None">
+  Optional mapping in the form `{"dataframe_column": "oipd_column"}`. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+</ParamField>
+
+<ParamField path="max_staleness_days" type="int" default="3">
+  Maximum age of option quotes in calendar days. Rows older than this threshold are filtered before fitting each slice.
+</ParamField>
+
+<ParamField path="failure_policy" type="Literal['skip_warn', 'raise']" default="skip_warn">
+  Controls how individual expiry calibration failures are handled. `"skip_warn"` skips the failing expiry and continues; `"raise"` propagates the error immediately.
+</ParamField>
+
+<ParamField path="cdf_violation_policy" type="Literal['warn', 'raise']" default="warn">
+  Policy for CDF monotonicity violations. `"warn"` repairs and warns; `"raise"` fails on material violations.
+</ParamField>
+
+**Raises:** `ValueError` if `failure_policy` is not a supported value. `CalculationError` if fewer than two expiries remain after filtering, or if calibration fails.
+
+---
+
+### From a fitted `VolSurface`
+
+If you have already fitted a `VolSurface`, call `implied_distribution()` on that object:
+
+```python
+from oipd import VolSurface
+
+vol_surface = VolSurface().fit(chain, market)
+surface = vol_surface.implied_distribution()
+```
+
+This is the recommended path when you want to inspect or reuse the volatility surface before deriving probabilities.
+
+See [`VolSurface.implied_distribution`](/reference/vol-surface#implied_distributiongrid_points-cdf_violation_policy).
+
+---
+
+## Methods
+
+<Accordion title="pdf(price, t)">
+Evaluate the PDF at given price level(s) and maturity.
+
+```python
+surface.pdf(price, t)
+```
+
+<ParamField path="price" type="float | np.ndarray" required>
+  Price level or array of price levels to evaluate.
+</ParamField>
+
+<ParamField path="t" type="float | str | date | pd.Timestamp" required>
+  Maturity. Pass a year-fraction float (e.g., `45/365`) or a date-like value (e.g., `"2025-06-20"`). The surface interpolates to any maturity within the fitted range.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Interpolated PDF values at `price` for the given maturity. Values outside the domain return `0.0`.
+</ResponseField>
+</Accordion>
+
+<Accordion title="cdf(price, t)">
+Evaluate the CDF at given price level(s) and maturity.
+
+```python
+surface.cdf(price, t)
+```
+
+<ParamField path="price" type="float | np.ndarray" required>
+  Price level or array of price levels to evaluate.
+</ParamField>
+
+<ParamField path="t" type="float | str | date | pd.Timestamp" required>
+  Maturity as a year-fraction float or date-like value.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Cumulative probability values. Returns `0.0` below the domain and `1.0` above.
+</ResponseField>
+</Accordion>
+
+<Accordion title="quantile(q, t)">
+Inverse CDF: returns the price level at quantile `q` for maturity `t`.
+
+```python
+surface.quantile(q, t)
+```
+
+<ParamField path="q" type="float" required>
+  Target probability in the open interval (0, 1).
+</ParamField>
+
+<ParamField path="t" type="float | str | date | pd.Timestamp" required>
+  Maturity as a year-fraction float or date-like value.
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  Price S such that P(Asset &lt; S) = q at maturity t.
+</ResponseField>
+
+**Raises:** `ValueError` if `q` is not in (0, 1).
+</Accordion>
+
+<Accordion title="slice(expiry)">
+Extract a single-expiry `ProbCurve` for a maturity within the fitted range. If `expiry` matches a fitted pillar exactly, the method returns a curve built from that pillar's data. Otherwise, it builds a synthetic curve via total-variance interpolation.
+
+```python
+surface.slice(expiry)
+```
+
+<ParamField path="expiry" type="str | date | pd.Timestamp" required>
+  Target expiry. Accepts ISO date strings like `"2025-06-20"`, Python `date` objects, or `pd.Timestamp`.
+</ParamField>
+
+<ResponseField name="returns" type="ProbCurve">
+  Probability curve for the requested maturity.
+</ResponseField>
+
+**Raises:** `ValueError` if the surface is empty or the maturity is outside the fitted range.
+</Accordion>
+
+<Accordion title="density_results(domain, points, start, end, step_days, full_domain)">
+Export a long-format DataFrame of probability slices across expiries.
+
+```python
+surface.density_results(
+    domain=None,
+    points=200,
+    start=None,
+    end=None,
+    step_days=1,
+    full_domain=False,
+)
+```
+
+<ParamField path="domain" type="tuple[float, float] | None" default="None">
+  Optional export price domain as `(min_price, max_price)`. Takes precedence over `full_domain`.
+</ParamField>
+
+<ParamField path="points" type="int" default="200">
+  Number of price points per expiry slice in the output.
+</ParamField>
+
+<ParamField path="start" type="str | date | pd.Timestamp | None" default="None">
+  Lower expiry bound for the export. Defaults to the first fitted pillar expiry.
+</ParamField>
+
+<ParamField path="end" type="str | date | pd.Timestamp | None" default="None">
+  Upper expiry bound for the export. Defaults to the last fitted pillar expiry.
+</ParamField>
+
+<ParamField path="step_days" type="int | None" default="1">
+  Calendar-day sampling interval between exported slices. Fitted pillar expiries are always included. Pass `None` to export fitted pillars only.
+</ParamField>
+
+<ParamField path="full_domain" type="bool" default="False">
+  When `True` and `domain` is not set, each slice exports its full native domain without resampling.
+</ParamField>
+
+<ResponseField name="returns" type="pd.DataFrame">
+  Long-format DataFrame with columns `expiry`, `price`, `pdf`, and `cdf`.
+</ResponseField>
+</Accordion>
+
+<Accordion title="plot_fan(figsize, title)">
+Plot a fan chart of risk-neutral quantiles across all expiries.
+
+```python
+surface.plot_fan(figsize=(10, 6), title=None)
+```
+
+<ParamField path="figsize" type="tuple[float, float]" default="(10, 6)">
+  Figure size as (width, height) in inches.
+</ParamField>
+
+<ParamField path="title" type="str | None" default="None">
+  Custom title. Auto-generated when omitted.
+</ParamField>
+
+<ResponseField name="returns" type="matplotlib.figure.Figure">
+  The rendered fan chart figure.
+</ResponseField>
+
+**Raises:** `ValueError` if the surface has no fitted expiries, or if no valid slices remain after skipping invalid fan slices.
+</Accordion>
+
+---
+
+## Properties
+
+<ResponseField name="expiries" type="tuple[pd.Timestamp, ...]">
+  All fitted pillar maturities as a tuple of `pd.Timestamp` objects, in ascending order.
+</ResponseField>
+
+<ResponseField name="warning_diagnostics" type="WarningDiagnostics">
+  Structured diagnostic events accumulated across all surface operations. Inspect `.warning_diagnostics.events` for data-quality, model-risk, and workflow events.
+</ResponseField>
+
+---
+
+## Example
+
+```python
+from oipd import ProbSurface, VolSurface, MarketInputs, sources
+
+# 1. Fetch a multi-expiry chain
+chain, snapshot = sources.fetch_chain("SPY", horizon="6m")
+
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date=snapshot.asof,
+    underlying_price=snapshot.underlying_price,
+)
+
+# 2. Build the probability surface directly from the chain
+surface = ProbSurface.from_chain(chain, market)
+
+print("Fitted expiries:", surface.expiries)
+
+# 3. Query PDF at a specific maturity
+import numpy as np
+prices = np.linspace(450, 600, 50)
+pdf_vals = surface.pdf(prices, t=45 / 365)
+print("PDF shape:", pdf_vals.shape)
+
+# 4. CDF and quantile queries
+target_expiry = surface.expiries[0]
+p_below_500 = surface.cdf(500, t=target_expiry)
+q95 = surface.quantile(0.95, t=target_expiry)
+print(f"P(SPY < 500): {p_below_500}")
+print(f"95th pct: {q95:.2f}")
+
+# 5. Extract a single-expiry slice
+curve = surface.slice(target_expiry)
+print(f"Slice mean: {curve.mean():.2f}")
+print(f"Slice skew: {curve.skew():.4f}")
+
+# 6. Export long-format density results
+df = surface.density_results(points=150, step_days=7)
+print(df.head())
+
+# 7. Fan chart
+fig = surface.plot_fan(title="SPY Risk-Neutral Distribution Fan")
+fig.savefig("prob_fan.png", dpi=150, bbox_inches="tight")
+```

@@ -1,0 +1,67 @@
+---
+title: "Pipeline details"
+description: "Advanced theory notes on how OIPD fits volatility and converts it into market-implied probability distributions."
+---
+
+OIPD is an opinionated pipeline for turning option quotes into fitted volatility and risk-neutral probabilities.
+
+This page is for technical readers who want to inspect the full workflow. The public API is still the stable interface: use `VolCurve`, `VolSurface`, `ProbCurve`, and `ProbSurface` in application code.
+
+## Pipeline
+
+| Stage | Step | Sub-step | Rationale | OIPD: Current Implementation |
+|---|---:|---|---|---|
+| (A) Invert the IV | 1 | De-americanisation | Convert American to European equivalent (remove early-exercise premium). | Not yet implemented; on roadmap |
+|  | 2 | Decide whether to use bid, ask, mid, or last price | Bid/ask represent tradeable bounds. Mid is convenient, but may be affected by wide or stale spreads | Uses mid price with fallback to last (because Yfinance data is sometimes missing bid/ask and thus mid-price) |
+|  | 3 | Convert spot to forward-price (using implied dividend and borrow rate) | BS formula requires future dividend streams, but easiest way to infer future dividends is from market-implied forward | Uses put-call parity to infer implied future dividend yield and forward price. Borrow rate is not explicitly modelled |
+|  | 4 | Use put-call parity to filter illiquid quotes | Many quotes (typically in-the-money) are illiquid and have low volume, implying high noise. | Keep only OTM contracts. Uses put-call parity to convert OTM puts to ITM calls |
+|  | 5 | Solve the IV using BS | Numerically solve the IV given prices | Uses Black76 to solve IV given implied forward |
+| (B) Fitting the vol surface | 6 | For each expiry, fit a vol smile | Fit an arbitrage free vol smile | Uses SVI to fit with butterfly-arbitrage penalty |
+|  | 7 | Interpolate across expiries | Interpolate over time in total variance space | Linear interpolation with basic calendar arbitrage guard (enforces total variance is non-decreasing with maturity) |
+|  | 8 | Extrapolate the wings | Wing behavior is sensitive to model specification | Not yet implemented |
+| (C) Convert to probability distribution | 9 | Convert to risk neutral distribution | RND is a deterministic transformation of the smile/surface | Uses Breeden-Litzenberger method, converting call prices to probability density using the 2nd numerical derivative |
+|  | 10 | Convert to real world physical distribution | Given assumptions, can convert to real world distribution | Not yet implemented; on roadmap |
+
+## Library position
+
+OIPD is closer to an end-to-end volatility and probability pipeline than to a box of separate numerical parts.
+
+Libraries such as QuantLib provide strong components for individual stages, including IV solvers and smile fitters. OIPD wires the data cleaning, volatility fitting, surface construction, probability conversion, and diagnostics into one public interface.
+
+## SVI benchmark
+
+To benchmark OIPD's SVI fitter, we compare it against QuantLib's SVI fitter (`SviInterpolatedSmileSection`). The test keeps OIPD's preprocessing and data-cleaning pipeline fixed, and only swaps the SVI calibration step.
+
+The fitted smiles below use the same AAPL dataset and expiry.
+
+<Columns cols={2}>
+  <Frame caption="OIPD SVI fitter">
+    <img src="/images/advanced-theory-oipd-svi-fitter.png" alt="OIPD SVI fitted smile" />
+  </Frame>
+  <Frame caption="QuantLib SVI fitter (OIPD preprocessing + QuantLib calibration)">
+    <img src="/images/advanced-theory-quantlib-svi-fitter.png" alt="QuantLib SVI fitted smile" />
+  </Frame>
+</Columns>
+
+To compare metrics:
+
+- full pipeline run time
+- vega-weighted RMSE
+- butterfly arbitrage checks, using 2 checks to detect arbitrage: (1) min(g(k)) and (2) negative density
+
+| Metric | OIPD SVI fitter | QuantLib SVI fitter |
+| --- | --- | --- |
+| Full pipeline runtime (mean seconds, 10 runs) | 1.1089 | 0.3647 |
+| SVI calibration runtime (mean seconds, 10 runs) | 0.6970 | 0.000374 |
+| Vega-weighted RMSE (IV) | 0.01057 | 0.00447 |
+| min(g(k)) butterfly check | +0.0820 | -0.0383 |
+| Share of grid with g(k) < 0 | 0.00% | 42.26% |
+| Negative RND grid points (native 200-point RND grid) | 0 | 14 |
+
+QuantLib's SVI fitter was significantly faster in this test, as it is written in C++. OIPD's fit was cleaner on the tested arbitrage checks.
+
+For arbitrage checks, higher `min(g(k))` is better, and any negative value is a warning for butterfly arbitrage. Likewise, lower values are better for both `Share of grid with g(k) < 0` and `Negative RND grid points`; `0` is the clean no-violation outcome on the tested grid.
+
+<Note>
+Treat this benchmark as one tested example, not a universal comparison between the libraries.
+</Note>

@@ -1,0 +1,60 @@
+---
+title: "Installation"
+description: "Install oipd from PyPI with pip and pick the standard or minimal dependency set."
+---
+
+OIPD is published on PyPI as `oipd` and installs with a single `pip` command. Two install variants are available: the standard install, which bundles the yfinance data connection for fetching live options chains, and the minimal install, which omits external data vendors for use in corporate or air-gapped environments.
+
+## Install
+
+<CodeGroup>
+  ```bash Standard (recommended)
+  pip install oipd
+  ```
+
+  ```bash Minimal (no data vendors)
+  pip install oipd[minimal]
+  ```
+</CodeGroup>
+
+<Note>
+  The `[minimal]` extra installs all core computational dependencies but excludes yfinance and any other external data vendor integrations. Use this variant when your organisation manages its own options data pipeline, or when external network access is restricted. You can still load data from a CSV file or a Pandas DataFrame with the minimal install.
+</Note>
+
+## Dependencies
+
+Both install variants include the following core dependencies:
+
+| Package | Minimum version |
+|---|---|
+| `numpy` | 2.0.0 |
+| `pandas` | 2.2.2 |
+| `scipy` | 1.13.0 |
+| `matplotlib` | 3.9.0 |
+| `matplotlib-label-lines` | 0.6.0 |
+| `plotly` | 5.x |
+| `traitlets` | 5.12.0 |
+
+The standard install additionally includes `yfinance>=0.2.60` for live market data access.
+
+## Verify
+
+After installing, confirm that OIPD imported correctly by running the following in your Python environment:
+
+```python
+import oipd
+print(oipd.__version__)
+```
+
+If the version number prints without error, your installation is working.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Fetch a live options chain and compute your first market-implied probability distribution.
+  </Card>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn about OIPD's four core objects and the scikit-learn-style configure → fit → query mental model.
+  </Card>
+</CardGroup>

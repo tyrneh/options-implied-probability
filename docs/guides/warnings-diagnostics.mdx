@@ -1,0 +1,131 @@
+---
+title: "Warnings"
+description: "Understand OIPD's structured warning system, inspect per-event diagnostics on fitted objects, and configure strict CDF violation policies."
+---
+
+Every fitted object in OIPD — `VolCurve`, `VolSurface`, `ProbCurve`, and `ProbSurface` — records structured warning events during fitting and evaluation. Rather than hiding problems silently or flooding you with unstructured text, OIPD emits one concise Python warning per broad category and stores detailed, queryable events on `.warning_diagnostics`. The guide below explains the four warning categories, shows how to inspect them, and covers the `cdf_violation_policy` option for strict CDF enforcement.
+
+## Warning categories
+
+Import the warning classes from `oipd.warnings` to filter or catch specific warning types in your code:
+
+```python
+from oipd.warnings import (
+    DataQualityWarning,
+    ModelRiskWarning,
+    NumericalWarning,
+    WorkflowWarning,
+)
+```
+
+<AccordionGroup>
+
+<Accordion title="DataQualityWarning">
+
+`DataQualityWarning` fires when OIPD detects issues with the observed input data itself, before any model fitting occurs.
+
+**Event types**
+
+- `stale_quote_filter` — rows were dropped because the quote age exceeded `max_staleness_days` (default: 3 days). The event details record the count of filtered rows and the configured staleness threshold.
+- `price_fallback` — `bid` or `ask` values were missing for some rows, so OIPD filled the mid price with `last_price` instead. The event details record the count of filled rows.
+
+**When it matters**: stale quotes can distort the fitted smile because they may reflect prices from a different market regime. Price fallbacks mean your fitting mid is derived from a potentially stale last-trade price rather than a live spread.
+
+</Accordion>
+
+<Accordion title="ModelRiskWarning">
+
+`ModelRiskWarning` fires when the fitted model itself raises economic concerns.
+
+**Event types**
+
+- `butterfly_arbitrage` — the SVI calibration produced a negative butterfly spread (`min_g < 0`), which indicates potential arbitrage in the fitted smile. The event details include the `min_g` value and the threshold used.
+- `cdf_repair` — the derived risk-neutral CDF was not monotonically non-decreasing and was repaired. There are two severity levels:
+  - **`"warning"`** — the non-monotonicity was *material*: larger than the repair tolerance but within an acceptable total-variation budget.
+  - **`"severe"`** — the non-monotonicity was *severe*: the total negative variation exceeded the budget, meaning the CDF repair may significantly alter the distribution.
+
+**When it matters**: a butterfly-arbitrage warning means the fitted vol smile admits free-money strategies and may understate tail risk. A severe CDF repair warning means the derived probability distribution may not accurately represent the market's risk-neutral measure.
+
+</Accordion>
+
+<Accordion title="NumericalWarning">
+
+`NumericalWarning` fires when numerical issues arise during computation, such as near-singular matrices or convergence degradation.
+
+**When it matters**: this category typically indicates that a particular expiry had very sparse or low-quality quotes, causing the optimizer to converge to a fragile solution. Inspect the event details for the affected expiry and consider excluding it or sourcing better data.
+
+</Accordion>
+
+<Accordion title="WorkflowWarning">
+
+`WorkflowWarning` fires when OIPD's best-effort fitting skips one or more expiries instead of raising an error.
+
+**Event type**
+
+- `skipped_expiry` — an expiry was skipped during `VolSurface.fit` or `ProbSurface.from_chain` because it failed to calibrate. The event details include the expiry date, the exception type, and a short reason message.
+
+**When it matters**: a skipped expiry means your surface has a gap at that maturity. Interpolated slices near the gap rely on the adjacent pillars and may be less accurate. Use `failure_policy="raise"` to surface these failures immediately rather than continuing.
+
+</Accordion>
+
+</AccordionGroup>
+
+## Diagnostics
+
+Every fitted object exposes a `.warning_diagnostics` property that returns a `WarningDiagnostics` instance. Use `.summary` for aggregate counts and `.events` for the full structured event list.
+
+```python
+from oipd import MarketInputs, ProbSurface, sources
+from oipd.warnings import (
+    DataQualityWarning,
+    ModelRiskWarning,
+    NumericalWarning,
+    WorkflowWarning,
+)
+
+ticker = "PLTR"
+chain_surface, snapshot_surface = sources.fetch_chain(ticker, horizon="12m")
+surface_market = MarketInputs(
+    valuation_date=snapshot_surface.asof,
+    underlying_price=snapshot_surface.underlying_price,
+    risk_free_rate=0.04,
+)
+
+surface = ProbSurface.from_chain(chain_surface, surface_market)
+
+# Summary: aggregate counts by category, event type, and severity
+print(surface.warning_diagnostics.summary)
+
+# Events: full structured list
+for event in surface.warning_diagnostics.events:
+    print(event)
+```
+
+The `summary` object has the following fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `total_events` | `int` | Total number of warning events |
+| `by_category` | `Mapping[str, int]` | Count per broad category |
+| `by_event_type` | `Mapping[str, int]` | Count per specific event type |
+| `by_severity` | `Mapping[str, int]` | Count per severity level |
+| `worst_severity` | `str \| None` | Highest severity seen (`"info"`, `"warning"`, or `"severe"`) |
+
+Each `WarningEvent` in `.events` has `category`, `event_type`, `severity`, `scope`, `message`, and `details` fields.
+
+## Strict CDF mode
+
+By default, OIPD repairs minor CDF monotonicity violations and records a `ModelRiskWarning`. Use `cdf_violation_policy="raise"` when you want any material violation to propagate immediately as an error instead of being silently repaired.
+
+```python
+from oipd import ProbCurve
+
+# Strict mode: material CDF violations raise instead of being repaired
+prob = ProbCurve.from_chain(chain, market, cdf_violation_policy="raise")
+```
+
+The same parameter is accepted by `ProbSurface.from_chain` and `VolSurface.implied_distribution`.
+
+<Warning>
+Use `cdf_violation_policy="raise"` in production pipelines where a silently-repaired CDF would give incorrect downstream probability calculations. In exploratory analysis, the default `"warn"` mode is usually sufficient — just check `.warning_diagnostics.summary.worst_severity` after fitting.
+</Warning>

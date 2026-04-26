@@ -1,0 +1,121 @@
+---
+title: "Probability curve"
+description: "Step-by-step guide to fitting a risk-neutral probability distribution on a single option expiry date and querying prices, quantiles, and moments."
+---
+
+Option prices imply a risk-neutral distribution over future prices. `ProbCurve` extracts that distribution from a single-expiry option chain by fitting an SVI volatility smile and converting it into probabilities. The walkthrough below takes you from data download to distributional statistics in five steps.
+
+<Steps>
+
+<Step title="Select expiry">
+
+Start by fetching the available expiry dates for your ticker. `sources.list_expiry_dates` calls the built-in yfinance connection and returns dates as `YYYY-MM-DD` strings.
+
+```python
+from oipd import MarketInputs, ProbCurve, sources
+
+ticker = "PLTR"
+expiries = sources.list_expiry_dates(ticker)  # list of "YYYY-MM-DD" strings
+single_expiry = expiries[1]                   # pick the expiry you want
+print(single_expiry)                          # one of the returned expiry dates
+```
+
+</Step>
+
+<Step title="Fetch chain">
+
+Pass the selected expiry to `sources.fetch_chain`. It returns two objects: a normalized `chain` DataFrame and a `VendorSnapshot` that records the underlying price and download timestamp.
+
+This example uses the built-in yfinance fetcher. For research or production work, your own vendor, broker, or exchange data will usually be cleaner. See [Data sources](/guides/data-sources) to load a CSV or DataFrame instead.
+
+```python
+chain, snapshot = sources.fetch_chain(ticker, expiries=single_expiry)
+
+# snapshot fields you will use:
+# snapshot.asof               — datetime of the data pull
+# snapshot.underlying_price   — spot price at download time
+# snapshot.vendor             — "yfinance"
+```
+
+</Step>
+
+<Step title="MarketInputs">
+
+`MarketInputs` bundles the market context needed for calibration. Use the snapshot fields to avoid mis-dating your inputs.
+
+```python
+market = MarketInputs(
+    valuation_date=snapshot.asof,               # datetime of the data pull
+    underlying_price=snapshot.underlying_price, # spot price at download time
+    risk_free_rate=0.04,                        # annualized risk-free rate
+)
+```
+
+<Tip>
+Use a US Treasury yield whose maturity is closest to your target expiry date. The default `risk_free_rate_mode` is `"annualized"` (simple ACT/365). Pass `risk_free_rate_mode="continuous"` if your rate source is continuously compounded.
+</Tip>
+
+</Step>
+
+<Step title="Fit">
+
+`ProbCurve.from_chain` fits an SVI volatility smile and derives the risk-neutral distribution in one call.
+
+```python
+prob = ProbCurve.from_chain(chain, market)
+```
+
+By default the library repairs minor CDF monotonicity issues and records a `ModelRiskWarning`. Use `cdf_violation_policy="raise"` if you want strict violations to propagate as errors instead.
+
+</Step>
+
+<Step title="Query and export">
+
+Once fitted, `ProbCurve` exposes probability queries, distributional moments, a plot method, and a DataFrame export.
+
+**Probability queries**
+
+```python
+prob_below = prob.prob_below(100)        # P(price < 100)
+prob_above = prob.prob_above(120)        # P(price >= 120)
+prob_range = prob.prob_between(90, 110)  # P(90 <= price < 110)
+```
+
+**Quantiles and moments**
+
+```python
+q50   = prob.quantile(0.50)   # median implied price
+mean  = prob.mean()           # expected price E[S]
+skew  = prob.skew()           # 3rd standardized moment
+kurt  = prob.kurtosis()       # excess kurtosis (0 = normal)
+```
+
+**Visualization**
+
+```python
+import matplotlib.pyplot as plt
+
+fig = prob.plot(kind="both")   # overlays PDF and CDF; also "pdf" or "cdf"
+plt.show()
+```
+
+Example output:
+
+![Example ProbCurve PDF and CDF plot](/images/probability-curve-plot.png)
+
+**Export to DataFrame**
+
+`density_results()` returns a `DataFrame` with columns `price`, `pdf`, and `cdf`.
+
+```python
+df = prob.density_results()
+print(df.head())
+```
+
+</Step>
+
+</Steps>
+
+<Note>
+`ProbCurve.from_chain` requires a chain with a single expiry. If your DataFrame contains multiple expiry dates, OIPD raises a `ValueError` and asks you to use `ProbSurface.from_chain` instead.
+</Note>
