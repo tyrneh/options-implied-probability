@@ -127,46 +127,6 @@ def _black76_parity_chain_with_stale_last_prices(
     return pd.concat([calls, puts], ignore_index=True)
 
 
-def _black76_wide_call_put_chain(*, forward_price: float = 100.0) -> pd.DataFrame:
-    """Create wide-format call/put prices for public VolCurve fitting.
-
-    Args:
-        forward_price: Forward price encoded by explicit call/put columns.
-
-    Returns:
-        One row per strike with ``call_price`` and ``put_price`` columns.
-    """
-    from oipd.pricing.black76 import black76_call_price
-
-    strikes = np.array([90.0, 95.0, 100.0, 105.0, 110.0])
-    expiry = pd.Timestamp("2025-03-21")
-    risk_free_rate = 0.05
-    time_to_expiry_years = 79.0 / 365.0
-    discount_factor = np.exp(-risk_free_rate * time_to_expiry_years)
-    sigma = 0.30
-
-    call_prices = np.asarray(
-        black76_call_price(
-            forward_price,
-            strikes,
-            sigma,
-            time_to_expiry_years,
-            risk_free_rate,
-        ),
-        dtype=float,
-    )
-    put_prices = call_prices - discount_factor * (forward_price - strikes)
-
-    return pd.DataFrame(
-        {
-            "strike": strikes,
-            "call_price": call_prices,
-            "put_price": put_prices,
-            "expiry": [expiry] * len(strikes),
-        }
-    )
-
-
 def _assert_public_parity_requirement_message(message: str) -> None:
     """Assert public parity errors describe the new data requirement."""
     assert "usable same-strike call/put pairs" in message
@@ -363,23 +323,6 @@ class TestVolCurveFit:
         assert vc._metadata["forward_price_source"] == "put_call_parity"
         assert vc._metadata["parity_report"]["valid_pair_count"] == 5
 
-    def test_fit_accepts_wide_call_put_price_format(self, market_inputs):
-        """Public fit should accept explicit wide call/put price data.
-
-        Args:
-            market_inputs: Market inputs used for the fit.
-        """
-        from oipd import VolCurve
-
-        chain = _black76_wide_call_put_chain(forward_price=100.0)
-
-        vc = VolCurve(price_method="last")
-        vc.fit(chain, market_inputs)
-
-        assert vc._metadata["forward_price"] == pytest.approx(100.0)
-        assert vc._metadata["forward_price_source"] == "put_call_parity"
-        assert vc._metadata["parity_report"]["valid_pair_count"] == 5
-
     def test_black76_fit_zero_valid_pairs_fails_with_parity_message(
         self, market_inputs
     ):
@@ -392,10 +335,32 @@ class TestVolCurveFit:
 
         chain = pd.DataFrame(
             {
-                "strike": [90.0, 95.0, 100.0, 105.0, 110.0],
-                "call_price": [1.0, 1.0, 1.0, 1.0, 1.0],
-                "put_price": [200.0, 200.0, 200.0, 200.0, 200.0],
-                "expiry": [pd.Timestamp("2025-03-21")] * 5,
+                "strike": [
+                    90.0,
+                    90.0,
+                    95.0,
+                    95.0,
+                    100.0,
+                    100.0,
+                    105.0,
+                    105.0,
+                    110.0,
+                    110.0,
+                ],
+                "last_price": [
+                    1.0,
+                    200.0,
+                    1.0,
+                    200.0,
+                    1.0,
+                    200.0,
+                    1.0,
+                    200.0,
+                    1.0,
+                    200.0,
+                ],
+                "option_type": ["C", "P"] * 5,
+                "expiry": [pd.Timestamp("2025-03-21")] * 10,
             }
         )
 
