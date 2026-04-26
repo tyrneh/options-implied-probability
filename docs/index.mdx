@@ -1,0 +1,78 @@
+---
+title: "OIPD"
+description: "OIPD is a Python library that extracts price-implied risk-neutral probability distributions from listed options data."
+---
+
+OIPD (Options Implied Probability Distribution) turns raw options chain data into price-implied risk-neutral probability distributions. It fits SVI volatility smiles, links maturities with total-variance interpolation, and lets you query the distribution implied by option prices under OIPD's pricing assumptions.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Compute your first market-implied probability distribution in under five minutes using live options data.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install OIPD via pip and configure your Python environment for options analysis.
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts/mental-model">
+    Understand the four core objects — VolCurve, VolSurface, ProbCurve, ProbSurface — and how they fit together.
+  </Card>
+  <Card title="API reference" icon="code" href="/reference/prob-curve">
+    Full reference for every public method on OIPD's classes, including parameters, return types, and examples.
+  </Card>
+</CardGroup>
+
+## Capabilities
+
+OIPD provides two tightly integrated capabilities in a single library:
+
+- **Probability extraction** — compute the full risk-neutral PDF and CDF over future asset prices, query tail probabilities, quantiles, and distributional moments
+- **Volatility modeling** — fit single-expiry SVI smiles and multi-expiry surfaces with total-variance interpolation, evaluate implied vols, price options, and compute Greeks
+
+<Steps>
+  <Step title="Install">
+    ```bash
+    pip install oipd
+    ```
+  </Step>
+  <Step title="Fetch data">
+    ```python
+    from oipd import sources
+
+    expiries = sources.list_expiry_dates("AAPL")
+    chain, snapshot = sources.fetch_chain("AAPL", expiries=expiries[1])
+    ```
+  </Step>
+  <Step title="Fit">
+    ```python
+    from oipd import MarketInputs, ProbCurve
+
+    market = MarketInputs(
+        valuation_date=snapshot.asof,
+        underlying_price=snapshot.underlying_price,
+        risk_free_rate=0.04,
+    )
+    prob = ProbCurve.from_chain(chain, market)
+    ```
+  </Step>
+  <Step title="Query">
+    ```python
+    prob.prob_below(200)   # P(price < 200)
+    prob.quantile(0.50)    # median implied price
+    prob.plot()            # visualize the full distribution
+    ```
+  </Step>
+</Steps>
+
+<CardGroup cols={2}>
+  <Card title="Probability" icon="chart-area" href="/guides/probability-single-expiry">
+    Step-by-step walkthroughs for computing probability distributions on a single expiry or across a full time horizon.
+  </Card>
+  <Card title="Volatility" icon="wave-sine" href="/guides/volatility-smile">
+    Learn how to fit implied volatility smiles and surfaces for pricing and risk work.
+  </Card>
+  <Card title="Data sources" icon="database" href="/guides/data-sources">
+    Connect OIPD to live market data via yfinance, or load your own data from CSV or DataFrame.
+  </Card>
+  <Card title="Warnings" icon="triangle-exclamation" href="/guides/warnings-diagnostics">
+    Understand how OIPD surfaces data quality issues and model risk through structured diagnostics.
+  </Card>
+</CardGroup>

@@ -1,0 +1,121 @@
+---
+title: "MarketInputs"
+description: "Provide risk-free rates, valuation dates, and underlying prices to OIPD calibration methods using the MarketInputs dataclass and VendorSnapshot."
+---
+
+`MarketInputs` is the frozen dataclass you pass to every OIPD fitting method. It captures the risk-free rate, valuation date, and optional market data such as the underlying price. When you fetch an option chain with `sources.fetch_chain`, the returned `VendorSnapshot` carries the vendor's price data and download timestamp — you can use it to populate `MarketInputs` with minimal boilerplate.
+
+```python
+from oipd import MarketInputs
+```
+
+## `MarketInputs`
+
+`MarketInputs` is a frozen dataclass. All fields are set at construction and cannot be modified afterward. The `valuation_date` field is normalized to a `pd.Timestamp` with intraday precision when the object is created.
+
+```python
+from oipd import MarketInputs
+
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date="2025-04-01",
+    underlying_price=512.40,
+)
+```
+
+### Fields
+
+<ParamField path="risk_free_rate" type="float" required>
+  The risk-free interest rate used for option pricing and forward price calculation. Interpretation depends on `risk_free_rate_mode`. For `"annualized"` mode, provide the simple annualized nominal rate (e.g., `0.053` for 5.3%). For `"continuous"` mode, provide the continuously compounded rate.
+</ParamField>
+
+<ParamField path="valuation_date" type="DateTimeLike" required>
+  The pricing date. Accepts `str` (ISO format, e.g., `"2025-04-01"`), Python `date`, Python `datetime`, or `pd.Timestamp`. The value is normalized to a timezone-naive `pd.Timestamp` on construction.
+</ParamField>
+
+<ParamField path="risk_free_rate_mode" type="Literal['annualized', 'continuous']" default="annualized">
+  Specifies how `risk_free_rate` is quoted. `"annualized"` treats the rate as a simple annualized nominal rate on an ACT/365 basis. `"continuous"` treats it as a continuously compounded rate.
+</ParamField>
+
+<ParamField path="underlying_price" type="float | None" default="None">
+  Current price of the instrument the options are written on. For equity or ETF spot options (Black-Scholes), this is the cash spot price S. For options on futures (Black-76), this is the current futures price F of the relevant contract. Required when calling `VolCurve.fit`, `VolSurface.fit`, or any probability method.
+</ParamField>
+
+<Note>
+By default, you do not need to enter dividends. OIPD infers the forward price from put-call parity and uses Black-76 for IV inversion. The fitted forward already reflects the market's expected carry, including dividends.
+</Note>
+
+---
+
+## `VendorSnapshot`
+
+`VendorSnapshot` is a frozen dataclass returned by `sources.fetch_chain`. It records the point-in-time market data retrieved from the vendor, including the underlying price and the time of download.
+
+```python
+from oipd import VendorSnapshot
+```
+
+### Fields
+
+<ParamField path="asof" type="datetime" required>
+  Timestamp of when the data was downloaded from the vendor.
+</ParamField>
+
+<ParamField path="vendor" type="str" required>
+  Vendor name string. For the default integration, this is `"yfinance"`.
+</ParamField>
+
+<ParamField path="underlying_price" type="float | None" default="None">
+  Underlying asset price reported by the vendor at the time of download.
+</ParamField>
+
+---
+
+## Examples
+
+### Manual
+
+Use `MarketInputs` directly when you have your own market data.
+
+```python
+from oipd import MarketInputs
+
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date="2025-04-01",
+    underlying_price=512.40,
+)
+```
+
+### Vendor snapshot
+
+When you use `sources.fetch_chain`, the returned `VendorSnapshot` provides the data you need to build `MarketInputs` with one step.
+
+```python
+from oipd import MarketInputs, sources
+
+chain, snapshot = sources.fetch_chain("SPY", horizon="3m")
+
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date=snapshot.asof,            # datetime from vendor
+    underlying_price=snapshot.underlying_price,
+)
+```
+
+### Rate convention
+
+```python
+from oipd import MarketInputs
+
+market = MarketInputs(
+    risk_free_rate=0.0516,
+    valuation_date="2025-04-01",
+    risk_free_rate_mode="continuous",
+    underlying_price=512.40,
+)
+```
+
+<Note>
+`MarketInputs` is frozen. Once created, none of its fields can be modified. To change any parameter, create a new instance.
+</Note>

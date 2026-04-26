@@ -1,0 +1,58 @@
+---
+title: "Mental model"
+description: "A short guide to OIPD's four main objects and the fit-then-query workflow."
+---
+
+OIPD turns option prices into two kinds of objects: volatility objects and probability objects.
+
+Volatility comes first. Probability is derived from fitted volatility.
+
+<Tip>
+Only need probabilities? You can skip the volatility objects and use `from_chain()` directly: `ProbCurve.from_chain(chain, market)` for one expiry, or `ProbSurface.from_chain(chain, market)` for many expiries. See [Probability layer](/concepts/probability-layer).
+</Tip>
+
+## Core objects
+
+| Use case | One expiry | Many expiries |
+|---|---|---|
+| **Implied volatility** | `VolCurve` | `VolSurface` |
+| **Market-implied probability** | `ProbCurve` | `ProbSurface` |
+
+An **expiry** is the date when an option contract ends.
+
+A **curve** is one expiry. A **surface** is many expiries linked through time.
+
+## Workflow
+
+Most work follows three steps:
+
+1. Create an object, such as `VolCurve()` or `VolSurface()`.
+2. Fit it to an options chain and `MarketInputs`.
+3. Query it for implied vol, prices, Greeks, or probabilities.
+
+```python
+from oipd import VolCurve
+
+vol = VolCurve().fit(chain, market)
+prob = vol.implied_distribution()
+
+print(prob.prob_below(100))
+```
+
+This is similar to fitting an econometric model: choose the model, estimate it, then ask it questions.
+
+## Object choice
+
+Use `VolCurve` when you have one expiry and want implied volatilities, option prices, Greeks, or a fitted smile plot.
+
+Use `VolSurface` when you have several expiries and want implied volatility across strikes and time.
+
+Use `ProbCurve` when you want probabilities for one expiry, such as `P(S < 100)` or the median future price.
+
+Use `ProbSurface` when you want those probability questions across several future dates.
+
+## Warnings
+
+Fitted objects keep structured warning details in `.warning_diagnostics`.
+
+Use them when a result looks odd. They record issues such as stale quotes, skipped expiries, or repairs applied while building a probability distribution.

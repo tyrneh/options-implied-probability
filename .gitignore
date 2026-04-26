@@ -121,6 +121,7 @@ PRDs/
 .codex/
 .codex/*
 AGENTS.md
+docs/AGENTS.md
 .agent/
 .conductor/
 ce-docs/

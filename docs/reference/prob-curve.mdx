@@ -1,0 +1,353 @@
+---
+title: "ProbCurve"
+description: "Build and query a risk-neutral probability distribution for one option expiry — querying tail probabilities, quantiles, moments, and plots."
+---
+
+`ProbCurve` represents the risk-neutral probability distribution implied by a single-expiry option chain. You can build one directly from an option chain, or derive one from a fitted `VolCurve` when you want to inspect the volatility fit first. You can then query probabilities, moments, and quantiles, export a DataFrame, or render a plot.
+
+```python
+from oipd import ProbCurve
+```
+
+## Constructors
+
+You normally build a `ProbCurve` in one of two ways:
+
+- Use `ProbCurve.from_chain(...)` when you want OIPD to fit the volatility smile and derive the probability curve in one step.
+- Use `VolCurve.implied_distribution(...)` when you already have a fitted `VolCurve` and want to reuse it.
+
+### `ProbCurve.from_chain`
+
+The one-step constructor. Accepts a single-expiry option chain DataFrame and market inputs, fits an SVI smile, and derives the risk-neutral distribution.
+
+```python
+ProbCurve.from_chain(
+    chain,
+    market,
+    column_mapping=None,
+    max_staleness_days=3,
+    cdf_violation_policy="warn",
+)
+```
+
+<ParamField path="chain" type="pd.DataFrame" required>
+  Option chain DataFrame for a single expiry. Must contain an `expiry` column and at least one supported price column (`last_price`, or `bid`/`ask`).
+</ParamField>
+
+<ParamField path="market" type="MarketInputs" required>
+  Market inputs providing the risk-free rate, valuation date, and underlying price.
+</ParamField>
+
+<ParamField path="column_mapping" type="dict[str, str] | None" default="None">
+  Optional mapping in the form `{"dataframe_column": "oipd_column"}`. For example, `{"type": "option_type"}` means your DataFrame has a `type` column and OIPD should treat it as `option_type`. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+</ParamField>
+
+<ParamField path="max_staleness_days" type="int" default="3">
+  Maximum age of option quotes in calendar days, relative to the valuation date. Rows older than this threshold are filtered out before fitting.
+</ParamField>
+
+<ParamField path="cdf_violation_policy" type="Literal['warn', 'raise']" default="warn">
+  Policy for handling CDF monotonicity violations during materialization. `"warn"` repairs the CDF and records a diagnostic warning; `"raise"` raises a `CalculationError` on material violations.
+</ParamField>
+
+**Raises:** `ValueError` if the chain contains multiple expiries. `CalculationError` if volatility calibration fails.
+
+---
+
+### From a fitted `VolCurve`
+
+If you have already fitted a `VolCurve`, call `implied_distribution()` on that object:
+
+```python
+from oipd import VolCurve
+
+vol = VolCurve().fit(chain, market)
+prob = vol.implied_distribution()
+```
+
+See [`VolCurve.implied_distribution`](/reference/vol-curve#implied_distributiongrid_points-cdf_violation_policy).
+
+---
+
+## Methods
+
+<Accordion title="pdf(price)">
+Evaluate the Probability Density Function at one or more price levels.
+
+```python
+prob.pdf(price)
+```
+
+<ParamField path="price" type="float | np.ndarray" required>
+  Price level or array of price levels to evaluate.
+</ParamField>
+
+<ResponseField name="returns" type="float | np.ndarray">
+  PDF value(s). Returns a scalar `float` when `price` is a scalar, or an `ndarray` otherwise. Values outside the fitted domain return `0.0`.
+</ResponseField>
+
+`ProbCurve` is also callable: `prob(price)` is an alias for `prob.pdf(price)`.
+</Accordion>
+
+<Accordion title="prob_below(price)">
+Probability that the asset price at expiry is strictly below `price`.
+
+```python
+prob.prob_below(price)
+```
+
+<ParamField path="price" type="float" required>
+  Upper bound price level.
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  P(S &lt; price), interpolated from the CDF. Returns `0.0` below the domain and `1.0` above.
+</ResponseField>
+</Accordion>
+
+<Accordion title="prob_above(price)">
+Probability that the asset price at expiry is at or above `price`.
+
+```python
+prob.prob_above(price)
+```
+
+<ParamField path="price" type="float" required>
+  Lower bound price level.
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  P(S &gt;= price). Computed as `1 - prob_below(price)`.
+</ResponseField>
+</Accordion>
+
+<Accordion title="prob_between(low, high)">
+Probability that the asset price at expiry falls in the interval `[low, high)`.
+
+```python
+prob.prob_between(low, high)
+```
+
+<ParamField path="low" type="float" required>
+  Lower bound of the interval.
+</ParamField>
+
+<ParamField path="high" type="float" required>
+  Upper bound of the interval. Must be greater than or equal to `low`.
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  P(low &lt;= S &lt; high).
+</ResponseField>
+
+**Raises:** `ValueError` if `low > high`.
+</Accordion>
+
+<Accordion title="mean()">
+Expected value of the asset price under the fitted PDF.
+
+```python
+prob.mean()
+```
+
+<ResponseField name="returns" type="float">
+  E[S], computed by numerical integration of `price × pdf` over the domain.
+</ResponseField>
+</Accordion>
+
+<Accordion title="variance()">
+Variance of the asset price under the fitted PDF.
+
+```python
+prob.variance()
+```
+
+<ResponseField name="returns" type="float">
+  Var[S] = E[(S - mean)²].
+</ResponseField>
+</Accordion>
+
+<Accordion title="skew()">
+Skewness (third standardized moment) of the fitted PDF.
+
+```python
+prob.skew()
+```
+
+<ResponseField name="returns" type="float">
+  Skew = E[(S - μ)³] / σ³. Negative values indicate a fat left tail, which is typical for equity distributions.
+</ResponseField>
+</Accordion>
+
+<Accordion title="kurtosis()">
+Excess kurtosis (fourth standardized moment minus 3) of the fitted PDF.
+
+```python
+prob.kurtosis()
+```
+
+<ResponseField name="returns" type="float">
+  Excess kurtosis = E[(S - μ)⁴] / σ⁴ - 3. Zero implies a normal distribution; positive values indicate fat tails.
+</ResponseField>
+</Accordion>
+
+<Accordion title="quantile(q)">
+Inverse CDF: returns the price level at which the cumulative probability equals `q`.
+
+```python
+prob.quantile(q)
+```
+
+<ParamField path="q" type="float" required>
+  Target probability level. Must be in the open interval (0, 1).
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  Price S such that P(Asset &lt; S) = q.
+</ResponseField>
+
+**Raises:** `ValueError` if `q` is not in (0, 1).
+</Accordion>
+
+<Accordion title="density_results(domain, points, full_domain)">
+Export the fitted distribution as a DataFrame for analysis or custom plotting.
+
+```python
+prob.density_results(domain=None, points=200, full_domain=False)
+```
+
+<ParamField path="domain" type="tuple[float, float] | None" default="None">
+  Optional explicit export domain as `(min_price, max_price)`. When provided, the native distribution is resampled onto this range. Takes precedence over `full_domain`.
+</ParamField>
+
+<ParamField path="points" type="int" default="200">
+  Number of output rows when resampling to a compact or explicit domain. Ignored when `full_domain=True` and no `domain` is specified.
+</ParamField>
+
+<ParamField path="full_domain" type="bool" default="False">
+  When `True` and `domain` is not set, returns the full native distribution arrays without resampling.
+</ParamField>
+
+<ResponseField name="returns" type="pd.DataFrame">
+  DataFrame with columns `price`, `pdf`, and `cdf`.
+</ResponseField>
+</Accordion>
+
+<Accordion title="plot(kind, figsize, title, xlim, ylim, points, full_domain)">
+Render the risk-neutral probability distribution as a matplotlib figure.
+
+```python
+prob.plot(
+    kind="both",
+    figsize=(10, 5),
+    title=None,
+    xlim=None,
+    ylim=None,
+    points=800,
+    full_domain=False,
+)
+```
+
+<ParamField path="kind" type="Literal['pdf', 'cdf', 'both']" default="both">
+  Which distribution curve(s) to render.
+</ParamField>
+
+<ParamField path="figsize" type="tuple[float, float]" default="(10, 5)">
+  Figure size as (width, height) in inches.
+</ParamField>
+
+<ParamField path="title" type="str | None" default="None">
+  Custom title. Auto-generated from market metadata when omitted.
+</ParamField>
+
+<ParamField path="xlim" type="tuple[float, float] | None" default="None">
+  Optional explicit x-axis (price) limits.
+</ParamField>
+
+<ParamField path="ylim" type="tuple[float, float] | None" default="None">
+  Optional explicit y-axis limits.
+</ParamField>
+
+<ParamField path="points" type="int" default="800">
+  Number of display points for plot resampling.
+</ParamField>
+
+<ParamField path="full_domain" type="bool" default="False">
+  When `True` and `xlim` is not set, plots across the full native probability domain instead of the compact default view domain.
+</ParamField>
+
+<ResponseField name="returns" type="matplotlib.figure.Figure">
+  The rendered matplotlib figure.
+</ResponseField>
+</Accordion>
+
+---
+
+## Properties
+
+<ResponseField name="prices" type="np.ndarray">
+  The default price grid used for standard visualization. Accessing this property triggers lazy distribution materialization on first call.
+</ResponseField>
+
+<ResponseField name="pdf_values" type="np.ndarray">
+  Probability densities over the stored price grid, in decimal form.
+</ResponseField>
+
+<ResponseField name="cdf_values" type="np.ndarray">
+  Cumulative probabilities over the stored price grid, in decimal form.
+</ResponseField>
+
+<ResponseField name="warning_diagnostics" type="WarningDiagnostics">
+  Structured diagnostic events recorded during fitting and materialization. Inspect `.warning_diagnostics.events` for details on data-quality issues, model-risk warnings, or CDF repairs.
+</ResponseField>
+
+<ResponseField name="resolved_market" type="ResolvedMarket">
+  Immutable snapshot of the market inputs used during calibration, including the resolved underlying price, risk-free rate, and valuation date.
+</ResponseField>
+
+<ResponseField name="metadata" type="dict[str, Any]">
+  Metadata captured during estimation, including the expiry timestamp, time to expiry in years, diagnostics, and domain information.
+</ResponseField>
+
+---
+
+## Example
+
+```python
+from oipd import ProbCurve, MarketInputs, sources
+
+# 1. Fetch a single-expiry option chain
+expiries = sources.list_expiry_dates("SPY")
+chain, snapshot = sources.fetch_chain("SPY", expiries=expiries[0])
+
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date=snapshot.asof,
+    underlying_price=snapshot.underlying_price,
+)
+
+# 2. Build the probability curve
+prob = ProbCurve.from_chain(chain, market)
+
+# 3. Query probabilities
+print(prob.prob_below(500))        # P(SPY < 500 at expiry)
+print(prob.prob_between(490, 520)) # P(490 <= SPY < 520)
+print(prob.prob_above(550))        # P(SPY >= 550)
+
+# 4. Moments
+print(f"Mean: {prob.mean():.2f}")
+print(f"Skew: {prob.skew():.4f}")
+print(f"Excess kurtosis: {prob.kurtosis():.4f}")
+
+# 5. Quantiles
+print(f"5th percentile: {prob.quantile(0.05):.2f}")
+print(f"95th percentile: {prob.quantile(0.95):.2f}")
+
+# 6. Export as DataFrame
+df = prob.density_results(points=300)
+print(df.head())
+
+# 7. Plot
+fig = prob.plot(kind="both", title="SPY Risk-Neutral Distribution")
+fig.savefig("prob_curve.png", dpi=150, bbox_inches="tight")
+```

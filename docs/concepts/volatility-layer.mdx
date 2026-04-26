@@ -1,0 +1,65 @@
+---
+title: "Volatility layer"
+description: "How OIPD fits implied volatility curves and surfaces before deriving probabilities."
+---
+
+The volatility layer is the first stage in OIPD.
+
+It takes market option prices and attempts to fit an arbitrage-free implied-volatility model.
+
+## Implied volatility
+
+An option price can be translated into the volatility assumption that would make a pricing model produce that price.
+
+That translated number is **implied volatility**.
+
+It is not a forecast from OIPD. It is the volatility embedded in market prices.
+
+## Curves and surfaces
+
+`VolCurve` fits one expiry.
+
+`VolSurface` fits several expiries and lets you query between them.
+
+```python
+from oipd import VolCurve
+
+vol = VolCurve().fit(chain, market)
+ivs = vol.implied_vol([95, 100, 105])
+```
+
+The result is a fitted object. You can ask it for implied vols, option prices, Greeks, plots, or a probability distribution.
+
+## Smile
+
+Options with different strikes usually imply different volatilities.
+
+The shape across strikes is called the volatility **smile**.
+
+OIPD fits that smile with SVI, the public method exposed by `VolCurve` and `VolSurface`.
+
+## Surface
+
+A volatility **surface** adds the time dimension.
+
+Instead of one smile, `VolSurface` fits smiles across expiries. It then supports queries such as:
+
+```python
+from oipd import VolSurface
+
+surface = VolSurface().fit(chain, market)
+iv = surface.implied_vol(100, t=45 / 365)
+```
+
+Here `t` is time to expiry in years. OIPD also accepts date-like maturity inputs where the public API supports them.
+
+## Use cases
+
+Use it when you care about:
+
+- The fitted implied-volatility smile or surface.
+- Model option prices from the fitted volatility.
+- Greeks such as delta, gamma, vega, theta, and rho.
+- Converting fitted volatility into a probability object with `.implied_distribution()`.
+
+For detailed parameters and return types, use the API Reference pages for `VolCurve` and `VolSurface`.

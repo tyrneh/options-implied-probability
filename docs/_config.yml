@@ -1,9 +1,0 @@
-remote_theme: just-the-docs/just-the-docs
-title: OIPD Docs
-url: https://open-lemma.github.io
-baseurl: /options-implied-probability
-github_username: Open-Lemma
-repository: Open-Lemma/options-implied-probability
-plugins:
-  - jekyll-remote-theme
-math: katex

@@ -1,0 +1,85 @@
+---
+title: "Probability layer"
+description: "How OIPD turns fitted volatility into market-implied probability distributions."
+---
+
+The probability layer turns fitted volatility into probabilities over future prices.
+
+It answers questions such as: what probability does the options market imply that a stock will be above $100 at next week's expiry?
+
+## Risk-neutral probabilities
+
+OIPD returns **risk-neutral** probabilities.
+
+They are not real-world forecasts. They are probabilities consistent with option prices after discounting and the chosen pricing assumptions.
+
+## Curve or surface
+
+`ProbCurve` is for one expiry.
+
+`ProbSurface` is for many expiries.
+
+You can build probability objects directly from chains:
+
+```python
+from oipd import ProbCurve
+
+prob = ProbCurve.from_chain(chain, market)
+print(prob.prob_below(100))
+```
+
+Or you can fit volatility first and convert it:
+
+```python
+from oipd import VolCurve
+
+vol = VolCurve().fit(chain, market)
+prob = vol.implied_distribution()
+```
+
+The second path is useful when you want to inspect the volatility fit before using the probabilities.
+
+## PDF and CDF
+
+The probability layer exposes two standard views: the PDF and the CDF.
+
+The **PDF** is the probability density function. It shows where probability is concentrated across possible future prices. A higher PDF value around $100 means more probability mass is sitting near $100 than near prices with lower density.
+
+The **CDF** is the cumulative distribution function. It answers a direct threshold question: what is the probability that the future price ends below this level?
+
+```python
+prob.pdf(100)
+prob.prob_below(100)
+prob.prob_between(90, 110)
+prob.quantile(0.5)
+```
+
+`quantile(0.5)` returns the median price under the fitted risk-neutral distribution.
+
+## Across time
+
+`ProbSurface` lets you ask the same questions at different maturities:
+
+```python
+from oipd import ProbSurface
+
+surface = ProbSurface.from_chain(chain, market)
+prob_45d = surface.cdf(100, t=45 / 365)
+```
+
+You can also extract one date as a `ProbCurve`:
+
+```python
+curve = surface.slice(surface.expiries[0])
+curve.prob_below(100)
+```
+
+## Diagnostics
+
+Probability calculations can expose numerical issues, especially around CDF monotonicity.
+
+By default, OIPD uses `cdf_violation_policy="warn"`: it repairs material monotonicity issues and records warnings.
+
+Use `cdf_violation_policy="raise"` when you prefer the calculation to fail instead.
+
+Inspect `.warning_diagnostics` on fitted probability objects when results need review.

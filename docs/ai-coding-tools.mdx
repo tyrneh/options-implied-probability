@@ -1,0 +1,113 @@
+---
+title: "Connect AI coding tools"
+description: "Connect the hosted OIPD docs MCP server to Claude Code, OpenAI Codex, Cursor, or VS Code so AI agents can use the docs while writing OIPD code."
+---
+
+You can connect OIPD's hosted docs to AI coding tools through MCP. MCP, or Model Context Protocol, is a standard way for an AI tool to ask an external source for context. In this case, the external source is the OIPD documentation.
+
+When you connect the docs MCP server, your coding agent can search the OIPD docs and read relevant pages while it writes code. That helps the agent use current OIPD examples, object names, and workflow guidance instead of relying only on what it already knows.
+
+## Find the MCP URL
+
+The OIPD docs MCP server is available at:
+
+```text
+https://docs.open-lemma.com/mcp
+```
+
+You can also use the page menu's **Copy MCP server URL** or **Connect to Cursor** option instead of typing the URL manually.
+
+## Choose where to add the server
+
+For personal use, add the MCP server to your own editor or coding agent settings. For a team project, only commit shared MCP configuration if your team has agreed to use the same docs server.
+
+This connection gives the agent documentation context. It does not install OIPD in your Python environment. If you have not installed OIPD yet, see [Installation](/installation).
+
+## Claude Code
+
+Run this command from the project where you use Claude Code:
+
+```bash
+claude mcp add --transport http OIPD https://docs.open-lemma.com/mcp
+```
+
+Check that Claude Code registered the server:
+
+```bash
+claude mcp list
+```
+
+Inside Claude Code, you can also run:
+
+```text
+/mcp
+```
+
+Use it when you want to check the server status or complete any authentication flow required by your tool.
+
+## OpenAI Codex
+
+Run this command in your terminal:
+
+```bash
+codex mcp add OIPD --url https://docs.open-lemma.com/mcp
+```
+
+Check that Codex registered the server:
+
+```bash
+codex mcp list
+```
+
+If Codex is already running, start a new Codex session so it can load the new MCP server.
+
+## Cursor
+
+In Cursor, open the command palette and search for **Open MCP settings**. Add this server to `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "OIPD": {
+      "url": "https://docs.open-lemma.com/mcp"
+    }
+  }
+}
+```
+
+After saving the file, open Cursor chat and ask:
+
+```text
+What MCP tools do you have available?
+```
+
+Cursor should show the OIPD docs server as an available MCP tool.
+
+## VS Code
+
+In VS Code, run **MCP: Open Workspace Folder MCP Configuration** from the command palette. If `.vscode/mcp.json` does not exist, VS Code creates it for you.
+
+Add this configuration:
+
+```json
+{
+  "servers": {
+    "oipdDocs": {
+      "type": "http",
+      "url": "https://docs.open-lemma.com/mcp"
+    }
+  }
+}
+```
+
+Then run **MCP: List Servers** from the command palette to confirm that VS Code can see the server.
+
+## Ask the agent to use the docs
+
+Once the MCP server is connected, be explicit in your prompt:
+
+```text
+Use the OIPD docs MCP server for context. Write a Python script that loads options data, builds the required market inputs, fits a single-expiry probability curve, and plots the result.
+```
+
+The agent can then use the docs as context while it generates code. You should still review the output, run the code locally, and check any assumptions about your data source, ticker, expiry date, and Python environment.

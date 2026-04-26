@@ -1,0 +1,407 @@
+---
+title: "VolCurve"
+description: "Fit an SVI implied volatility smile for one expiry, query IVs, compute Greeks, and derive a risk-neutral probability distribution with OIPD."
+---
+
+`VolCurve` fits an implied volatility smile for a single option expiry using the SVI parametrization. After calling `fit`, you can query implied volatilities, total variance, option prices, and all standard Greeks across any set of strikes. You can also derive the full risk-neutral probability distribution from the fitted smile via `implied_distribution`.
+
+```python
+from oipd import VolCurve
+```
+
+## Constructor
+
+```python
+VolCurve(
+    method="svi",
+    pricing_engine="black76",
+    price_method="mid",
+    max_staleness_days=3,
+)
+```
+
+<ParamField path="method" type="str" default="svi">
+  Calibration algorithm. Currently `"svi"` is the supported method.
+</ParamField>
+
+<ParamField path="pricing_engine" type="Literal['black76', 'bs']" default="black76">
+  Pricing model used for implied volatility inversion. Use `"black76"` for options on futures or forwards, and `"bs"` for spot options (Black-Scholes). The choice affects how Greeks are computed and how the forward price is resolved.
+</ParamField>
+
+<ParamField path="price_method" type="Literal['mid', 'last']" default="mid">
+  Quote type to fit against. `"mid"` uses the midpoint of bid and ask, with `last_price` as a fallback when available. `"last"` fits against `last_price`.
+</ParamField>
+
+<ParamField path="max_staleness_days" type="int" default="3">
+  Maximum age of option quotes in calendar days, relative to the valuation date. Rows older than this threshold are excluded before fitting.
+</ParamField>
+
+---
+
+## Methods
+
+<Accordion title="fit(chain, market, column_mapping)">
+Calibrate the SVI smile to market data. Must be called before any query method. Returns `self` for chaining.
+
+```python
+vol.fit(chain, market, column_mapping=None)
+```
+
+<ParamField path="chain" type="pd.DataFrame" required>
+  Option chain DataFrame containing a single expiry. Must include an `expiry` column and at least one supported price column (`last_price`, or `bid`/`ask`).
+</ParamField>
+
+<ParamField path="market" type="MarketInputs" required>
+  Market inputs providing the risk-free rate, valuation date, and underlying price.
+</ParamField>
+
+<ParamField path="column_mapping" type="dict[str, str] | None" default="None">
+  Optional mapping in the form `{"dataframe_column": "oipd_column"}`. For example, `{"type": "option_type"}` means your DataFrame has a `type` column and OIPD should treat it as `option_type`. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+</ParamField>
+
+<ResponseField name="returns" type="VolCurve">
+  The fitted `VolCurve` instance (self), enabling method chaining.
+</ResponseField>
+
+**Raises:** `ValueError` if the `expiry` column is missing, invalid, or contains multiple expiries. `CalculationError` if calibration fails.
+</Accordion>
+
+<Accordion title="implied_vol(strikes)">
+Return implied volatilities for the given strikes. `vol(strikes)` is a callable alias.
+
+```python
+vol.implied_vol(strikes)
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices to evaluate.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Implied volatilities in decimal form (e.g., `0.20` for 20%).
+</ResponseField>
+
+**Raises:** `ValueError` if `fit` has not been called.
+</Accordion>
+
+<Accordion title="total_variance(strikes)">
+Return total variance w = σ² × T for the given strikes.
+
+```python
+vol.total_variance(strikes)
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Total variance values.
+</ResponseField>
+</Accordion>
+
+<Accordion title="iv_results(domain, points, include_observed)">
+Return a DataFrame comparing the fitted smile against market observations. Useful for inspecting calibration quality.
+
+```python
+vol.iv_results(domain=None, points=200, include_observed=True)
+```
+
+<ParamField path="domain" type="tuple[float, float] | None" default="None">
+  Optional `(min_strike, max_strike)` range. Inferred from the data when omitted.
+</ParamField>
+
+<ParamField path="points" type="int" default="200">
+  Number of strike points to sample for the fitted curve.
+</ParamField>
+
+<ParamField path="include_observed" type="bool" default="True">
+  Whether to include observed market IV columns (bid IV, ask IV, last IV) in the output.
+</ParamField>
+
+<ResponseField name="returns" type="pd.DataFrame">
+  DataFrame with columns including `strike` and `fitted_iv`, plus optional observed market IV columns when `include_observed=True`.
+</ResponseField>
+</Accordion>
+
+<Accordion title="plot(x_axis, y_axis, include_observed, figsize, title, xlim, ylim)">
+Plot the fitted implied volatility smile.
+
+```python
+vol.plot(
+    x_axis="strike",
+    y_axis="iv",
+    include_observed=True,
+    figsize=(10, 5),
+    title=None,
+    xlim=None,
+    ylim=None,
+)
+```
+
+<ParamField path="x_axis" type="Literal['strike', 'log_moneyness']" default="strike">
+  X-axis mode. `"log_moneyness"` requires a positive forward price in fit metadata.
+</ParamField>
+
+<ParamField path="y_axis" type="Literal['iv', 'total_variance']" default="iv">
+  Metric on the y-axis.
+</ParamField>
+
+<ParamField path="include_observed" type="bool" default="True">
+  Whether to overlay observed market data points.
+</ParamField>
+
+<ParamField path="figsize" type="tuple[float, float]" default="(10, 5)">
+  Figure size as (width, height) in inches.
+</ParamField>
+
+<ParamField path="title" type="str | None" default="None">
+  Custom title. Auto-generated from fit metadata when omitted.
+</ParamField>
+
+<ParamField path="xlim" type="tuple[float, float] | None" default="None">
+  Optional x-axis limits.
+</ParamField>
+
+<ParamField path="ylim" type="tuple[float, float] | None" default="None">
+  Optional y-axis limits.
+</ParamField>
+
+<ResponseField name="returns" type="matplotlib.figure.Figure">
+  The rendered matplotlib figure.
+</ResponseField>
+</Accordion>
+
+<Accordion title="price(strikes, call_or_put)">
+Calculate theoretical option prices using the fitted volatility and the configured pricing engine.
+
+```python
+vol.price(strikes, call_or_put="call")
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ParamField path="call_or_put" type="Literal['call', 'put']" default="call">
+  Option type. Put prices are derived via put-call parity.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Theoretical option prices.
+</ResponseField>
+</Accordion>
+
+<Accordion title="delta(strikes, call_or_put)">
+Calculate Delta (∂V/∂S for Black-Scholes, or ∂V/∂F for Black-76) at the given strikes.
+
+```python
+vol.delta(strikes, call_or_put="call")
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ParamField path="call_or_put" type="Literal['call', 'put']" default="call">
+  Option type.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Delta values.
+</ResponseField>
+</Accordion>
+
+<Accordion title="gamma(strikes)">
+Calculate Gamma (∂²V/∂S²) at the given strikes. Gamma is the same for calls and puts.
+
+```python
+vol.gamma(strikes)
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Gamma values.
+</ResponseField>
+</Accordion>
+
+<Accordion title="vega(strikes)">
+Calculate Vega (∂V/∂σ) at the given strikes. Vega is the same for calls and puts.
+
+```python
+vol.vega(strikes)
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Vega values.
+</ResponseField>
+</Accordion>
+
+<Accordion title="theta(strikes, call_or_put)">
+Calculate Theta (∂V/∂t, per year) at the given strikes.
+
+```python
+vol.theta(strikes, call_or_put="call")
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ParamField path="call_or_put" type="Literal['call', 'put']" default="call">
+  Option type.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Theta values. Negative values represent time decay.
+</ResponseField>
+</Accordion>
+
+<Accordion title="rho(strikes, call_or_put)">
+Calculate Rho (∂V/∂r) at the given strikes.
+
+```python
+vol.rho(strikes, call_or_put="call")
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ParamField path="call_or_put" type="Literal['call', 'put']" default="call">
+  Option type.
+</ParamField>
+
+<ResponseField name="returns" type="np.ndarray">
+  Rho values.
+</ResponseField>
+</Accordion>
+
+<Accordion title="greeks(strikes, call_or_put)">
+Calculate all Greeks at once and return them as a single DataFrame.
+
+```python
+vol.greeks(strikes, call_or_put="call")
+```
+
+<ParamField path="strikes" type="float | Sequence[float] | np.ndarray" required>
+  One or more strike prices.
+</ParamField>
+
+<ParamField path="call_or_put" type="Literal['call', 'put']" default="call">
+  Option type for directional Greeks (delta, theta, rho).
+</ParamField>
+
+<ResponseField name="returns" type="pd.DataFrame">
+  DataFrame with columns `strike`, `delta`, `gamma`, `vega`, `theta`, and `rho`.
+</ResponseField>
+</Accordion>
+
+<Accordion title="implied_distribution(grid_points, cdf_violation_policy)">
+Derive the risk-neutral probability distribution from the fitted smile. Returns a `ProbCurve`.
+
+```python
+vol.implied_distribution(grid_points=None, cdf_violation_policy="warn")
+```
+
+<ParamField path="grid_points" type="int | None" default="None">
+  Native probability grid size. `None` uses the adaptive default policy.
+</ParamField>
+
+<ParamField path="cdf_violation_policy" type="Literal['warn', 'raise']" default="warn">
+  Policy for CDF monotonicity violations. `"warn"` repairs and warns; `"raise"` fails on material violations.
+</ParamField>
+
+<ResponseField name="returns" type="ProbCurve">
+  The implied risk-neutral probability distribution.
+</ResponseField>
+
+**Raises:** `ValueError` if `fit` has not been called.
+</Accordion>
+
+---
+
+## Properties
+
+<ResponseField name="atm_vol" type="float">
+  At-the-money implied volatility, defined at Strike = Forward Price. Returned in decimal form (e.g., `0.20` for 20%).
+</ResponseField>
+
+<ResponseField name="forward_price" type="float | None">
+  The parity-implied forward price used in calibration. Returns `None` if not available.
+</ResponseField>
+
+<ResponseField name="params" type="dict">
+  Fitted SVI parameters: `a`, `b`, `rho`, `m`, and `sigma`.
+</ResponseField>
+
+<ResponseField name="diagnostics" type="dict">
+  Calibration diagnostics captured during fitting, such as `{"rmse": 0.0012}`.
+</ResponseField>
+
+<ResponseField name="expiries" type="tuple">
+  A 1-element tuple containing the fitted expiry timestamp. Returns an empty tuple if the curve has not been fitted.
+</ResponseField>
+
+<ResponseField name="resolved_market" type="ResolvedMarket">
+  Immutable snapshot of the market inputs used during calibration.
+</ResponseField>
+
+<ResponseField name="warning_diagnostics" type="WarningDiagnostics">
+  Structured diagnostic events for this curve. Inspect `.warning_diagnostics.events` for data-quality and model-risk details.
+</ResponseField>
+
+---
+
+## Example
+
+```python
+import numpy as np
+from oipd import VolCurve, MarketInputs, sources
+
+# 1. Fetch a single-expiry option chain
+expiries = sources.list_expiry_dates("SPY")
+chain, snapshot = sources.fetch_chain("SPY", expiries=expiries[0])
+
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date=snapshot.asof,
+    underlying_price=snapshot.underlying_price,
+)
+
+# 2. Fit the vol smile
+vol = VolCurve(method="svi", pricing_engine="black76")
+vol.fit(chain, market)
+
+# 3. Query implied vols
+strikes = np.arange(480, 560, 5)
+ivs = vol.implied_vol(strikes)
+print("ATM vol:", vol.atm_vol)
+print("Forward:", vol.forward_price)
+print("SVI params:", vol.params)
+print("Diagnostics:", vol.diagnostics)
+
+# 4. Greeks
+greeks_df = vol.greeks(strikes, call_or_put="call")
+print(greeks_df)
+
+# 5. Theoretical prices
+prices = vol.price(strikes, call_or_put="call")
+print("Call prices:", prices)
+
+# 6. Plot the smile
+fig = vol.plot(include_observed=True, title="SPY Vol Smile")
+fig.savefig("vol_curve.png", dpi=150, bbox_inches="tight")
+
+# 7. Derive the probability distribution
+prob = vol.implied_distribution()
+print(f"Mean: {prob.mean():.2f}")
+print(f"Prob below 500: {prob.prob_below(500):.4f}")
+```

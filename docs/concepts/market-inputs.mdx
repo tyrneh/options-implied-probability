@@ -1,0 +1,88 @@
+---
+title: "Market inputs"
+description: "What OIPD needs to know about rates, dates, and prices before fitting option data."
+---
+
+OIPD needs a small market snapshot before it can read an options chain.
+
+That snapshot is `MarketInputs`.
+
+## Fields
+
+`MarketInputs` has two required fields:
+
+| Field | Meaning |
+|---|---|
+| `valuation_date` | The date or time the option prices belong to |
+| `risk_free_rate` | The rate used to discount option payoffs |
+
+It also accepts one optional field:
+
+| Field | Meaning |
+|---|---|
+| `underlying_price` | The current price of the asset or futures contract |
+
+The dataclass allows `underlying_price=None`, but fitting does not. Before you call `.fit`, populate it yourself or take it from a `VendorSnapshot`.
+
+<Note>
+By default, you do not need to enter dividends. OIPD infers the forward price from put-call parity and uses Black-76 for IV inversion. The fitted forward already reflects the market's expected carry, including dividends.
+</Note>
+
+## Valuation date
+
+Options are priced over time to expiry.
+
+If the valuation date is wrong, OIPD will measure the remaining time incorrectly. That affects implied volatility and the probability distribution derived from it.
+
+Use the timestamp attached to the data where possible.
+
+## Underlying price
+
+`underlying_price` means the price of the thing the option is written on.
+
+For stock or ETF options, it is the spot price.
+
+For futures options, it is the relevant futures price.
+
+This distinction matters because OIPD uses the price and the option chain to infer a forward price during calibration.
+
+## Rates
+
+By default, `risk_free_rate` is read as a simple annualized rate.
+
+Pass `risk_free_rate_mode="continuous"` if your rate is continuously compounded.
+
+## Manual example
+
+```python
+from oipd import MarketInputs
+
+market = MarketInputs(
+    valuation_date="2024-01-15",
+    underlying_price=175.0,
+    risk_free_rate=0.04,
+)
+```
+
+## Vendor example
+
+`sources.fetch_chain` returns both an options chain and a `VendorSnapshot`.
+
+By default, OIPD tries to fetch the ticker from yfinance.
+
+The snapshot stores the vendor timestamp and underlying price.
+
+```python
+from oipd import MarketInputs, sources
+
+expiry = sources.list_expiry_dates("AAPL")[0]
+chain, snapshot = sources.fetch_chain("AAPL", expiries=[expiry])
+
+market = MarketInputs(
+    valuation_date=snapshot.asof,
+    underlying_price=snapshot.underlying_price,
+    risk_free_rate=0.04,
+)
+```
+
+Use `snapshot.asof` rather than `datetime.now()`. It ties the model to the time when the option prices were observed.

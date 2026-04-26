@@ -1,0 +1,228 @@
+---
+title: "Sources"
+description: "Fetch live option chains, list available expiry dates, and normalize chain data from CSV files or DataFrames using the oipd.sources module."
+---
+
+The `oipd.sources` module provides a unified interface for loading option chain data. You can fetch live data from vendors, list available expiry dates, or load chains from CSV files and existing DataFrames. All loading functions return DataFrames that are normalized to OIPD's standard column names and ready to pass directly to `VolCurve.fit`, `VolSurface.fit`, or the probability constructors.
+
+```python
+from oipd import sources
+```
+
+---
+
+## Functions
+
+### `sources.list_expiry_dates`
+
+List all available option expiry dates for a ticker from a vendor.
+
+```python
+sources.list_expiry_dates(ticker, vendor="yfinance", **vendor_kwargs)
+```
+
+<ParamField path="ticker" type="str" required>
+  Ticker symbol, e.g. `"AAPL"` or `"SPY"`.
+</ParamField>
+
+<ParamField path="vendor" type="str" default="yfinance">
+  Vendor alias. Currently `"yfinance"` is the built-in supported vendor.
+</ParamField>
+
+<ParamField path="**vendor_kwargs" type="Any">
+  Additional keyword arguments forwarded to the vendor implementation.
+</ParamField>
+
+<ResponseField name="returns" type="list[str]">
+  Available expiry dates as ISO-format strings (`YYYY-MM-DD`), sorted ascending.
+</ResponseField>
+
+**Raises:** `NotImplementedError` if the specified vendor does not support expiry listing.
+
+```python
+expiries = sources.list_expiry_dates("SPY")
+print(expiries[:5])
+# ['<next expiry>', '<later expiry>', ...]
+```
+
+---
+
+### `sources.fetch_chain`
+
+Fetch an option chain from a vendor for one or more expiry dates, and return it alongside a `VendorSnapshot`.
+
+```python
+sources.fetch_chain(
+    ticker,
+    expiries=None,
+    horizon=None,
+    vendor="yfinance",
+    column_mapping=None,
+    cache_enabled=True,
+    cache_ttl_minutes=15,
+)
+```
+
+<ParamField path="ticker" type="str" required>
+  Ticker symbol, e.g. `"AAPL"` or `"SPY"`.
+</ParamField>
+
+<ParamField path="expiries" type="str | date | list[str] | list[date] | None" default="None">
+  One or more specific expiry dates to fetch. Accepts a single ISO date string, a `date` object, or a list of either. Mutually exclusive with `horizon`.
+</ParamField>
+
+<ParamField path="horizon" type="str | None" default="None">
+  Automatically fetch all expiries within the given time horizon. Accepts strings like `"3m"`, `"6m"`, or `"1y"`. Mutually exclusive with `expiries`.
+</ParamField>
+
+<ParamField path="vendor" type="str" default="yfinance">
+  Vendor alias.
+</ParamField>
+
+<ParamField path="column_mapping" type="dict[str, str] | None" default="None">
+  Optional mapping in the form `{"vendor_column": "oipd_column"}`. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+</ParamField>
+
+<ParamField path="cache_enabled" type="bool" default="True">
+  Whether to use the vendor response cache.
+</ParamField>
+
+<ParamField path="cache_ttl_minutes" type="int" default="15">
+  Number of minutes to keep cached vendor responses.
+</ParamField>
+
+<ResponseField name="returns" type="tuple[pd.DataFrame, VendorSnapshot]">
+  A 2-tuple of `(chain_dataframe, vendor_snapshot)`. The chain DataFrame is normalized to OIPD standard column names. The snapshot records the vendor name, download timestamp, and underlying price.
+</ResponseField>
+
+**Raises:** `ValueError` if both `expiries` and `horizon` are specified, or if neither is specified. `ValueError` if no expiries are found within the given horizon.
+
+```python
+from oipd import sources, MarketInputs
+
+# Fetch one expiry
+expiries = sources.list_expiry_dates("SPY")
+chain, snapshot = sources.fetch_chain("SPY", expiries=expiries[0])
+
+# Fetch all expiries within a 3-month horizon
+chain, snapshot = sources.fetch_chain("SPY", horizon="3m")
+
+# Use snapshot to build MarketInputs
+market = MarketInputs(
+    risk_free_rate=0.053,
+    valuation_date=snapshot.asof,
+    underlying_price=snapshot.underlying_price,
+)
+```
+
+<Note>
+You must specify exactly one of `expiries` or `horizon`. Providing both raises `ValueError`.
+</Note>
+
+---
+
+### `sources.from_csv`
+
+Load and normalize long-form option chain data from a CSV file. For fitting, use one row per contract with `strike`, `expiry`, `option_type`, and either `bid` / `ask` or `last_price`.
+
+```python
+sources.from_csv(path, column_mapping=None)
+```
+
+<ParamField path="path" type="str" required>
+  Filesystem path to the CSV file.
+</ParamField>
+
+<ParamField path="column_mapping" type="dict[str, str] | None" default="None">
+  Optional mapping in the form `{"csv_column": "oipd_column"}`. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+</ParamField>
+
+<ResponseField name="returns" type="pd.DataFrame">
+  Cleaned and normalized DataFrame, sorted by strike, with numeric quote columns coerced and `option_type` normalized to `"C"` / `"P"`.
+</ResponseField>
+
+**Raises:** `FileNotFoundError` if the file does not exist. `CSVReadError` if the file cannot be read. `ValueError` if the file is empty or missing required columns.
+
+```python
+from oipd import sources
+
+# CSV already uses standard column names
+chain = sources.from_csv("data/spy_options.csv")
+
+# CSV uses non-standard column names
+chain = sources.from_csv(
+    "data/spy_options.csv",
+    column_mapping={
+        "K": "strike",
+        "call_ask": "ask",
+        "call_bid": "bid",
+        "type": "option_type",
+        "exp": "expiry",
+    },
+)
+```
+
+---
+
+### `sources.from_dataframe`
+
+Normalize an existing in-memory DataFrame to OIPD standard column names and validation rules.
+
+```python
+sources.from_dataframe(df, column_mapping=None)
+```
+
+<ParamField path="df" type="pd.DataFrame" required>
+  Input DataFrame containing option chain data. Must not be empty and must contain at least 5 rows.
+</ParamField>
+
+<ParamField path="column_mapping" type="dict[str, str] | None" default="None">
+  Optional mapping in the form `{"dataframe_column": "oipd_column"}`. See [Standard columns](/guides/data-sources#standard-columns) for the target names.
+</ParamField>
+
+<ResponseField name="returns" type="pd.DataFrame">
+  Cleaned and normalized DataFrame with the same validation rules as `from_csv`.
+</ResponseField>
+
+**Raises:** `TypeError` if `df` is not a DataFrame. `ValueError` if `df` is empty, missing required columns, or contains fewer than 5 rows after cleaning.
+
+```python
+from oipd import sources
+import pandas as pd
+
+raw = pd.read_parquet("options_archive.parquet")
+
+chain = sources.from_dataframe(
+    raw,
+    column_mapping={"K": "strike", "iv_type": "option_type"},
+)
+```
+
+---
+
+## Readers
+
+The module-level functions delegate to these reader classes, which you can instantiate directly if you need more control.
+
+### `CSVReader`
+
+Reads and normalizes a CSV file. The `.read(path, column_mapping=None)` method follows the same contract as `sources.from_csv`.
+
+```python
+from oipd import CSVReader
+
+reader = CSVReader()
+chain = reader.read("data/spy_options.csv")
+```
+
+### `DataFrameReader`
+
+Reads and normalizes an existing DataFrame. The `.read(df, column_mapping=None)` method follows the same contract as `sources.from_dataframe`.
+
+```python
+from oipd import DataFrameReader
+import pandas as pd
+
+reader = DataFrameReader()
+chain = reader.read(pd.read_parquet("options_archive.parquet"))
+```

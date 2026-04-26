@@ -1,0 +1,98 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "OIPD",
+  "theme": "maple",
+  "favicon": "/favicon.png",
+  "colors": {
+    "primary": "#242b2c",
+    "light": "#6a6a6d",
+    "dark": "#ebeaea"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Open-Lemma/options-implied-probability"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "mcp",
+      "add-mcp",
+      "cursor",
+      "vscode"
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation",
+              "ai-coding-tools"
+            ]
+          },
+          {
+            "group": "Core concepts",
+            "pages": [
+              "concepts/mental-model",
+              "concepts/market-inputs",
+              "concepts/volatility-layer",
+              "concepts/probability-layer"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/probability-single-expiry",
+              "guides/probability-surface",
+              "guides/volatility-smile",
+              "guides/volatility-surface",
+              "guides/data-sources",
+              "guides/warnings-diagnostics"
+            ]
+          },
+          {
+            "group": "Advanced theory",
+            "pages": [
+              "theory/pipeline-details"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core objects",
+            "pages": [
+              "reference/prob-curve",
+              "reference/prob-surface",
+              "reference/vol-curve",
+              "reference/vol-surface"
+            ]
+          },
+          {
+            "group": "Inputs and data",
+            "pages": [
+              "reference/market-inputs",
+              "reference/sources"
+            ]
+          },
+          {
+            "group": "Errors and diagnostics",
+            "pages": [
+              "reference/exceptions"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
