@@ -59,7 +59,7 @@ plt.show()
 You can also take one expiry from the surface and query it as a `ProbCurve`.
 
 ```python
-curve = surface.slice(surface.expiries[-1]) # take the furthest date
+curve = surface.slice(surface.expiries[0])  # take the first fitted expiry
 
 print(curve.prob_below(25))  # P(GME price < 25) at that expiry
 print(curve.quantile(0.50))  # median implied price at that expiry
