@@ -127,6 +127,8 @@ docs/AGENTS.md
 ce-docs/
 analysis_artifacts/
 diagnostics/
+readme-migration-package/
+readme-mock/
 
 # Spyder project settings
 .spyderproject
