@@ -1,220 +1,87 @@
-![OIPD logo](https://raw.githubusercontent.com/Open-Lemma/options-implied-probability/main/.meta/images/OIPD%20Logo.png)
+![OIPD: options-implied probability distribution](docs/images/readme/gme-probsurface-header.png)
 
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/oipd?logo=python&logoColor=white)](https://pypi.org/project/oipd/)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Open-Lemma/options-implied-probability/blob/main/OIPD_Demo.ipynb)
-[![Chat on Discord](https://img.shields.io/badge/chat-on%20Discord-brightgreen?logo=discord&logoColor=white)](https://discord.gg/NHxWPGhhSQ)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/oipd?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/oipd)
+[![Python versions](https://img.shields.io/pypi/pyversions/oipd?logo=python&logoColor=white)](https://pypi.org/project/oipd/)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Open-Lemma/options-implied-probability/blob/main/OIPD_Demo.ipynb)
+[![Discord](https://img.shields.io/badge/chat-on%20Discord-brightgreen?logo=discord&logoColor=white)](https://discord.gg/NHxWPGhhSQ)
+[![Downloads](https://static.pepy.tech/personalized-badge/oipd?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/oipd)
 
-# Overview
+## Overview
 
-OIPD computes the probabilities implied by the options market for an asset’s future prices.
+OIPD computes the probabilities of an asset's future price as implied by the options market.
 
-It does this by taking listed options data, fitting an arbitrage-free implied volatility curve or surface, and then transforming that fitted object into a probability distribution over future asset prices. In practice, that provides two core capabilities in one library:
+It does this by taking listed options data, fitting an arbitrage-free implied volatility surface, and then transforming that fitted object into a probability distribution over future asset prices. In practice, that provides two core capabilities in one library:
 
-- **Volatility modeling:** fit single-expiry smiles and multi-expiry volatility surfaces for pricing and risk work.
-- **Probability extraction:** compute market-implied probability distributions, cumulative probabilities, quantiles, and distributional moments.
+- **Volatility modeling:** fit single-expiry smiles and multi-expiry volatility surfaces, and compute greeks. 
+- **Probability extraction:** compute market-implied probability distributions, and distribution statistics. 
 
+[**Read the docs**](https://docs.open-lemma.com) · [**Use the web interface**](https://open-lemma.com)
 
-<p align="center" style="margin-top: 80px;">
-  <img src="https://raw.githubusercontent.com/Open-Lemma/options-implied-probability/main/.meta/images/example.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
-</p>
+## Quick install
 
-<table align="center" cellspacing="12" style="margin-top:120px; width:100%; border-collapse:separate;">
-  <tr>
-    <td style="width:50%; border:5px solid #000;">
-      <img src=".meta/images/vol_curve.png" alt="vol curve" style="width:100%; height:280px; object-fit:contain; display:block;" />
-    </td>
-    <td style="width:50%; border:5px solid #000;">
-      <img src=".meta/images/vol_surface.png" alt="vol surface" style="width:100%; height:280px; object-fit:contain; display:block;" />
-    </td>
-  </tr>
-</table>
+The standard install includes the built-in yfinance data connection.
 
-See the [full documentation site](https://open-lemma.github.io/options-implied-probability/) for details.
-
-# Quick start
-
-## 1. Installation
 ```bash
 pip install oipd
 ```
 
-## 2. Mental model for using OIPD
+## One quick example
 
-> [!TIP]
-> For non-technical users, you can safely skip this section and jump to [Section 3](#3-quickstart-tutorial-in-computing-market-implied-probability-distributions) to compute future market-implied probabilities. 
-
-<br>
-
-
-OIPD has four core objects. 
-
-A simple way to understand the package is by use case: fitting at a single future date vs over time, and working in implied volatility vs probabilities.
-
-| Scope | Volatility Layer | Probability Layer |
-| --- | --- | --- |
-| Single future date | `VolCurve` | `ProbCurve` |
-| Future time horizon | `VolSurface` | `ProbSurface` |
-
-You can think about the lifecycle in three steps:
-
-1. Initialize the estimator object with configuration.
-2. Call `.fit(chain, market)` to calibrate.
-3. Query/plot the fitted object, or convert from vol to probability via `.implied_distribution()`.
-
-If you're familiar with scikit-learn, this is the same mental model: configure an estimator, call `fit`, then inspect outputs.
-
-OIPD also records structured warning diagnostics on fitted objects. Public
-operations emit one concise warning per broad category, and detailed events are
-available through `.warning_diagnostics.events` and
-`.warning_diagnostics.summary`. The broad warning classes are importable from
-`oipd.warnings`:
-
-```python
-from oipd.warnings import (
-    DataQualityWarning,
-    ModelRiskWarning,
-    NumericalWarning,
-    WorkflowWarning,
-)
-
-surface = ProbSurface.from_chain(chain_surface, surface_market)
-surface.plot_fan()
-surface.warning_diagnostics.summary
-```
-
-For probability CDF validation, `cdf_violation_policy="warn"` is the default:
-material CDF repairs warn and record diagnostics. Use
-`cdf_violation_policy="raise"` when you want strict CDF violations to propagate
-as errors.
-
-Conceptual flow:
-
-```text
-Step 1: Fit volatility
-  Initialize VolCurve / VolSurface object
-      + options chain + market inputs
-      -> .fit(...)
-      -> fitted VolCurve / VolSurface object (inspect IV, prices, forward-space greeks, etc.)
-
-Step 2: Convert fitted volatility to probability
-  Use fitted VolCurve / VolSurface
-      -> .implied_distribution()
-      -> ProbCurve / ProbSurface object (inspect PDF, CDF, quantiles, moments, etc.)
-```
-
-Public fits use one default economic path: OIPD infers the forward price from
-usable same-strike call/put pairs and then works in Black-76 forward space.
-Use the raw, unadjusted current underlying price in `MarketInputs`; this is the
-reference price for diagnostics and forward-implied carry, while IV fitting
-uses the parity-implied forward. The resulting carry is dividend-equivalent
-model metadata, not a clean dividend forecast. Public Greeks are forward-space
-Black-76 Greeks, so delta is sensitivity to the inferred forward, not
-necessarily cash-equity spot delta.
-
-## 3. Quickstart tutorial in computing market-implied probability distributions
-
-This quickstart will cover the functionality in **(1) computing market-implied probabilities**. See the [included jupyter notebook ](examples/quickstart_yfinance.ipynb) for a full example on using the automated yfinance connection to download options data and compute market-implied probabilities for Palantir. 
-
-For a more technical tutorial including the functionality of **(2) volatility fitting, see the additional jupyter notebooks** in the [examples](examples/) directory, as well as the [full documentation](https://open-lemma.github.io/options-implied-probability/).
-
-### 3A. Usage for computing a probability distribution on a specific future date
+Fetch GameStop options across the next twelve months, fit a `VolSurface`, derive a `ProbSurface`, and plot the fan chart.
 
 ```python
 import matplotlib.pyplot as plt
 
-from oipd import MarketInputs, ProbCurve, sources
+from oipd import MarketInputs, VolSurface, sources
 
-# 1. we download data using the built-in yfinance connection
-ticker = "PLTR"                               # specify the stock ticker
-expiries = sources.list_expiry_dates(ticker)  # see all expiry dates
-single_expiry = expiries[1]                   # select one of the expiry dates you're interested in 
-
-chain, snapshot = sources.fetch_chain(ticker, expiries=single_expiry) # download the options chain data, and a snapshot at the time of download
-
-# 2. fill in the parameters 
-market = MarketInputs(
-    valuation_date=snapshot.asof,               # datetime on which the options data was downloaded
-    underlying_price=snapshot.underlying_price, # raw current underlying price at download time
-    risk_free_rate=0.04,                        # the risk-free rate of return. Use the US Fed or Treasury yields that are closest to the horizon of the expiry date
-)
-
-# 3. compute the future probability distribution using the data and parameters
-prob = ProbCurve.from_chain(chain, market)
-
-# 4. query the computed result to understand market-implied probabilities and other statistics
-prob.plot()
-plt.show()
-
-prob_below = prob.prob_below(100)   # P(price < 100)
-prob_above = prob.prob_above(120)   # P(price >= 120)
-q50 = prob.quantile(0.50)           # median implied price
-skew = prob.skew()                  # skew
-```
-
-<p align="center" style="margin-top: 120px;">
-  <img src=".meta/images/palantir_distribution.png" alt="example" style="width:100%; max-width:1200px; height:auto; display:block; margin-top:50px;" />
-</p>
-
-
-
-### 3B. Usage for computing probabilities over time
-
-```python
-import matplotlib.pyplot as plt
-
-from oipd import MarketInputs, ProbSurface, sources
-
-# 1. download multi-expiry data using the built-in yfinance connection
-ticker = "PLTR"
-chain_surface, snapshot_surface = sources.fetch_chain(
+ticker = "GME"
+chain, snapshot = sources.fetch_chain(
     ticker,
-    horizon="12m",  # auto-fetch all listed expiries inside the horizon
+    horizon="12m",  # fetch all listed expiries inside the next 12 months
 )
 
-# 2. fill in the parameters
-surface_market = MarketInputs(
-    valuation_date=snapshot_surface.asof,               # datetime on which the options data was downloaded
-    underlying_price=snapshot_surface.underlying_price, # raw current underlying price at download time
-    risk_free_rate=0.04,                                # risk-free rate for the horizon
+market = MarketInputs(
+    valuation_date=snapshot.asof,
+    underlying_price=snapshot.underlying_price,
+    risk_free_rate=0.04,
 )
 
-# 3. compute the probability surface using the data and parameters
-surface = ProbSurface.from_chain(chain_surface, surface_market)
+vol_surface = VolSurface().fit(chain, market)
+surface = vol_surface.implied_distribution()
 
-# 4. query and visualize the surface
-surface.plot_fan() # Fan plot of future price probabilities
+fig = surface.plot_fan()
 plt.show()
-
-# 5. query at arbitrary maturities directly from ProbSurface
-pdf_45d = surface.pdf(100, t=45/365)                      # density at K=100, 45.0 ACT/365 days from valuation_date
-cdf_intraday = surface.cdf(100, t="2025-02-15 09:30:00")  # example timestamp-style maturity input
-q50_45d = surface.quantile(0.50, t=45/365)                # median at 45 days
-
-# 6. "slice" the surface to get a ProbCurve, and query its statistical properties in the same manner as in example A 
-surface.expiries                                  # list all the expiry dates that were captured
-curve = surface.slice(surface.expiries[0]) # get a slice on the first expiry
-curve.prob_below(100)                      # query probabilities and statistics 
-curve.kurtosis()                           
 ```
 
+![GME ProbSurface fan plot generated by OIPD](docs/images/readme/gme-probsurface-fan.png)
 
+`surface.plot_fan()` visualizes the market-implied price distribution across fitted option expiries.
 
-OIPD also **supports manual CSV or DataFrame uploads**. Manual inputs should be
-long-form option chains with one row per contract and standard columns
-`strike`, `expiry`, `option_type`, and `last_price`; see the
-[user guide](docs/3_user-guide.md#21-load-option-data) for the full input
-schema and column-mapping example.
+You can also take one expiry from the surface and query it as a `ProbCurve`.
+
+```python
+curve = surface.slice(surface.expiries[-1])  # take the last expiry
+
+print(curve.prob_below(25))  # P(GME price < 25) at that expiry
+print(curve.quantile(0.50))  # median implied price at that expiry
+
+fig = curve.plot()
+fig.axes[0].set_xlim(0, 100)
+plt.show()
+```
+
+![GME ProbCurve slice generated from a ProbSurface](docs/images/readme/gme-probcurve-slice.png)
+
+A surface slice returns a `ProbCurve`, so you can inspect one expiry as a standalone probability distribution.
+
+## Example Notebooks
 
 See [more examples](examples/) for demos.
-
 
 # Community
 
 Pull requests welcome! Reach out on GitHub issues to discuss design choices.
 
-Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, discuss strategies, and get support. Message me with your feature requests, and let me know how you use this. 
-
+Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, discuss strategies, and get support. Message me with your feature requests, and let me know how you use this.
 
 # Contributors
 
@@ -223,6 +90,7 @@ Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, disc
 [![Contributors](https://contrib.rocks/image?repo=Open-Lemma/options-implied-probability)](https://github.com/Open-Lemma/options-implied-probability/graphs/contributors)
 
 **And special thanks for support on theory, implementation, or advisory:**
-- [integral-alpha.com](https://integral-alpha.com)
-- Jannic H., Chun H. H., and Melanie C. 
-- and others who prefer to go unnamed 
+- [NewMark Risk](https://newmarkrisk.com/)
+- [integral-alpha](https://integral-alpha.com)
+- [Vivek Rao](https://github.com/vivek-v-rao), Jannic H., Chun H. H., and Melanie C.
+- and others who prefer to go unnamed
