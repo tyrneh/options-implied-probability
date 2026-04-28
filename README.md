@@ -11,7 +11,7 @@ OIPD computes the probabilities of an asset's future price as implied by the opt
 
 It does this by taking listed options data, fitting an arbitrage-free implied volatility surface, and then transforming that fitted object into a probability distribution over future asset prices. In practice, that provides two core capabilities in one library:
 
-- **Volatility modeling:** fit single-expiry smiles and multi-expiry volatility surfaces for pricing and risk work.
+- **Volatility modeling:** fit single-expiry smiles and multi-expiry volatility surfaces, and compute greeks. 
 - **Probability extraction:** compute market-implied probability distributions, cumulative probabilities, quantiles, and distributional moments.
 
 [**Read the docs**](https://docs.open-lemma.com) · [**Use the web interface**](https://open-lemma.com)
