@@ -59,7 +59,7 @@ plt.show()
 You can also take one expiry from the surface and query it as a `ProbCurve`.
 
 ```python
-curve = surface.slice(surface.expiries[0])  # take the first fitted expiry
+curve = surface.slice(surface.expiries[-1])  # take the last expiry
 
 print(curve.prob_below(25))  # P(GME price < 25) at that expiry
 print(curve.quantile(0.50))  # median implied price at that expiry
@@ -90,6 +90,7 @@ Join the [Discord community](https://discord.gg/NHxWPGhhSQ) to share ideas, disc
 [![Contributors](https://contrib.rocks/image?repo=Open-Lemma/options-implied-probability)](https://github.com/Open-Lemma/options-implied-probability/graphs/contributors)
 
 **And special thanks for support on theory, implementation, or advisory:**
-- [integral-alpha.com](https://integral-alpha.com)
-- Jannic H., Chun H. H., and Melanie C.
+- [NewMark Risk](https://newmarkrisk.com/)
+- [integral-alpha](https://integral-alpha.com)
+- [Vivek Rao](https://github.com/vivek-v-rao), Jannic H., Chun H. H., and Melanie C.
 - and others who prefer to go unnamed
