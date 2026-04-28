@@ -73,23 +73,9 @@ plt.show()
 
 A surface slice returns a `ProbCurve`, so you can inspect one expiry as a standalone probability distribution.
 
-## Quick links
+## Example Notebooks
 
-OIPD also exposes `MarketInputs`, `ProbCurve`, `VolCurve`, `VolSurface`, and `sources`. Check the docs for more guidance, examples, and API details.
-
-- [`MarketInputs`](https://docs.open-lemma.com/reference/market-inputs)
-- [`ProbCurve`](https://docs.open-lemma.com/reference/prob-curve)
-- [`ProbSurface`](https://docs.open-lemma.com/reference/prob-surface)
-- [`VolCurve`](https://docs.open-lemma.com/reference/vol-curve)
-- [`VolSurface`](https://docs.open-lemma.com/reference/vol-surface)
-- [`sources`](https://docs.open-lemma.com/reference/sources)
-
-More useful docs:
-
-- [Mental model](https://docs.open-lemma.com/concepts/mental-model): how the volatility and probability layers fit together.
-- [Data sources](https://docs.open-lemma.com/guides/data-sources): how to load data from yfinance, CSV, or a DataFrame.
-- [Probability surface guide](https://docs.open-lemma.com/guides/probability-surface): fit, plot, slice, query, and export multi-expiry results.
-- [`ProbSurface` API reference](https://docs.open-lemma.com/reference/prob-surface): methods, parameters, outputs, and exceptions.
+See [more examples](examples/) for demos.
 
 # Community
 
